@@ -36,7 +36,8 @@ internal sealed record CliParseOutcome(ParserResult<object>? Result, ExitCode? E
 class Program
 {
 	public static readonly Type[] VerbTypes = Setup.LoadVerbs()
-		.Where(type => type != typeof(AbsUploadOptions))
+		// Group subcommands are only reachable through their group (e.g. `abs upload`), not as top-level verbs.
+		.Except(CliCommandGroups.All.SelectMany(group => group.Subcommands).Select(subcommand => subcommand.OptionsType))
 		.ToArray();
 	static async Task Main(string[] args)
 	{

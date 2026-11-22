@@ -21,6 +21,7 @@ Learn about Libation's powerful features:
 
 - **[Audio File Formats](/docs/features/audio-file-formats)** - Supported audio formats and conversion options
 - **[Audiobookshelf Auto-Upload](/docs/features/audiobookshelf)** - Optionally upload liberated books to Audiobookshelf
+- **[Listening Progress](/docs/features/listening-progress)** - Save your Audible listening positions as JSON or copy them to Audiobookshelf
 - **[Daily Download Limit](/docs/features/daily-download-limit)** - Optionally pace your downloads over a rolling 24 hours
 - **[Naming Templates](/docs/features/naming-templates)** - Customize how your audiobook files are named
 - **[Parallel Downloads](/docs/features/parallel-downloads)** - Download and decrypt several audiobooks at once

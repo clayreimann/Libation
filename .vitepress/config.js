@@ -95,6 +95,10 @@ export default defineConfig({
             link: "/docs/features/audiobookshelf",
           },
           {
+            text: "Listening Progress",
+            link: "/docs/features/listening-progress",
+          },
+          {
             text: "Daily Download Limit",
             link: "/docs/features/daily-download-limit",
           },
