@@ -120,7 +120,7 @@ public static class AudiobookshelfApiService
 		return absolutePath[..prefixLength];
 	}
 
-	private static HttpClient CreateClient(string serverUrl)
+	internal static HttpClient CreateClient(string serverUrl)
 	{
 		var normalized = NormalizeServerUrl(serverUrl);
 		var client = new HttpClient();
@@ -500,7 +500,7 @@ public static class AudiobookshelfApiService
 		return results;
 	}
 
-	private static bool AuthorsCompatible(string? libationAuthor, List<string> absAuthors)
+	internal static bool AuthorsCompatible(string? libationAuthor, List<string> absAuthors)
 	{
 		// If either side has no author info, we can't use authors to disambiguate
 		if (string.IsNullOrWhiteSpace(libationAuthor))
@@ -535,7 +535,7 @@ public static class AudiobookshelfApiService
 		return author.Replace("\u00A0", " ").Trim();
 	}
 
-	private static string NormalizeTitle(string? title)
+	internal static string NormalizeTitle(string? title)
 	{
 		if (string.IsNullOrWhiteSpace(title))
 			return title ?? "";
@@ -553,7 +553,7 @@ public static class AudiobookshelfApiService
 		return normalized;
 	}
 
-	private static string GetBaseTitle(string fullTitle)
+	internal static string GetBaseTitle(string fullTitle)
 	{
 		if (string.IsNullOrWhiteSpace(fullTitle))
 			return fullTitle;
