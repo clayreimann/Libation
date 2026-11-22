@@ -212,4 +212,25 @@ public class CliCommandRouterTests
 		route.Group!.Name.Should().Be("abs");
 	}
 
+
+	[TestMethod]
+	[DataRow("export", typeof(ProgressExportOptions))]
+	[DataRow("push-abs", typeof(ProgressPushAbsOptions))]
+	[DataRow("probe", typeof(ProgressProbeOptions))]
+	public void Progress_group_routes_to_subcommands(string subcommand, Type expected)
+	{
+		using var error = new StringWriter();
+		var outcome = Program.ParseInvocation(["progress", subcommand, "--help"], error);
+
+		Assert.AreEqual(ExitCode.ProcessCompletedSuccessfully, outcome.ExitCode);
+		Assert.AreEqual(expected, outcome.Result!.TypeInfo.Current);
+	}
+
+	[TestMethod]
+	public void Progress_subcommands_are_not_top_level_verbs()
+	{
+		CollectionAssert.DoesNotContain(Program.VerbTypes, typeof(ProgressExportOptions));
+		CollectionAssert.DoesNotContain(Program.VerbTypes, typeof(AbsUploadOptions));
+		CollectionAssert.Contains(Program.VerbTypes, typeof(ExportOptions));
+	}
 }

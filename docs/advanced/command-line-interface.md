@@ -205,6 +205,18 @@ The same setting applies to `liberate`. It includes existing PDFs recorded for t
 
 Titles already on the server are skipped, even if they are missing PDFs. The run ends with a summary of uploaded, already-on-server, no-files-found, failed, and skipped counts. Failures are also written to stderr; the command exits 0 either way. See [Audiobookshelf Auto-Upload](/docs/features/audiobookshelf#uploading-books-you-already-liberated).
 
+## Export or Sync Listening Progress
+
+Save the position Audible has for each title, or copy it to Audiobookshelf:
+
+```console
+libationcli progress export -p progress.json
+libationcli progress push-abs --dry-run
+libationcli progress push-abs
+```
+
+Both take optional ASINs and `--account`. `push-abs` skips titles whose Audiobookshelf progress is newer or finished unless you pass `--force`. `progress probe <asin>` saves the raw Audible responses for one title, for investigating the API. See [Listening Progress](/docs/features/listening-progress).
+
 ## Liberate Pdfs Only
 
 ```console
