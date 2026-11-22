@@ -169,7 +169,7 @@ public class ProgressProbeOptions : OptionsBase
 	[Value(0, MetaName = "[asin]", HelpText = "Product ID of a title you have listened to recently.", Required = true)]
 	public string? Asin { get; set; }
 
-	[Option('o', "output", HelpText = "Directory to write responses to. Default: ./progress-probe")]
+	[Option("output", HelpText = "Directory to write responses to. Default: ./progress-probe")]
 	public string? OutputDirectory { get; set; }
 
 	protected override async Task ProcessAsync()

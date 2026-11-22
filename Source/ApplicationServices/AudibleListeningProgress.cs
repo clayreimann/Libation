@@ -31,12 +31,12 @@ public sealed record ListeningProgress(
 /// <remarks>
 /// <para>
 /// Request: <c>GET /1.0/annotations/lastpositions?asins=A,B,C</c> on the marketplace API host, signed like any other
-/// library call. Response (as observed by third-party clients; Audible publishes no documentation):
+/// library call. Response, verified against the live API (Audible publishes no documentation):
 /// </para>
 /// <code>
-/// { "asin_last_position_heard_annots": [
-///     { "asin": "B0...", "last_position_heard": { "status": "Exists", "position_ms": 123456, "last_updated": "2024-01-02T03:04:05.678Z" } } ] }
+/// {"asin_last_position_heard_annots":[{"asin":"B000000001","last_position_heard":{"last_updated":"2026-11-22 16:17:16.529","position_ms":3832820,"status":"Exists"}}],"response_groups":["always-returned"]}
 /// </code>
+/// <para><c>last_updated</c> has no <c>T</c> or zone; it is UTC.</para>
 /// <para>
 /// The response names no device: Audible keeps one synced position per title, whichever device wrote it last.
 /// <c>libationcli progress probe</c> dumps this and the neighbouring endpoints raw, to look for device attribution.
@@ -152,7 +152,7 @@ public static class AudibleListeningProgressService
 			try
 			{
 				var account = persister.AccountsSettings.GetAccount(accountId, locale)
-					?? throw new InvalidOperationException($"No account found for {label}.");
+					?? throw new InvalidOperationException($"Account {label} is not configured in Libation; skipped {group.Count()} title(s).");
 
 				var apiExtended = await ApiExtended.CreateAsync(account, allowInteractiveLogin, Localization.Get(locale));
 				var books = group.ToDictionary(lb => lb.Book.AudibleProductId, StringComparer.OrdinalIgnoreCase);

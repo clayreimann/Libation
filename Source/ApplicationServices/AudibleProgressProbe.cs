@@ -31,6 +31,7 @@ public static class AudibleProgressProbe
 	{
 		var a = Uri.EscapeDataString(asin);
 		var monthStart = now.AddMonths(-11).ToString("yyyy-MM", CultureInfo.InvariantCulture);
+		var dayStart = now.AddDays(-6).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 		return
 		[
 			new("annotations-lastpositions", null, $"{AudibleListeningProgressService.LastPositionsPath}?asins={a}"),
@@ -39,6 +40,8 @@ public static class AudibleProgressProbe
 			new("sidecar", SidecarHost, $"/FionaCDEServiceEngine/sidecar?type=AUDI&key={a}"),
 			new("stats-aggregates", null, $"/1.0/stats/aggregates?monthly_listening_interval_duration=12&monthly_listening_interval_start_date={monthStart}&response_groups=total_listening_stats&store=Audible"),
 			new("stats-finished", null, $"/1.0/stats/status/finished?asin={a}"),
+			new("stats-daily", null, $"/1.0/stats/aggregates?daily_listening_interval_duration=7&daily_listening_interval_start_date={dayStart}&response_groups=total_listening_stats&store=Audible"),
+			new("content-metadata", null, $"/1.0/content/{a}/metadata?response_groups=last_position_heard,chapter_info"),
 		];
 	}
 
