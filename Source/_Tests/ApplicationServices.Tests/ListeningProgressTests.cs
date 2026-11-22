@@ -26,11 +26,26 @@ public class ListeningProgressTests
 	#region Audible lastpositions
 
 	[TestMethod]
+	public void ParseLastPositions_parses_real_response_as_utc()
+	{
+		var json = JObject.Parse("""
+			{"asin_last_position_heard_annots":[{"asin":"B000000001","last_position_heard":{"last_updated":"2026-11-22 16:17:16.529","position_ms":3832820,"status":"Exists"}}],"response_groups":["always-returned"]}
+			""");
+
+		var position = AudibleListeningProgressService.ParseLastPositions(json).Single();
+
+		Assert.AreEqual("B000000001", position.Asin);
+		Assert.AreEqual(3832820, position.PositionMs);
+		Assert.AreEqual(new DateTimeOffset(2026, 11, 22, 16, 17, 16, 529, TimeSpan.Zero), position.LastUpdated);
+		Assert.AreEqual(TimeSpan.Zero, position.LastUpdated!.Value.Offset);
+	}
+
+	[TestMethod]
 	public void ParseLastPositions_reads_existing_positions_and_drops_others()
 	{
 		var json = JObject.Parse("""
 			{ "asin_last_position_heard_annots": [
-				{ "asin": "A1", "last_position_heard": { "status": "Exists", "position_ms": 123456, "last_updated": "2024-01-02T03:04:05.678Z" } },
+				{ "asin": "A1", "last_position_heard": { "last_updated": "2026-11-22 16:17:16.529", "position_ms": 123456, "status": "Exists" } },
 				{ "asin": "A2", "last_position_heard": { "status": "DoesNotExist" } },
 				{ "asin": "A3" },
 				{ "last_position_heard": { "status": "Exists", "position_ms": 1 } }
@@ -42,13 +57,13 @@ public class ListeningProgressTests
 		Assert.AreEqual(1, positions.Count);
 		Assert.AreEqual("A1", positions[0].Asin);
 		Assert.AreEqual(123456, positions[0].PositionMs);
-		Assert.AreEqual(new DateTimeOffset(2024, 1, 2, 3, 4, 5, 678, TimeSpan.Zero), positions[0].LastUpdated);
+		Assert.AreEqual(new DateTimeOffset(2026, 11, 22, 16, 17, 16, 529, TimeSpan.Zero), positions[0].LastUpdated);
 	}
 
 	[TestMethod]
 	public void ParseLastPositions_accepts_feats_key_and_empty_response()
 	{
-		var feats = JObject.Parse("""{ "asin_last_position_heard_feats": [ { "asin": "A1", "last_position_heard": { "status": "Exists", "position_ms": 5 } } ] }""");
+		var feats = JObject.Parse("""{ "asin_last_position_heard_feats": [ { "asin": "A1", "last_position_heard": { "position_ms": 5, "status": "Exists" } } ] }""");
 		Assert.AreEqual(5, AudibleListeningProgressService.ParseLastPositions(feats).Single().PositionMs);
 		Assert.IsNull(AudibleListeningProgressService.ParseLastPositions(feats).Single().LastUpdated);
 
