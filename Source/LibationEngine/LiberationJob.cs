@@ -53,20 +53,27 @@ public sealed class LiberationJob
 	public event EventHandler<string>? LogWritten;
 	/// <summary>The log lines a person running unattended needs to see: errors, license and disk guidance.</summary>
 	public event EventHandler<string>? AttentionWritten;
-	private void OnLogWritten(string text) => LogWritten?.Invoke(this, text.Trim());
+	public event EventHandler<JobLogLine>? LineLogged;
+	public JobLog Log { get; } = new();
+
+	internal void Emit(JobLogLevel level, string text)
+	{
+		text = text.Trim();
+		var line = Log.Add(level, text, DateTimeOffset.UtcNow);
+		LogWritten?.Invoke(this, text);
+		if (level != JobLogLevel.Info)
+			AttentionWritten?.Invoke(this, text);
+		LineLogged?.Invoke(this, line);
+	}
 
 	private void LogError(string? message, Exception? ex = null)
 	{
-		LogAttention(message ?? "Automated backup: error");
+		Emit(JobLogLevel.Error, message ?? "Automated backup: error");
 		if (ex is not null)
-			LogAttention("ERROR: " + ex.Message);
+			Emit(JobLogLevel.Error, "ERROR: " + ex.Message);
 	}
-	private void LogInfo(string text) => OnLogWritten(text);
-	private void LogAttention(string text)
-	{
-		OnLogWritten(text);
-		AttentionWritten?.Invoke(this, text.Trim());
-	}
+	private void LogInfo(string text) => Emit(JobLogLevel.Info, text);
+	private void LogAttention(string text) => Emit(JobLogLevel.Warning, text);
 
 	#endregion
 
@@ -93,6 +100,13 @@ public sealed class LiberationJob
 			// from later steps are returned to the queue loop. Do not chain via Processable.Completed.
 			while (Processes.Count > 0)
 			{
+				if (cancellationRequested)
+				{
+					LogInfo($"Process was cancelled - {LibraryBook.Book}");
+					result = ProcessBookResult.Cancelled;
+					break;
+				}
+
 				var processable = CurrentProcessable;
 				result = await ExecuteProcessableAsync(processable);
 
