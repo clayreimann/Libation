@@ -1,3 +1,4 @@
+import { addNeedsLogin } from "./accounts";
 import type { EngineEvent, JobLog, JobLogLine, PendingDecision, Queue, QueueJob, QueueStats, QueueWait, Status } from "./api/types";
 
 export interface LogView {
@@ -43,7 +44,7 @@ export function applySnapshot(view: QueueView, snap: Queue): QueueView {
   const ids = new Set(snap.jobs.map((j) => j.id));
   const progress = Object.fromEntries(Object.entries(view.progress).filter(([id]) => ids.has(id)));
   const logs = Object.fromEntries(Object.entries(view.logs).filter(([id]) => ids.has(id)));
-  return { ...view, jobs: snap.jobs, pending: snap.pending, waiting: snap.waiting, running: snap.running, paused: snap.paused, stats: snap.stats, progress, logs };
+  return { ...view, jobs: snap.jobs, pending: snap.pending, waiting: snap.waiting ?? null, running: snap.running, paused: snap.paused, stats: snap.stats, progress, logs };
 }
 
 export function applyQueueEvent(view: QueueView, evt: EngineEvent): QueueView {
@@ -94,6 +95,8 @@ export function applyStatusEvent(status: Status | null, evt: EngineEvent): Statu
       return { ...status, state: evt.state };
     case "NextRunScheduled":
       return { ...status, nextRun: evt.nextRun };
+    case "AccountNeedsLogin":
+      return addNeedsLogin(status, evt.accountId);
     default:
       return status;
   }

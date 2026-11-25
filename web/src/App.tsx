@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { AccountsPage } from "./components/AccountsPage";
 import { LibraryPage } from "./components/LibraryPage";
 import { QueuePage } from "./components/QueuePage";
+import { NeedsLoginBanner } from "./components/NeedsLoginBanner";
 import { SettingsPage } from "./components/SettingsPage";
 import { StatusBar } from "./components/StatusBar";
 import { useLive } from "./live";
@@ -8,6 +10,7 @@ import { useLive } from "./live";
 const tabs = [
   { id: "library", label: "Library" },
   { id: "queue", label: "Queue" },
+  { id: "accounts", label: "Accounts" },
   { id: "settings", label: "Settings" },
 ] as const;
 
@@ -20,7 +23,7 @@ function currentTab(): Tab {
 
 export function App() {
   const [tab, setTab] = useState<Tab>(currentTab);
-  const { queue } = useLive();
+  const { queue, status } = useLive();
   const [handoff, setHandoff] = useState<string | undefined>();
 
   useEffect(() => {
@@ -33,6 +36,7 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  const needLogin = status?.accountsNeedingLogin?.length ?? 0;
   const active = queue.jobs.length + queue.pending.length + (queue.waiting ? 1 : 0);
 
   return (
@@ -44,6 +48,11 @@ export function App() {
             <a key={t.id} href={`#/${t.id}`} className={tab === t.id ? "active" : ""}>
               {t.label}
               {t.id === "queue" && active > 0 && <span className="badge">{active}</span>}
+              {t.id === "accounts" && needLogin > 0 && (
+                <span className="badge bad" title={`${needLogin} need sign-in`} aria-label={`${needLogin} need sign-in`}>
+                  !
+                </span>
+              )}
               {t.id === "queue" && queue.stats.errors > 0 && (
                 <span className="badge bad" title={`${queue.stats.errors} failed`} aria-label={`${queue.stats.errors} failed`}>
                   !
@@ -54,6 +63,7 @@ export function App() {
         </nav>
       </header>
       <StatusBar />
+      <NeedsLoginBanner />
       <main>
         {tab === "library" && <LibraryPage initialQuery={handoff} />}
         {tab === "queue" && (
@@ -64,6 +74,7 @@ export function App() {
             }}
           />
         )}
+        {tab === "accounts" && <AccountsPage />}
         {tab === "settings" && <SettingsPage />}
       </main>
     </>

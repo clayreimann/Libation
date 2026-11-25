@@ -1,6 +1,6 @@
 import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, MoveTo, QuickFilters, Queue, LocateScan, Settings, Stats, Status } from "./types";
+import type { Account, AccountPatch, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, LoginStartRequest, MoveTo, QuickFilters, Queue, LocateScan, Settings, Stats, Status } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -37,11 +37,18 @@ export type LiberatedChoice = "liberated" | "notLiberated";
 export type PdfChoice = LiberatedChoice;
 type BulkOpts = Omit<ChunkOptions, "chunkSize">;
 
+const account = (id: string, locale?: string) => `/api/accounts/${encodeURIComponent(id)}${locale ? `?locale=${encodeURIComponent(locale)}` : ""}`;
+const login = (loginId: string) => `/api/accounts/login/${encodeURIComponent(loginId)}`;
 const book = (asin: string) => `/api/library/${encodeURIComponent(asin)}`;
 
 export const api = {
   status: (signal?: AbortSignal) => request<Status>("GET", "/api/status", undefined, signal),
-  accounts: () => request<Account[]>("GET", "/api/accounts"),
+  accounts: (signal?: AbortSignal) => request<Account[]>("GET", "/api/accounts", undefined, signal),
+  patchAccount: (id: string, body: AccountPatch, locale?: string) => request<Account>("PATCH", account(id, locale), body),
+  deleteAccount: (id: string, locale?: string) => request<Account>("DELETE", account(id, locale)),
+  startLogin: (body: LoginStartRequest) => request<LoginStart>("POST", "/api/accounts/login", body),
+  completeLogin: (loginId: string, responseUrl: string) => request<Account>("POST", login(loginId), { responseUrl }),
+  cancelLogin: (loginId: string) => request<{ loginId: string }>("DELETE", login(loginId)),
   settings: () => request<Settings>("GET", "/api/settings"),
   queue: (signal?: AbortSignal) => request<Queue>("GET", "/api/queue", undefined, signal),
   library: (params: { offset: number; limit: number; q: string; trash: boolean; sort?: SortState | null }, signal?: AbortSignal) => {
@@ -85,7 +92,7 @@ export const api = {
   locateFile: (asin: string, path: string) => request<BookDetail>("POST", `${book(asin)}/locate`, { path }),
   startLocateScan: (folder: string) => request<LocateScan>("POST", "/api/library/locate-scan", { folder }),
   locateScan: () => request<LocateScan>("GET", "/api/library/locate-scan"),
-  scan: () => request<Status>("POST", "/api/scan"),
+  scan: (accounts?: string[]) => request<Status>("POST", "/api/scan", accounts ? { accounts } : undefined),
   liberate: () => request<Status>("POST", "/api/liberate"),
   queueHistory: (signal?: AbortSignal) => request<FinishedJob[]>("GET", "/api/queue/history", undefined, signal),
   clearHistory: () => request<Queue>("DELETE", "/api/queue/history"),

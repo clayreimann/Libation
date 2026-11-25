@@ -191,3 +191,13 @@ tr.parent td { background: var(--panel); }
 tr.episode td:nth-child(3) { padding-left: 28px; }
 .menu-link { display: block; padding: 4px 8px; color: var(--text); text-decoration: none; border-radius: 6px; }
 .menu-link:hover { background: var(--bg); }
+.banner { display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; max-width: 1200px; margin: 0 auto 8px; padding: 8px 12px; border: 1px solid var(--warn); border-radius: 6px; background: var(--panel); color: var(--warn); }
+.banner a { color: inherit; font-weight: 600; }
+main > .banner { margin: 8px 0; }
+.pill.ok { color: var(--ok); border-color: var(--ok); }
+.pill.bad { color: var(--bad); border-color: var(--bad); }
+a.button { display: inline-block; font: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; text-decoration: none; color: var(--text); background: var(--panel); }
+a.button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.steps { padding-left: 20px; display: grid; gap: 10px; }
+.login-card input[type="password"] { width: 100%; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; display: block; margin-top: 4px; }
+.login-card h3 { margin: 0; }

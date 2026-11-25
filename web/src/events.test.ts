@@ -117,12 +117,17 @@ describe("job logs", () => {
 });
 
 describe("status and parsing", () => {
-  const status = { state: "idle", lastRun: null, lastSuccess: null, scanExitCode: null, liberateExitCode: null, nextRun: null, intervalSeconds: 60, version: "1" };
+  const status = { state: "idle", lastRun: null, lastSuccess: null, scanExitCode: null, liberateExitCode: null, nextRun: null, intervalSeconds: 60, version: "1", accountsNeedingLogin: [] };
 
   it("applies state and next-run events", () => {
     expect(applyStatusEvent(status, { type: "StateChanged", state: "scanning" })?.state).toBe("scanning");
     expect(applyStatusEvent(status, { type: "NextRunScheduled", nextRun: "2026-01-01T00:00:00Z" })?.nextRun).toBe("2026-01-01T00:00:00Z");
     expect(applyStatusEvent(null, { type: "StateChanged", state: "x" })).toBeNull();
+  });
+
+  it("flags an account from AccountNeedsLogin", () => {
+    const s = applyStatusEvent(status, { type: "AccountNeedsLogin", accountId: "a@x", at: "2026-01-01T00:00:00Z" });
+    expect(s?.accountsNeedingLogin).toEqual(["a@x"]);
   });
 
   it("parses SSE name and data into a typed event", () => {

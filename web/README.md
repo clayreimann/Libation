@@ -1,6 +1,6 @@
 # Libation web UI
 
-Browser UI for the libationd daemon (`LibationCli serve --api`): library search, book details drawer, counts bar, quick filters (kept in localStorage), bulk actions on a selection (liberate, status, PDF status, tags, trash, restore, permanent delete), covers, sortable and configurable columns, locate file and locate audiobooks (server paths), queue with pause, reorder, remove/cancel, per-job logs and history, status and read-only settings. React, Vite and TypeScript; talks to `/api` only.
+Browser UI for the libationd daemon (`LibationCli serve --api`): library search, book details drawer, counts bar, quick filters (kept in localStorage), bulk actions on a selection (liberate, status, PDF status, tags, trash, restore, permanent delete), covers, sortable and configurable columns, locate file and locate audiobooks (server paths), queue with pause, reorder, remove/cancel, per-job logs and history, accounts (rename, scan on/off, remove, scan one or several, browser sign-in, needs-login warning; sign-in needs the daemon's `--api-token-file`), status and read-only settings. React, Vite and TypeScript; talks to `/api` only.
 
 ## Develop
 
@@ -13,7 +13,7 @@ npm test
 npm run gen:api                                      # types from openapi.json
 ```
 
-`LIBATION_API_TOKEN` is added to proxied requests in dev when set. Refresh `openapi.json` from `GET /api/openapi.json` when the API changes.
+`LIBATION_API_TOKEN` is added to proxied requests in dev when set. Refresh `openapi.json` from `GET /api/openapi.json` when the API changes, then `npm run gen:api`.
 
 ## Image
 

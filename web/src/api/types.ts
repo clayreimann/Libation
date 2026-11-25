@@ -15,7 +15,7 @@ type S = components["schemas"];
 export type Status = Fix<S["StatusDto"]>;
 export type Account = Fix<S["AccountDto"]>;
 export type Book = Fix<S["BookDto"]>;
-export type BookDetail = Book & Pick<Fix<S["BookDetailDto"]>, "description" | "publisher" | "language" | "copyright" | "isAbridged" | "datePublished" | "categoryLadders" | "audioFileExists">;
+export type BookDetail = Fix<S["BookDetailDto"]>;
 export type LocateScan = Fix<S["LocateScanDto"]>;
 export type Stats = Fix<S["BackupCountsDto"]>;
 export type AsinList = Fix<S["LibraryAsinsDto"]>;
@@ -32,28 +32,25 @@ export type CancelJob = Fix<S["CancelJobDto"]>;
 export type MoveTo = "top" | "up" | "down" | "bottom";
 export type BulkResult = Fix<S["BulkResultDto"]>;
 export type Settings = Fix<S["SettingsDto"]>;
-export type DecisionRequest = Partial<Fix<S["DecisionRequest"]>> & { decision: string };
+export type DecisionRequest = Fix<S["DecisionRequest"]>;
 export type QuickFilter = Fix<S["QuickFilterDto"]>;
 export type QuickFilters = Fix<S["QuickFiltersDto"]>;
+export type AccountPatch = Fix<S["AccountPatchRequest"]>;
+export type ScanRequest = Fix<S["ScanRequest"]>;
+export type LoginStart = Fix<S["LoginStartDto"]>;
+export type LoginStartRequest = Fix<S["LoginStartRequest"]>;
+export type AuthState = Account["authState"];
 
 const eventNames = [
   "StateChanged", "ScanStarted", "ScanFinished", "LiberateStarted", "LiberateFinished", "CycleFinished",
   "NextRunScheduled", "BookStarted", "BookProgress", "BookFinished", "QueueChanged", "QueuePaused", "QueueResumed",
-  "QueueWaiting", "QueueWaitEnded", "QueueDispatchPaused", "QueueDispatchResumed", "BookLog", "LocateScanProgress",
+  "QueueWaiting", "QueueWaitEnded", "QueueDispatchPaused", "QueueDispatchResumed", "BookLog", "LocateScanProgress", "AccountNeedsLogin",
 ] as const satisfies readonly (keyof S)[];
-
-// the generated event schemas inline these DTOs without their enums
-interface Nested {
-  QueuePaused: { pause: PendingDecision };
-  QueueChanged: { queue: Queue };
-  QueueWaiting: { wait: QueueWait };
-  LocateScanProgress: { scan: LocateScan };
-}
 
 type EventName = (typeof eventNames)[number];
 
 /** Generated event bodies tagged with the SSE event name. */
-export type EngineEvent = { [K in EventName]: { type: K } & Omit<Fix<S[K]>, K extends keyof Nested ? keyof Nested[K] : never> & (K extends keyof Nested ? Nested[K] : unknown) }[EventName];
+export type EngineEvent = { [K in EventName]: { type: K } & Fix<S[K]> }[EventName];
 
 type Uncovered = Exclude<S["EngineEvent"], S[EventName]>;
 const covered: [Uncovered] extends [never] ? true : never = true;

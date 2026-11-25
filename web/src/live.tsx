@@ -17,6 +17,7 @@ interface Live {
   statusError: string | null;
   queue: QueueView;
   locateScan: LocateScan | null;
+  accountEvents: number;
   refreshStatus: () => void;
   setStatus: (s: Status) => void;
   onBookEvent: (fn: () => void) => () => void;
@@ -41,6 +42,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [locateScan, setLocateScan] = useState<LocateScan | null>(null);
+  const [accountEvents, setAccountEvents] = useState(0);
   const [queue, dispatch] = useReducer(reduce, emptyQueue);
   const bookListeners = useRef(new Set<() => void>());
 
@@ -81,6 +83,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         setStatus((s) => applyStatusEvent(s, evt));
         dispatch({ kind: "event", evt });
         if (needsStatusRefetch(evt)) refreshStatus();
+        if (evt.type === "AccountNeedsLogin") setAccountEvents((n) => n + 1);
         if (evt.type === "LocateScanProgress") {
           setLocateScan(evt.scan);
           if (evt.scan.state !== "running") bookListeners.current.forEach((fn) => fn());
@@ -100,8 +103,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ connected, status, statusError, queue, locateScan, refreshStatus, setStatus, onBookEvent }),
-    [connected, status, statusError, queue, locateScan, refreshStatus, onBookEvent],
+    () => ({ connected, status, statusError, queue, locateScan, accountEvents, refreshStatus, setStatus, onBookEvent }),
+    [connected, status, statusError, queue, locateScan, accountEvents, refreshStatus, onBookEvent],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

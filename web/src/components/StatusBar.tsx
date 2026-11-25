@@ -12,7 +12,7 @@ export function StatusBar() {
     setBusy(true);
     setMessage(null);
     try {
-      setStatus(await api[kind]());
+      setStatus(await (kind === "scan" ? api.scan() : api.liberate()));
       setMessage({ text: kind === "scan" ? "Scan requested." : "Scan and liberate requested.", error: false });
     } catch (e) {
       setMessage({ text: (e as Error).message, error: true });
@@ -39,7 +39,7 @@ export function StatusBar() {
       <div className="status-actions">
         {message && <span className={message.error ? "error" : "muted"}>{message.text}</span>}
         <button onClick={() => run("scan")} disabled={busy}>
-          Scan now
+          Scan all
         </button>
         <button onClick={() => run("liberate")} disabled={busy}>
           Scan + liberate

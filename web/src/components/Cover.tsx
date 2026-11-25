@@ -3,7 +3,7 @@ import { api } from "../api/client";
 
 interface Props {
   asin: string;
-  pictureId: string | null;
+  pictureId?: string | null;
   size: "small" | "large";
 }
 
