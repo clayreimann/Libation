@@ -17,6 +17,8 @@ public enum ProcessBookResult
 	LicenseDeniedThrottledRecovered,
 	/// <summary>ADRM licenserequest failed with Sable acr:null; Widevine may work (see WidevineRecommendation).</summary>
 	WidevineRecommended,
-	/// <summary>Volume full on write; queue should stop (see LiberationQueue).</summary>
-	DiskFull
+	/// <summary>Volume full on write; the queue applies its <see cref="DiskFullPolicy"/>.</summary>
+	DiskFull,
+	/// <summary>Failed with Bad Book set to Ask; the queue is holding a <see cref="PendingDecision"/> for it.</summary>
+	AwaitingDecision
 }

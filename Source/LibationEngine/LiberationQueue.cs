@@ -11,15 +11,14 @@ using System.Threading.Tasks;
 namespace LibationEngine;
 
 /// <summary>Dispatches queued <see cref="LiberationJob"/>s, up to the concurrency limit, until the queue drains.</summary>
-public sealed class LiberationQueue
+public sealed partial class LiberationQueue
 {
 	// Short and fixed so a changed setting or a rolled-over window is picked up promptly.
 	private static readonly TimeSpan DailyLimitPollInterval = TimeSpan.FromSeconds(15);
 
-	private readonly ILiberationInteraction _interaction;
-	private readonly Func<int> _maxConcurrentDownloads;
-	private bool dailyLimitMessageShownThisRun;
+	private readonly LiberationPolicy _policy;
 	private int _queuedCount;
+	private bool _aborted;
 
 	public TrackedQueue<LiberationJob> Jobs { get; } = new();
 	public BadBookSessionContext BadBookSession { get; } = new();
@@ -50,20 +49,19 @@ public sealed class LiberationQueue
 	/// <summary>What the user asked for, held down to what this machine can usefully manage.</summary>
 	internal int EffectiveConcurrentDownloads
 		=> Math.Clamp(
-			_maxConcurrentDownloads(),
+			_policy.MaxConcurrentDownloads(),
 			Configuration.MinConcurrentDownloads,
 			MachineCeilingOverride ?? Configuration.MaxAllowedConcurrentDownloads);
 
 	/// <summary>
 	/// The queued count as last delivered through <see cref="TrackedQueue{T}.NotificationInvoker"/>, not the
-	/// live one - the rotation bound below was always read from that posted mirror.
+	/// live one - the rotation bound below is read from that posted mirror.
 	/// </summary>
 	private int QueuedCount => Volatile.Read(ref _queuedCount);
 
-	public LiberationQueue(ILiberationInteraction interaction, Func<int> maxConcurrentDownloads)
+	public LiberationQueue(LiberationPolicy policy)
 	{
-		_interaction = interaction;
-		_maxConcurrentDownloads = maxConcurrentDownloads;
+		_policy = policy;
 		Jobs.QueuedCountChanged += (_, count) => Volatile.Write(ref _queuedCount, count);
 	}
 
@@ -82,6 +80,8 @@ public sealed class LiberationQueue
 		foreach (var activeJob in Jobs.GetActive())
 			activeJob.Configuration.DownloadSpeedLimit = bytesPerSecond;
 	}
+
+	public LiberationJob? FindJob(JobId id) => Jobs.FirstOrDefault(j => j is not null && j.Id == id);
 
 	private TaskCompletionSource _enqueueSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -116,55 +116,65 @@ public sealed class LiberationQueue
 
 		var paused = false;
 
-		while (true)
+		try
 		{
-			// Per-book, not queue-wide: Cancel All reaches a parked book through CancelAsync like any active one.
-			if (nextBook.CancellationRequested)
+			while (true)
 			{
-				nextBook.StatusOverride = null;
-				return DailyLimitGate.Cancelled;
-			}
-
-			var now = Clock.GetLocalNow();
-			var allowance = DailyDownloadLimit.Evaluate(Configuration.Instance, DownloadHistory(now), now);
-
-			if (!allowance.Blocks(nextBook.LibraryBook.IsAudiblePlus))
-			{
-				nextBook.StatusOverride = null;
-				if (paused)
+				// Per-book, not queue-wide: Cancel All reaches a parked book through CancelAsync like any active one.
+				if (nextBook.CancellationRequested)
 				{
-					var resumed = $"Daily download limit: capacity is available again. Resuming with {nextBook.LibraryBook.Book.TitleWithSubtitle}.";
-					Serilog.Log.Logger.Information("Daily download limit no longer blocks {libraryBook}. Resuming the queue.", nextBook.LibraryBook.LogFriendly());
-					WriteLog(resumed);
+					nextBook.StatusOverride = null;
+					return DailyLimitGate.Cancelled;
 				}
-				return DailyLimitGate.Proceed;
+
+				var now = Clock.GetLocalNow();
+				var allowance = DailyDownloadLimit.Evaluate(Configuration.Instance, DownloadHistory(now), now);
+
+				if (!allowance.Blocks(nextBook.LibraryBook.IsAudiblePlus))
+				{
+					nextBook.StatusOverride = null;
+					if (paused)
+					{
+						var resumed = $"Daily download limit: capacity is available again. Resuming with {nextBook.LibraryBook.Book.TitleWithSubtitle}.";
+						Serilog.Log.Logger.Information("Daily download limit no longer blocks {libraryBook}. Resuming the queue.", nextBook.LibraryBook.LogFriendly());
+						WriteLog(resumed);
+					}
+					return DailyLimitGate.Proceed;
+				}
+
+				// Under "Plus titles only" a mixed queue can keep going; do not stall owned titles behind a Plus title.
+				if (deferralsSoFar < QueuedCount && AnyOtherQueuedBookAllowed(nextBook, allowance))
+				{
+					nextBook.StatusOverride = null;
+					Serilog.Log.Logger.Information(
+						"Daily download limit blocks {libraryBook}. Moving it to the end of the queue and continuing with titles the limit does not cover.",
+						nextBook.LibraryBook.LogFriendly());
+					WriteLog(DailyDownloadLimitUserMessage.BuildDeferredLogEntry(allowance, nextBook.LibraryBook.Book.TitleWithSubtitle));
+					return DailyLimitGate.Defer;
+				}
+
+				if (!paused)
+				{
+					paused = true;
+					Serilog.Log.Logger.Information(
+						"Daily download limit reached; pausing the queue before {libraryBook}. {@DebugInfo}",
+						nextBook.LibraryBook.LogFriendly(),
+						new { allowance.Scope, allowance.Unit, allowance.Quantity, allowance.UsedBooks, allowance.UsedBytes, allowance.NextCapacityAt });
+					WriteLog(DailyDownloadLimitUserMessage.BuildQueueLogEntry(allowance, nextBook.LibraryBook.Book.TitleWithSubtitle));
+					BeginWait(new QueueWait(
+						NewPauseId(), WaitReason.DailyLimit, Clock.GetUtcNow(), allowance.NextCapacityAt,
+						nextBook.Id, null, allowance, NoDecisions));
+				}
+
+				nextBook.StatusOverride = DailyDownloadLimitUserMessage.BuildWaitingStatus(allowance);
+
+				await Task.Delay(DailyLimitPollInterval, Clock);
 			}
-
-			// Under "Plus titles only" a mixed queue can keep going; do not stall owned titles behind a Plus title.
-			if (deferralsSoFar < QueuedCount && AnyOtherQueuedBookAllowed(nextBook, allowance))
-			{
-				nextBook.StatusOverride = null;
-				Serilog.Log.Logger.Information(
-					"Daily download limit blocks {libraryBook}. Moving it to the end of the queue and continuing with titles the limit does not cover.",
-					nextBook.LibraryBook.LogFriendly());
-				WriteLog(DailyDownloadLimitUserMessage.BuildDeferredLogEntry(allowance, nextBook.LibraryBook.Book.TitleWithSubtitle));
-				return DailyLimitGate.Defer;
-			}
-
-			if (!paused)
-			{
-				paused = true;
-				Serilog.Log.Logger.Information(
-					"Daily download limit reached; pausing the queue before {libraryBook}. {@DebugInfo}",
-					nextBook.LibraryBook.LogFriendly(),
-					new { allowance.Scope, allowance.Unit, allowance.Quantity, allowance.UsedBooks, allowance.UsedBytes, allowance.NextCapacityAt });
-				WriteLog(DailyDownloadLimitUserMessage.BuildQueueLogEntry(allowance, nextBook.LibraryBook.Book.TitleWithSubtitle));
-				ShowDailyLimitMessageOncePerRun(allowance, nextBook.LibraryBook);
-			}
-
-			nextBook.StatusOverride = DailyDownloadLimitUserMessage.BuildWaitingStatus(allowance);
-
-			await Task.Delay(DailyLimitPollInterval, Clock);
+		}
+		finally
+		{
+			if (paused)
+				EndWait(WaitReason.DailyLimit);
 		}
 	}
 
@@ -183,23 +193,6 @@ public sealed class LiberationQueue
 			&& b.Status is ProcessBookStatus.Queued
 			&& (!b.IncludesBookDownload || !allowance.Blocks(b.LibraryBook.IsAudiblePlus)));
 
-	/// <summary>
-	/// Deliberately not awaited: the dialog completes only when dismissed, and a waiting queue must resume
-	/// by itself hours later. Once per run so a multi-day drip-feed does not stack a dialog per day.
-	/// </summary>
-	private void ShowDailyLimitMessageOncePerRun(DailyDownloadLimit.Allowance allowance, LibraryBook libraryBook)
-	{
-		if (dailyLimitMessageShownThisRun)
-			return;
-
-		dailyLimitMessageShownThisRun = true;
-
-		_ = _interaction.NotifyAsync(new QueueNotice(QueueNoticeKind.DailyLimitPaused, ProcessBookResult.None, libraryBook, allowance))
-			.ContinueWith(
-				t => Serilog.Log.Logger.Error(t.Exception, "Failed to show the daily download limit message"),
-				TaskContinuationOptions.OnlyOnFaulted);
-	}
-
 	#endregion
 
 	/// <summary>
@@ -213,22 +206,111 @@ public sealed class LiberationQueue
 	public async Task CancelAllAsync(LiberationJob? except = null)
 	{
 		Jobs.ClearQueue();
+		ClearHolds();
 
 		// Snapshot before cancelling: Active is mutated as each book unwinds.
 		var inFlight = Jobs.GetActive().Where(b => b != except).ToArray();
 
-		await Task.WhenAll(inFlight.Select(CancelOneAsync));
+		await Task.WhenAll(inFlight.Select(CancelBookAsync));
 
-		static async Task CancelOneAsync(LiberationJob book)
+		foreach (var book in DrainUnansweredBooks())
 		{
-			try
+			book.Result = ProcessBookResult.Cancelled;
+			book.Status = ProcessBookStatus.Cancelled;
+			Jobs.MarkCompleted(book);
+			JobEnded?.Invoke(this, book);
+		}
+
+		SignalEnqueued();
+	}
+
+	/// <summary>True for the one caller that gets to tear the queue down; every later one is a no-op.</summary>
+	private async Task<bool> TeardownAsync(LiberationJob? except)
+	{
+		lock (_gate)
+		{
+			if (_aborted)
+				return false;
+			_aborted = true;
+		}
+
+		await CancelAllAsync(except);
+		SignalEnqueued();
+		return true;
+	}
+
+	private async Task FinishJobAsync(LiberationJob book, ProcessBookResult result)
+	{
+		Serilog.Log.Logger.Information("Completed processing: '{item_LibraryBook}' result: {result}", book.LibraryBook, result);
+
+		if (result == ProcessBookResult.ValidationFail)
+		{
+			Jobs.RemoveActive(book);
+			JobEnded?.Invoke(this, book);
+			return;
+		}
+
+		if (result is ProcessBookResult.Cancelled && TakeDiskFullVictim(book))
+		{
+			Requeue(book);
+			return;
+		}
+
+		Jobs.MarkCompleted(book);
+
+		if (result == ProcessBookResult.FailedAbort)
+		{
+			if (!await TeardownAsync(book))
 			{
-				await book.CancelAsync();
+				book.Result = ProcessBookResult.Cancelled;
+				book.Status = ProcessBookStatus.Cancelled;
 			}
-			catch (Exception ex)
-			{
-				Serilog.Log.Logger.Error(ex, "Error while cancelling {Book}", book.LibraryBook.LogFriendly());
-			}
+		}
+		else if (result == ProcessBookResult.FailedSkip)
+		{
+			await book.LibraryBook.UpdateBookStatusAsync(LiberatedStatus.Error);
+		}
+		else if (result == ProcessBookResult.LicenseDeniedPossibleOutage
+			|| result == ProcessBookResult.LicenseDeniedThrottled
+			|| result == ProcessBookResult.LicenseDeniedThrottledRecovered
+			|| (result == ProcessBookResult.LicenseDenied && book.LibraryBook.IsAudiblePlus))
+		{
+			AddGuidancePause(PauseReason.LicenseGuidance, book);
+		}
+		else if (result == ProcessBookResult.WidevineRecommended)
+		{
+			AddGuidancePause(PauseReason.WidevineGuidance, book);
+		}
+
+		JobEnded?.Invoke(this, book);
+	}
+
+	/// <summary>Back to the start of its steps, at the end of the queue; a book that never reached completion.</summary>
+	private void Requeue(LiberationJob book)
+	{
+		book.Rearm();
+		RequeueLast(book);
+		SignalEnqueued();
+	}
+
+	private async Task ProcessJobAsync(LiberationJob book)
+	{
+		Serilog.Log.Logger.Information("Begin processing queued item: '{item_LibraryBook}'", book.LibraryBook);
+		JobStarted?.Invoke(this, book);
+
+		var result = await RunJob(book);
+
+		switch (result)
+		{
+			case ProcessBookResult.AwaitingDecision:
+				AddBadBookPause(book);
+				break;
+			case ProcessBookResult.DiskFull:
+				await HandleDiskFullAsync(book);
+				break;
+			default:
+				await FinishJobAsync(book, result);
+				break;
 		}
 	}
 
@@ -239,105 +321,12 @@ public sealed class LiberationQueue
 			Serilog.Log.Logger.Information("Begin processing queue");
 
 			BadBookSession.Reset();
-			dailyLimitMessageShownThisRun = false;
+			BeginRun();
 			RunStarted?.Invoke(this, EventArgs.Empty);
 
-			// Shared state written from parallel book tasks, protected by resultLock.
-			bool shownLicenseGuidanceMessage = false;
-			bool shownWidevineGuidanceMessage = false;
-			bool shownDiskFullMessage = false;
-			var resultLock = new object();
-			// Volatile because a captured local can be passed by ref but not marked volatile.
-			bool aborted = false;
 			var activeTasks = new HashSet<Task>();
 			// Counted since the last book that actually started, so a book is never shuffled back forever.
 			int consecutiveDeferrals = 0;
-
-			// True for the one book that gets to tear the queue down, false for every book after it.
-			bool ClaimAbort()
-			{
-				lock (resultLock)
-				{
-					if (aborted)
-						return false;
-					Volatile.Write(ref aborted, true);
-					return true;
-				}
-			}
-
-			async Task ProcessJobAsync(LiberationJob book)
-			{
-				Serilog.Log.Logger.Information("Begin processing queued item: '{item_LibraryBook}'", book.LibraryBook);
-				JobStarted?.Invoke(this, book);
-
-				var result = await RunJob(book);
-
-				// Claimed before the queue is touched: Abort is session-wide, so every book in flight arrives
-				// here, and each one re-entering CancelAllAsync would have them all cancelling each other.
-				bool tearsDownTheQueue
-					= (result is ProcessBookResult.FailedAbort or ProcessBookResult.DiskFull)
-					&& ClaimAbort();
-
-				Serilog.Log.Logger.Information("Completed processing: '{item_LibraryBook}' result: {result}", book.LibraryBook, result);
-
-				if (result == ProcessBookResult.ValidationFail)
-				{
-					Jobs.RemoveActive(book);
-				}
-				else
-				{
-					Jobs.MarkCompleted(book);
-
-					if (result == ProcessBookResult.FailedAbort)
-					{
-						if (tearsDownTheQueue)
-							await CancelAllAsync(book);
-
-						// Teardown is indifferent to which book does it; the abort status belongs to the book the
-						// user answered for. With no dialog (Bad Book set to Abort) the claimant keeps it.
-						var originator = BadBookSession.AbortOriginator;
-						var reportsTheAbort = originator is null ? tearsDownTheQueue : ReferenceEquals(originator, book);
-
-						if (!reportsTheAbort)
-						{
-							book.Result = ProcessBookResult.Cancelled;
-							book.Status = ProcessBookStatus.Cancelled;
-						}
-					}
-					else if (result == ProcessBookResult.DiskFull)
-					{
-						if (tearsDownTheQueue)
-							await CancelAllAsync(book);
-						bool show;
-						lock (resultLock) { show = !shownDiskFullMessage; shownDiskFullMessage = true; }
-						if (show)
-							await _interaction.NotifyAsync(new QueueNotice(QueueNoticeKind.DiskFull, result, book.LibraryBook));
-					}
-					else if (result == ProcessBookResult.FailedSkip)
-					{
-						await book.LibraryBook.UpdateBookStatusAsync(LiberatedStatus.Error);
-					}
-					else if (result == ProcessBookResult.LicenseDeniedPossibleOutage
-						|| result == ProcessBookResult.LicenseDeniedThrottled
-						|| result == ProcessBookResult.LicenseDeniedThrottledRecovered
-						|| (result == ProcessBookResult.LicenseDenied && book.LibraryBook.IsAudiblePlus))
-					{
-						bool show;
-						lock (resultLock) { show = !shownLicenseGuidanceMessage; shownLicenseGuidanceMessage = true; }
-						if (show)
-							await _interaction.NotifyAsync(new QueueNotice(QueueNoticeKind.LicenseGuidance, result, book.LibraryBook));
-					}
-					else if (result == ProcessBookResult.WidevineRecommended)
-					{
-						bool show;
-						lock (resultLock) { show = !shownWidevineGuidanceMessage; shownWidevineGuidanceMessage = true; }
-						if (show)
-							await _interaction.NotifyAsync(new QueueNotice(QueueNoticeKind.WidevineGuidance, result, book.LibraryBook));
-					}
-				}
-
-				JobEnded?.Invoke(this, book);
-			}
 
 			while (true)
 			{
@@ -356,11 +345,24 @@ public sealed class LiberationQueue
 				// the wait at the bottom completes this task and is not missed.
 				var enqueued = WaitForEnqueueAsync();
 
-				if (Volatile.Read(ref aborted))
+				await DrainSettledWorkAsync();
+
+				if (Volatile.Read(ref _aborted))
 				{
 					await Task.WhenAll(activeTasks);
+					await DrainSettledWorkAsync();
 					break;
 				}
+
+				// A pause or wait stops dispatch only; books already running carry on.
+				if (HasPendingDecision)
+				{
+					await enqueued;
+					continue;
+				}
+
+				if (await HoldForSpaceAsync(enqueued))
+					continue;
 
 				// If at capacity, wait for a slot to open before trying to dequeue more
 				if (activeTasks.Count >= EffectiveConcurrentDownloads)
@@ -385,10 +387,24 @@ public sealed class LiberationQueue
 					if (gate is DailyLimitGate.Cancelled)
 					{
 						Serilog.Log.Logger.Information("Queue was cancelled while waiting on the daily download limit.");
+						if (TakeDiskFullVictim(nextBook))
+						{
+							Requeue(nextBook);
+							continue;
+						}
 						nextBook.Result = ProcessBookResult.Cancelled;
 						nextBook.Status = ProcessBookStatus.Cancelled;
 						// Nothing else would take it off the active list.
 						Jobs.MarkCompleted(nextBook);
+						continue;
+					}
+
+					// A pause raised while the book was parked at the limit holds it too.
+					if (HasPendingDecision)
+					{
+						Jobs.RemoveActive(nextBook);
+						Jobs.Enqueue([nextBook]);
+						Jobs.MoveQueuePosition(nextBook, QueuePosition.First);
 						continue;
 					}
 
@@ -401,7 +417,7 @@ public sealed class LiberationQueue
 				// while we were looking, in which case go round again and pick it up.
 				if (activeTasks.Count == 0)
 				{
-					if (enqueued.IsCompleted)
+					if (enqueued.IsCompleted || !CanFinishRun())
 						continue;
 					break;
 				}
@@ -422,6 +438,7 @@ public sealed class LiberationQueue
 		}
 		finally
 		{
+			ClearHolds();
 			RunEnded?.Invoke(this, EventArgs.Empty);
 		}
 	}

@@ -19,8 +19,8 @@ public sealed class LiberationJob
 {
 	public LibraryBook LibraryBook { get; }
 	public Configuration Configuration { get; }
+	public JobId Id { get; } = JobId.New();
 	private readonly BadBookSessionContext? _badBookSession;
-	private readonly ILiberationInteraction _interaction;
 
 	public ProcessBookResult Result { get => field; set { field = value; ResultChanged?.Invoke(this, value); } }
 	public ProcessBookStatus Status { get => field; set { field = value; StatusChanged?.Invoke(this, value); } }
@@ -69,11 +69,10 @@ public sealed class LiberationJob
 	/// <summary> A series of Processable actions to perform on this book </summary>
 	private Queue<Func<Processable>> Processes { get; } = new();
 
-	public LiberationJob(LibraryBook libraryBook, Configuration configuration, ILiberationInteraction interaction, BadBookSessionContext? badBookSession = null)
+	public LiberationJob(LibraryBook libraryBook, Configuration configuration, BadBookSessionContext? badBookSession = null)
 	{
 		LibraryBook = libraryBook;
 		Configuration = configuration;
-		_interaction = interaction;
 		_badBookSession = badBookSession;
 	}
 
@@ -101,9 +100,8 @@ public sealed class LiberationJob
 		}
 		finally
 		{
-			// DiskFull skips the per-book Abort/Retry/Ignore dialog; the queue shows one disk-full message instead.
 			if (result == ProcessBookResult.None)
-				result = await GetFailureActionAsync(LibraryBook);
+				result = GetFailureResult();
 
 			var status = result switch
 			{
@@ -294,7 +292,7 @@ public sealed class LiberationJob
 
 	public LiberationJob AddProcessable(Func<Configuration, Processable> create)
 	{
-		Processes.Enqueue(() =>
+		Func<Processable> step = () =>
 		{
 			var processable = create(Configuration);
 
@@ -304,8 +302,24 @@ public sealed class LiberationJob
 				licensed.LicenseInfo = obtainedLicense;
 
 			return processable;
-		});
+		};
+		_steps.Add(step);
+		Processes.Enqueue(step);
 		return this;
+	}
+
+	private readonly List<Func<Processable>> _steps = [];
+
+	/// <summary>Resets a finished job to run its steps again from the start.</summary>
+	internal void Rearm()
+	{
+		Processes.Clear();
+		foreach (var step in _steps)
+			Processes.Enqueue(step);
+		_currentProcessable = null;
+		cancellationRequested = false;
+		Result = ProcessBookResult.None;
+		Status = ProcessBookStatus.Queued;
 	}
 
 	/// <summary>The license an earlier step for this book obtained, for the steps that follow it to reuse.</summary>
@@ -419,88 +433,25 @@ public sealed class LiberationJob
 
 	#region Failure Handler
 
-	private async Task<ProcessBookResult> GetFailureActionAsync(LibraryBook libraryBook)
+	private ProcessBookResult GetFailureResult()
 	{
-		LogError($"ERROR. All books have not been processed. Book failed: {libraryBook.Book}");
+		LogError($"ERROR. All books have not been processed. Book failed: {LibraryBook.Book}");
 
 		var action = Configuration.BadBook switch
 		{
 			Configuration.BadBookAction.Abort => Configuration.BadBookAction.Abort,
 			Configuration.BadBookAction.Retry => Configuration.BadBookAction.Retry,
 			Configuration.BadBookAction.Ignore => Configuration.BadBookAction.Ignore,
-			Configuration.BadBookAction.Ask or _ => await AskBadBookActionAsync()
+			_ => _badBookSession?.Override
 		};
 
-		if (action is Configuration.BadBookAction.Ignore)
+		return action switch
 		{
-			await libraryBook.UpdateBookStatusAsync(LiberatedStatus.Error);
-			LogInfo($"Error. Skip: [{libraryBook.Book.AudibleProductId}] {libraryBook.Book.TitleWithSubtitle}");
-		}
-
-		return action is Configuration.BadBookAction.Ignore ? ProcessBookResult.FailedSkip
-			 : action is Configuration.BadBookAction.Abort ? ProcessBookResult.FailedAbort
-			 : ProcessBookResult.FailedRetry;
-	}
-
-	/// <summary>
-	/// Asks the user what to do with a failed book, at most one dialog at a time. Without the gate,
-	/// three books failing together put three modals on screen racing to set the same session
-	/// override, and the user answers a question two of them no longer needed to ask.
-	/// </summary>
-	private async Task<Configuration.BadBookAction> AskBadBookActionAsync()
-	{
-		if (_badBookSession is null)
-			return await ShowRetryDialogAsync();
-
-		if (_badBookSession.Override is Configuration.BadBookAction alreadyAnswered)
-			return alreadyAnswered;
-
-		await _badBookSession.DialogGate.WaitAsync();
-		try
-		{
-			// Re-checked after the wait: the book ahead of us may have answered "apply to all".
-			if (_badBookSession.Override is Configuration.BadBookAction answeredWhileWaiting)
-				return answeredWhileWaiting;
-
-			return await ShowRetryDialogAsync();
-		}
-		finally
-		{
-			_badBookSession.DialogGate.Release();
-		}
-	}
-
-	private async Task<Configuration.BadBookAction> ShowRetryDialogAsync()
-	{
-		try
-		{
-			var result = await _interaction.AskBadBookAsync(this);
-
-			// This is the book the user was looking at when they said stop, so this is the book whose
-			// row should say so afterwards. Every other book in flight inherits the answer through
-			// Override below and was cancelled by it, which is a different thing and should read as
-			// one. Written before Override, not after: a book reading Override and racing ahead to
-			// the queue loop must not find the originator still unset and conclude there wasn't one.
-			if (result.Action is Configuration.BadBookAction.Abort && _badBookSession is not null)
-				_badBookSession.AbortOriginator = this;
-
-			// Abort is a statement about the run, not about this one book, so it becomes the session
-			// answer whether or not "apply to all" was checked. Without this a user who aborts with
-			// several books in flight is asked the same question again by every one of them, and the
-			// run they just stopped keeps prompting.
-			if (result.ApplyToAll || result.Action is Configuration.BadBookAction.Abort)
-				_badBookSession?.Override = result.Action;
-
-			if (result.RememberInSettings)
-				Configuration.BadBook = result.Action;
-
-			return result.Action;
-		}
-		catch (Exception ex)
-		{
-			Serilog.Log.Logger.Error(ex, "Error showing retry dialog. Defaulting to 'Retry'; action.");
-			return Configuration.BadBookAction.Retry;
-		}
+			Configuration.BadBookAction.Ignore => ProcessBookResult.FailedSkip,
+			Configuration.BadBookAction.Abort => ProcessBookResult.FailedAbort,
+			Configuration.BadBookAction.Retry => ProcessBookResult.FailedRetry,
+			_ => ProcessBookResult.AwaitingDecision
+		};
 	}
 
 	#endregion
