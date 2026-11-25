@@ -50,7 +50,7 @@ public class SearchEngine
 			{ FieldType.String, lb => lb.Book.AuthorNames, "AuthorNames", "Author", "Authors" },
 			{ FieldType.String, lb => lb.Book.NarratorNames, "NarratorNames", "Narrator", "Narrators" },
 			{ FieldType.String, lb => lb.Book.Publisher, nameof(Book.Publisher) },
-			{ FieldType.String, lb => lb.Book.SeriesNames(), "SeriesNames", "Narrator", "Series" },
+			{ FieldType.String, lb => lb.Book.SeriesNames(), "SeriesNames", "Series" },
 			{ FieldType.String, lb => string.Join(", ", lb.Book.SeriesLink.Select(s => s.Series.AudibleSeriesId)), "SeriesId" },
 			{ FieldType.String, lb => lb.Book.AllCategoryIds() is not { } categories ? null : string.Join(", ", categories), "CategoriesId", "CategoryId" },
 			{ FieldType.String, lb => lb.Book.AllCategoryNames() is null ? null : string.Join(", ", lb.Book.AllCategoryNames()), "Category", "Categories", "CategoriesNames" },
