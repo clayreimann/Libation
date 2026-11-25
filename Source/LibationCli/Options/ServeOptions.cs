@@ -103,6 +103,13 @@ internal class ServeOptions : OptionsBase
 			return;
 		}
 
+		if (MasterKeyPreflight.Check(filesDir) is { } keyProblem)
+		{
+			Console.Error.WriteLine(keyProblem);
+			Environment.ExitCode = (int)ExitCode.RunTimeError;
+			return;
+		}
+
 		if (!TryInitializeSetup(ephemeralSettings: readonlyDir is not null))
 			return;
 

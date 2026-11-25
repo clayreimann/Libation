@@ -78,11 +78,24 @@ public static class IdentityTokenStorageWiring
 	{
 		ArgumentNullException.ThrowIfNull(config);
 
+		if (TryResolveSuppliedKeyStore(config.LibationFiles.Location) is { } supplied)
+			return supplied;
+
+		var osStore = OsSecretStore.Create(ApplicationName);
+		if (osStore.IsAvailable)
+			return osStore;
+
+		return TryCreateLastResortPortableMasterKeyStore(config);
+	}
+
+	/// <summary>Store for a user-supplied key (env file, default file, env value), or null when none was supplied; never touches the OS store.</summary>
+	public static IOsSecretStore? TryResolveSuppliedKeyStore(string libationFilesDir)
+	{
 		var keyFileEnv = Environment.GetEnvironmentVariable(MasterKeyFileEnvVar);
 		if (!string.IsNullOrWhiteSpace(keyFileEnv))
 			return LoadMasterKeyFileOrUnavailable(keyFileEnv.Trim());
 
-		var defaultKeyPath = Path.Combine(config.LibationFiles.Location, DefaultMasterKeyFileName);
+		var defaultKeyPath = Path.Combine(libationFilesDir, DefaultMasterKeyFileName);
 		if (File.Exists(defaultKeyPath))
 			return LoadMasterKeyFileOrUnavailable(defaultKeyPath);
 
@@ -90,11 +103,7 @@ public static class IdentityTokenStorageWiring
 		if (!string.IsNullOrWhiteSpace(keyEnv))
 			return LoadMasterKeyBase64OrUnavailable(keyEnv.Trim());
 
-		var osStore = OsSecretStore.Create(ApplicationName);
-		if (osStore.IsAvailable)
-			return osStore;
-
-		return TryCreateLastResortPortableMasterKeyStore(config);
+		return null;
 	}
 
 	/// <summary>True when the OS secret store can hold Libation's encryption master key.</summary>
