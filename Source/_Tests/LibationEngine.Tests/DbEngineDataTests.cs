@@ -386,6 +386,28 @@ public class DbEngineDataTests
 	}
 
 	[TestMethod]
+	public void Podcast_parent_series_is_the_parents_own_links_as_in_the_desktop_grid()
+	{
+		using (var context = DbContexts.GetContext())
+		{
+			var linked = new Book(new AudibleProductId("B0LINKED001"), "Linked Show", "", "", 0, ContentType.Parent, [new Contributor("host")], [new Contributor("host")], "us");
+			linked.UpsertSeries(new Series(new AudibleSeriesId("B0LINKED001"), "Linked Show"), "");
+			var bare = new Book(new AudibleProductId("B0BARE000001"), "Bare Show", "", "", 0, ContentType.Parent, [new Contributor("host")], [new Contributor("host")], "us");
+			var one = new Book(new AudibleProductId("B0EPISODE02"), "Linked Episode", "", "", 5, ContentType.Episode, [new Contributor("host")], [new Contributor("host")], "us");
+			one.UpsertSeries(new Series(new AudibleSeriesId("B0LINKED001"), "Linked Show"), "1");
+			var two = new Book(new AudibleProductId("B0EPISODE03"), "Bare Episode", "", "", 5, ContentType.Episode, [new Contributor("host")], [new Contributor("host")], "us");
+			two.UpsertSeries(new Series(new AudibleSeriesId("B0BARE000001"), "Bare Show"), "1");
+			foreach (var b in new[] { linked, bare, one, two })
+				context.LibraryBooks.Add(new LibraryBook(b, new DateTime(2020, 1, 1), "acct"));
+			context.SaveChanges();
+		}
+
+		var parents = data.GetPodcastParents().ToDictionary(p => p.Asin);
+		Assert.AreEqual("Linked Show", parents["B0LINKED001"].Series.Single().Name);
+		Assert.AreEqual(0, parents["B0BARE000001"].Series.Count);
+	}
+
+	[TestMethod]
 	public void LocateScan_rejects_folders_outside_Books()
 	{
 		var elsewhere = Path.Combine(directory, "elsewhere");

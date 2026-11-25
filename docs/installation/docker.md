@@ -115,7 +115,7 @@ Off by default. `--api` (or `LIBATION_API=1`) serves a JSON API under `/api` on 
 
 Each book carries categories, product and personal ratings, `hasPdf`, `isAudiblePlus`, `includedUntil`, last-download time, version and format, `isSpatial`, `pictureId`, `parentAsin` (podcast episodes) and `absentFromLastScan`. `partialDownload` (a half-downloaded file in the in-progress folder) is on every book, from one cached folder listing per page. `GET /api/library/{asin}` adds the description, publisher, language, copyright, category ladders and `audioFileExists`, a per-book file check that list pages skip. Fields that are not nullable are `required` in the OpenAPI document, and `bookStatus`, `pdfStatus`, queue `state`, and `result` and `status` on finished jobs and `BookFinished` are string enums there with the same values as on the wire.
 
-Podcast parent rows are not in `/api/library`, as in the app's index. Each episode has `parentAsin`, and `GET /api/library/podcasts?q=&trash=` returns the parents (`isPodcastParent: true`) of the episodes the same `q` and `trash` match, ordered by title.
+Podcast parent rows are not in `/api/library`, as in the app's index. Each episode has `parentAsin`, and `GET /api/library/podcasts?q=&trash=` returns the parents (`isPodcastParent: true`) of the episodes the same `q` and `trash` match, ordered by title. A parent's `series` holds only its own series links, as the app's Series column does, so it is often empty.
 
 `GET /api/library/export?format=csv|xlsx|json&q=&trash=` downloads the same file as the app's Export and `libationcli export`, newest first, filtered like `/api/library`, as `libation-library-YYYYMMDD.<ext>` (`libation-trash-…` with `trash=true`). A bad `format` or `q` returns `400`.
 
