@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="MSTest" Version="4.5.3" />
 	<PackageReference Include="Google.Protobuf" Version="3.36.2" />
+	<PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />
     <!-- The Liberate icon tests rasterize with SkiaSharp, whose Linux native isn't
          brought in by the SkiaSharp package itself the way Windows' and macOS' are.
          Bounded to [3.119.4, 4.0.0) to match LibationUiBase and Avalonia.Skia. -->

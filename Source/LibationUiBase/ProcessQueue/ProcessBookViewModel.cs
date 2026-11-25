@@ -366,10 +366,13 @@ public class ProcessBookViewModel : ReactiveObject
 	public ProcessBookViewModel AddSimulateBadBookFailure() => AddProcessable<SimulateBadBookFailure>();
 
 	private ProcessBookViewModel AddProcessable<T>() where T : Processable, IProcessable<T>
+		=> AddProcessable(T.Create);
+
+	internal ProcessBookViewModel AddProcessable(Func<Configuration, Processable> create)
 	{
 		Processes.Enqueue(() =>
 		{
-			var processable = T.Create(Configuration);
+			var processable = create(Configuration);
 
 			// Each step is created as it is reached, so by now an earlier step has published whatever license
 			// it obtained. Handing it on is what keeps a title to one license request per run.

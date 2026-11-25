@@ -50,6 +50,11 @@ public class ProcessQueueViewModel : ReactiveObject
 	internal Func<ProcessBookViewModel, Task<ProcessBookResult>> ProcessBookHandler { get; set; }
 		= book => book.ProcessOneAsync();
 
+	internal TimeProvider Clock { get; set; } = TimeProvider.System;
+
+	internal Func<DateTimeOffset, IReadOnlyList<DownloadHistoryEntry>> DownloadHistory { get; set; }
+		= DownloadHistoryStore.GetCurrentWindow;
+
 	public ProcessQueueViewModel()
 	{
 		// The queue is mutated from book threads and read by index from the UI thread, so its
@@ -570,8 +575,8 @@ public class ProcessQueueViewModel : ReactiveObject
 				return DailyLimitGate.Cancelled;
 			}
 
-			var now = DateTimeOffset.Now;
-			var allowance = DailyDownloadLimit.Evaluate(Configuration.Instance, DownloadHistoryStore.GetCurrentWindow(now), now);
+			var now = Clock.GetLocalNow();
+			var allowance = DailyDownloadLimit.Evaluate(Configuration.Instance, DownloadHistory(now), now);
 
 			if (!allowance.Blocks(nextBook.LibraryBook.IsAudiblePlus))
 			{
@@ -609,7 +614,7 @@ public class ProcessQueueViewModel : ReactiveObject
 
 			nextBook.StatusOverride = DailyDownloadLimitUserMessage.BuildWaitingStatus(allowance);
 
-			await Task.Delay(DailyLimitPollInterval);
+			await Task.Delay(DailyLimitPollInterval, Clock);
 		}
 	}
 
