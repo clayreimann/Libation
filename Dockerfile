@@ -17,11 +17,14 @@ FROM mcr.microsoft.com/dotnet/runtime:10.0 AS libationd
 ARG USER_UID=1001
 ARG USER_GID=1001
 
+# Set the character set that will be used for folder and filenames when liberating
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 LIBATION_FILES_DIR=/config LIBATION_BOOKS_DIR=/data
 
 RUN mkdir -m777 /config /data
 
 COPY --from=build /Source/bin/Publish/Linux-chardonnay /libation
+
+RUN ln -s /libation/LibationCli /usr/local/bin/LibationCli
 
 USER ${USER_UID}:${USER_GID}
 
@@ -29,33 +32,3 @@ EXPOSE 8080
 HEALTHCHECK CMD ["/libation/LibationCli","health"]
 ENTRYPOINT ["/libation/LibationCli"]
 CMD ["serve"]
-
-FROM mcr.microsoft.com/dotnet/runtime:10.0
-ARG USER_UID=1001
-ARG USER_GID=1001
-
-# Set the character set that will be used for folder and filenames when liberating
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
-
-ENV SLEEP_TIME=-1
-ENV LIBATION_CONFIG_INTERNAL=/config-internal
-ENV LIBATION_CONFIG_DIR=/config
-ENV LIBATION_DB_DIR=/db
-ENV LIBATION_DB_FILE=
-ENV LIBATION_CREATE_DB=true
-ENV LIBATION_BOOKS_DIR=/data
-
-
-RUN apt-get update && apt-get -y upgrade && \
-    apt-get install -y jq && \
-    mkdir -m777 ${LIBATION_CONFIG_INTERNAL} ${LIBATION_BOOKS_DIR}
-
-COPY --from=build /Source/bin/Publish/Linux-chardonnay /libation
-COPY Docker/liberate.sh Docker/appsettings.json /libation/
-
-RUN ln -s /libation/LibationCli /usr/local/bin/LibationCli
-
-USER ${USER_UID}:${USER_GID}
-
-ENTRYPOINT ["/libation/liberate.sh"]

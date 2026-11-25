@@ -1,6 +1,7 @@
 services:
   libationd:
     image: ghcr.io/clayreimann/libation:libationd
+    # See docs/installation/docker.md
     command: ["serve", "--reconcile-on-start"]
     restart: unless-stopped
     environment:

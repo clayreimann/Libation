@@ -40,6 +40,10 @@ public class ServeHealthOptionsTests
 	}
 
 	[TestMethod]
+	public void Serve_parses_once()
+		=> Assert.IsTrue(Parse<ServeOptions>("serve", "--once").Once);
+
+	[TestMethod]
 	public void Serve_parses_readonly_config()
 		=> Assert.AreEqual("/ro", Parse<ServeOptions>("serve", "--readonly-config", "/ro").ReadonlyConfigDir);
 

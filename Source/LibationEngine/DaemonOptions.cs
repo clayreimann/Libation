@@ -6,7 +6,8 @@ public sealed record DaemonOptions(
 	string ListenUrl,
 	string LibationFilesDir,
 	string? MetricsFile = null,
-	string? AccountsImportPath = null);
+	string? AccountsImportPath = null,
+	bool Once = false);
 
 /// <summary>Each delegate returns a process-style exit code; 0 is success.</summary>
 public sealed record DaemonJobs(

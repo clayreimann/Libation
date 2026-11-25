@@ -15,8 +15,10 @@ public class CycleSchedulerTests
 		public string Metrics { get; } = dir.File("m.prom");
 		public CycleState State { get; } = new();
 
+		public bool Once;
+
 		public CycleScheduler Create() => new(
-			new DaemonOptions(interval ?? TimeSpan.FromMilliseconds(10), reconcile, "http://127.0.0.1:0", dir.Path, Metrics),
+			new DaemonOptions(interval ?? TimeSpan.FromMilliseconds(10), reconcile, "http://127.0.0.1:0", dir.Path, Metrics, Once: Once),
 			new DaemonJobs(
 				_ => { Interlocked.Increment(ref ScanCalls); return Task.FromResult(ScanRc); },
 				_ => { Interlocked.Increment(ref LiberateCalls); return Task.FromResult(LiberateRc); },
@@ -126,6 +128,36 @@ public class CycleSchedulerTests
 		Assert.AreEqual(0, await run);
 		Assert.AreEqual(1, h.ReconcileCalls);
 		Assert.IsGreaterThanOrEqualTo(2, h.ScanCalls);
+	}
+
+	[TestMethod]
+	public async Task Once_runs_a_single_cycle_and_returns_the_liberate_code()
+	{
+		using var dir = new TempDir();
+		var h = new Harness(dir) { Once = true, LiberateRc = 4 };
+
+		Assert.AreEqual(4, await h.Create().RunAsync(CancellationToken.None));
+		Assert.AreEqual(1, h.ScanCalls);
+	}
+
+	[TestMethod]
+	public async Task Once_returns_the_scan_code_when_the_scan_failed()
+	{
+		using var dir = new TempDir();
+		var h = new Harness(dir) { Once = true, ScanRc = 3, LiberateRc = 4 };
+
+		Assert.AreEqual(3, await h.Create().RunAsync(CancellationToken.None));
+		Assert.AreEqual(0, h.LiberateCalls);
+	}
+
+	[TestMethod]
+	public async Task Once_still_reconciles_first_and_stops_on_failure()
+	{
+		using var dir = new TempDir();
+		var h = new Harness(dir, reconcile: true) { Once = true, ReconcileRc = 1 };
+
+		Assert.AreEqual(3, await h.Create().RunAsync(CancellationToken.None));
+		Assert.AreEqual(0, h.ScanCalls);
 	}
 
 	[TestMethod]

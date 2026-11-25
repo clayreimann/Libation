@@ -2,9 +2,7 @@
 
 > [!WARNING] Breaking Changes
 >
-> - The docker image now runs as user 1001 and group 1001. Make sure that the permissions on your volumes allow user 1001 to read and write to them or see the User section below for other options, or if you're not sure.
-> - `SLEEP_TIME` is now set to `-1` by default. This means the image will run once and exit. If you were relying on the previous default, you'll need to explicitly set the `SLEEP_TIME` environment variable to `30m` to replicate the previous behavior.
-> - The docker image now ignores the values in `Settings.json` for `Books` and `InProgress`. You can now change the folder that books are saved to by using the `LIBATION_BOOKS_DIR` environment variable.
+> The image now runs `LibationCli serve` directly instead of a shell script. See [Upgrading from the shell-script image](#upgrading-from-the-shell-script-image) for the changes that may affect your setup.
 
 ## Disclaimer
 
@@ -21,7 +19,7 @@ The docker image is provided as-is. We hope it can be useful to you but it is no
 > - **GUI:** Settings -> Important -> **Export encryption key...**
 > - **CLI:** `LibationCli export-master-key libation-master.key`
 >
-> Copy `libation-master.key` into the same Docker config folder as `AccountsSettings.json` (mounted at `/config`). Libation loads it automatically. Alternatively set `LIBATION_MASTER_KEY_FILE` to the key path, or `LIBATION_MASTER_KEY` to the Base64-encoded key. Treat the key file like a password.
+> Copy `libation-master.key` into the same Docker config folder as `AccountsSettings.json` (mounted at `/config`). Libation loads it automatically. Alternatively set `LIBATION_MASTER_KEY_FILE` to the raw key file path, or `LIBATION_MASTER_KEY` to the Base64-encoded key. Treat the key file like a password.
 >
 > **Other fixes:** On Windows, **Settings -> Important**, uncheck **Store authentication tokens encrypted**, convert existing tokens to plaintext when prompted, then re-copy `AccountsSettings.json`. Or skip copying Windows accounts and use `login-external` / `import-account` inside the container (see below).
 >
@@ -41,7 +39,7 @@ The docker image is provided as-is. We hope it can be useful to you but it is no
 >
 > To stop a scheduled container from downloading your whole library at once, see [Daily download limit](/docs/features/daily-download-limit#docker-and-the-command-line). It is off unless you add the keys to your mounted `Settings.json`. Download counts live in Libation's database, so they survive container restarts when that database is on a volume.
 
-Configuration in Libation is handled by two files, `AccountsSettings.json` and `Settings.json`. These files can usually be found in the Libation folder in your user's home directory. The easiest way to configure these is to run the desktop version of Libation and then copy them into a folder, such as `/opt/libation/config`, that you'll volume mount into the image. `Settings.json` is technically optional, and, if not provided, Libation will run using the default settings. Additionally, the `Books` and `InProgress` settings in `Settings.json` will be ignored and the image will instead substitute it's own values. If tokens in that file are encrypted on the desktop, also copy the exported `libation-master.key` (see the encrypted-tokens warning above).
+Configuration in Libation is handled by two files, `AccountsSettings.json` and `Settings.json`. These files can usually be found in the Libation folder in your user's home directory. The easiest way to configure these is to run the desktop version of Libation and then copy them into a folder, such as `/opt/libation/config`, that you'll volume mount into the image. `Settings.json` is technically optional, and, if not provided, Libation will run using the default settings. The `Books` folder is taken from `LIBATION_BOOKS_DIR` (default `/data`) when set, overriding `Settings.json`. If tokens in that file are encrypted on the desktop, also copy the exported `libation-master.key` (see the encrypted-tokens warning above).
 
 ### Adding Audible accounts without the GUI
 
@@ -58,13 +56,13 @@ If you run Libation on a server or in Docker and do not want to copy `AccountsSe
 
 For full syntax, overrides, and the `--libationFiles` option (or the `LIBATION_FILES_DIR` environment variable) when your Libation data directory is not the default, see [Command Line Interface](/docs/advanced/command-line-interface).
 
-Docker tip: The entrypoint script copies your mounted config into an internal path before running LibationCli. To add or refresh accounts against the mounted volume, `docker exec` into a running container and point LibationCli at `/config` (so changes persist on the host):
+Docker tip: The image's Libation files directory is `/config`, so LibationCli commands run in the container already use your mounted volume:
 
 ```bash
-docker exec -it libation LibationCli login-external --libationFiles /config --locale us --account you@example.com
+docker exec -it libation LibationCli login-external --locale us --account you@example.com
 ```
 
-You can also start a container with an interactive shell instead of the default liberate loop (see [Interactive Shell](#interactive-shell) below), or run LibationCli on any host where you can point `--libationFiles` (or `LIBATION_FILES_DIR`) at the folder that you later mount as `/config` on the server.
+You can also start a container with an interactive shell instead of the default `serve` (see [Interactive Shell](#interactive-shell) below), or run LibationCli on any host where you can point `--libationFiles` (or `LIBATION_FILES_DIR`) at the folder that you later mount as `/config` on the server.
 
 ## Running
 
@@ -79,45 +77,67 @@ sudo docker run -d \
   rmcrackan/libation:latest
 ```
 
-By default the container will scan for new books once and download any new ones. This is configurable by passing in a value for the `SLEEP_TIME` environment variable. For example, if you pass in `10m` it will keep running, scan for new books, and download them every 10 minutes.
+The container runs `LibationCli serve`: each cycle it scans for new books and downloads them, then sleeps for `SLEEP_TIME` (default `1h`). Pass `--once` (or set `SLEEP_TIME=-1`) to run a single cycle and exit with its result; this is the mode to use from cron or a scheduler.
+
+```bash
+sudo docker run --rm \
+  -v /opt/libation/config:/config \
+  -v /opt/libation/books:/data \
+  rmcrackan/libation:latest serve --once
+```
+
+`serve` also accepts `--interval`, `--reconcile-on-start` (mark existing books as downloaded before the first cycle), `--listen`, `--metrics-file`, `--accounts-import` and `--readonly-config`; run `LibationCli serve --help` for details.
+
+### Health and metrics
+
+`serve` answers `GET /health` with JSON status on `--listen` (default `http://127.0.0.1:8080`, loopback only, no authentication). The image's `HEALTHCHECK` runs `LibationCli health` against it. To reach it from the host use `--listen http://0.0.0.0:8080` and publish the port.
+
+Set `--metrics-file` (or `LIBATION_METRICS_FILE`) to write a Prometheus textfile after every cycle, suitable for node_exporter's textfile collector.
+
+### Read-only configuration
+
+When `/config` is a read-only mount (Kubernetes ConfigMaps and Secrets, for example), mount it elsewhere and give Libation a writable state folder:
 
 ```bash
 sudo docker run -d \
-  -v /opt/libation/config:/config \
+  -v /opt/libation/config:/readonly-config:ro \
+  -v /opt/libation/state:/config \
+  -e LIBATION_READONLY_CONFIG_DIR=/readonly-config \
   -v /opt/libation/books:/data \
-  -e SLEEP_TIME='10m' \
-  --name libation \
-  --restart=always \
   rmcrackan/libation:latest
 ```
 
+`Settings.json` is copied from the read-only folder on start and never written back. `AccountsSettings.json` is imported into the state folder whenever its contents change; use `LIBATION_ACCOUNTS_IMPORT` to import it from a different path.
+
 ### Interactive Shell
 
-If you pass a command to `docker run` instead of using the default, the entrypoint script still performs its normal setup (copying config into place, applying `Books`/`InProgress` overrides, and locating/creating the database) but then runs your command instead of the liberate loop. This gives you a shell with the same layout the container uses at runtime, without needing an already-running container to `docker exec` into:
+Override the entrypoint to get a shell with the same layout the container uses at runtime, without needing an already-running container to `docker exec` into:
 
 ```bash
 sudo docker run --rm -it \
   -v /opt/libation/config:/config \
   -v /opt/libation/books:/data \
-  rmcrackan/libation:latest bash
+  --entrypoint bash \
+  rmcrackan/libation:latest
 ```
 
-From there you can run `LibationCli import-account ...`, `LibationCli login-external ...`, or any other one-off command against the mounted config.
+Or run any one-off command directly, for example `docker run --rm -it -v /opt/libation/config:/config rmcrackan/libation:latest list-accounts`.
 
 ## Environment Variables
 
-| Env Var                    | Default | Description                                                                                                           |
-| -------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
-| SLEEP_TIME                 | -1      | Length of time to sleep before doing another scan/download. Set to -1 to run one.                                     |
-| LOG_LEVEL                  |         | Set to `debug` to enable debug-level log messages from the entrypoint script.                                         |
-| LIBATION_BOOKS_DIR         | /data   | Folder where books will be saved                                                                                      |
-| LIBATION_CONFIG_DIR        | /config | Folder to read configuration from.                                                                                    |
-| LIBATION_DB_DIR            | /db     | Optional folder to load database from. If not mounted, will load database from `LIBATION_CONFIG_DIR`.                 |
-| LIBATION_DB_FILE           |         | Name of database file to load. By default it will look for all `.db` files and load one if there is only one present. |
-| LIBATION_CREATE_DB         | true    | Whether or not the image should create a database file if none are found.                                             |
-| LIBATION_CONNECTION_STRING |         | Connection string for Postgresql. If not present, Libation uses the default sqlite.                                   |
-| LIBATION_MASTER_KEY_FILE   |         | Path to a raw 32-byte master key file (from `export-master-key`). If unset, Libation also looks for `libation-master.key` under the Libation files / config directory. |
-| LIBATION_MASTER_KEY        |         | Base64-encoded 32-byte master key (alternative to a key file).                                                        |
+| Env Var                           | Default | Description                                                                                                                                                              |
+| --------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SLEEP_TIME                        | 1h      | Time between cycles (`30m`, `90s`, `1d`, ...). `-1` runs one cycle and exits, same as `--once`.                                                                          |
+| LIBATION_BOOKS_DIR                | /data   | Folder where books will be saved. Overrides `Books` in `Settings.json`.                                                                                                  |
+| LIBATION_FILES_DIR                | /config | Libation files folder (`Settings.json`, `AccountsSettings.json`, database). `LIBATION_CONFIG_DIR` is accepted as an alias.                                               |
+| LIBATION_READONLY_CONFIG_DIR      |         | Read-only source for `Settings.json` and `AccountsSettings.json`; see above. Must differ from `LIBATION_FILES_DIR`.                                                      |
+| LIBATION_ACCOUNTS_IMPORT          |         | Path of an `AccountsSettings.json` to import into the files folder when its contents change.                                                                             |
+| LIBATION_METRICS_FILE             |         | Path of the Prometheus textfile to write after each cycle.                                                                                                               |
+| LIBATION_SQLITE_PATH              |         | Full path of the SQLite database file, e.g. on a separate writable volume. Defaults to `LibationContext.db` in the files folder.                                         |
+| LIBATION_CONNECTION_STRING        |         | Connection string for Postgresql. If not present, Libation uses the default sqlite.                                                                                      |
+| LIBATION_CONNECTION_STRING_FILE   |         | Path of a file containing the connection string (for Docker/Kubernetes secrets). `LIBATION_CONNECTION_STRING` wins if both are set.                                      |
+| LIBATION_MASTER_KEY_FILE          |         | Path to a raw 32-byte master key file (from `export-master-key`). If unset, Libation also looks for `libation-master.key` under the Libation files directory.            |
+| LIBATION_MASTER_KEY               |         | Base64-encoded 32-byte master key (alternative to a key file).                                                                                                           |
 
 ## User
 
@@ -139,6 +159,18 @@ sudo docker run -d \
 
 If the user it's running as is correct, and it still cannot write, be sure to check whether the files and/or folders might be owned by the wrong user. You can use the `chown` command to change the owner of the file to the correct user and group number, for example: `chown -R 1001:1001 /mnt/audiobooks /mnt/libation-config`
 
+## Upgrading from the shell-script image
+
+Earlier images ran `liberate.sh`. That script, `jq`, and the `/config-internal` staging folder are gone; the image runs `LibationCli serve` against `/config` directly.
+
+- `SLEEP_TIME` now defaults to `1h` (it was `-1`). Set `SLEEP_TIME=-1` or pass `serve --once` to keep the run-once behavior.
+- `Books` comes from `LIBATION_BOOKS_DIR` only when that variable is set (the image sets it to `/data`). `InProgress` is no longer forced to `/tmp`; it follows `Settings.json`.
+- Mounting `/config` read-only: mount it at another path, set `LIBATION_READONLY_CONFIG_DIR` to that path, and mount a writable volume at `/config`.
+- `LIBATION_DB_DIR` and `LIBATION_DB_FILE` are replaced by `LIBATION_SQLITE_PATH` (the full path of the database file). The database is no longer discovered by scanning for `*.db` files.
+- `LIBATION_CREATE_DB` and `LOG_LEVEL` no longer exist; the database is created when missing.
+- `LIBATION_CONFIG_DIR` still works as an alias for `LIBATION_FILES_DIR`.
+- Custom commands: arguments to `docker run` are now `LibationCli` arguments, not a command to run in place of the script. Use `--entrypoint` for a shell.
+
 ## Troubleshooting
 
 - **`Failed to decrypt ExistingAccessToken` (scan finds no books after copying Windows config):** See the [encrypted-tokens warning](#configuration) at the top of Configuration, plus [Troubleshooting](/docs/advanced/troubleshoot#failed-to-decrypt-existingaccesstoken-docker-finds-no-new-books) and the [FAQ](/docs/frequently-asked-questions#docker-finds-no-new-books-failed-to-decrypt-existingaccesstoken).
@@ -147,13 +179,12 @@ If the user it's running as is correct, and it still cannot write, be sure to ch
 
 ## Advanced Database Options
 
-The docker image supports an optional database mount location defined by `LIBATION_DB_DIR`. This allows the database to be mounted as read/write, while allowing the rest of the configuration files to be mounted as read only. This is specifically useful if running in Kubernetes where you can use Configmaps and Secrets to define the configuration. If the `LIBATION_DB_DIR` is mounted, it will be used, otherwise it will look for the database in `LIBATION_CONFIG_DIR`. If it does not find the database in the expected location, it will attempt to make an empty database there.
+Set `LIBATION_SQLITE_PATH` to put the SQLite database on a different volume than the rest of the configuration, so the configuration can be mounted read-only (see [Read-only configuration](#read-only-configuration)). If the file does not exist Libation creates it.
 
 ## Logging
 
-LibationCli already writes a `LogYYYYMM.log` file (rolling monthly) using the same logging setup as the desktop apps — no extra configuration is required to generate it. However, in the docker image the log is written to an internal path (`/config-internal`) that isn't persisted or mounted by any of the examples above, so it disappears when the container is removed. To keep it around, use one of the following:
+LibationCli already writes a `LogYYYYMM.log` file (rolling monthly) using the same logging setup as the desktop apps — no extra configuration is required to generate it. In the docker image the log is written to the Libation files folder (`/config`), so it persists with your config volume. To keep it elsewhere:
 
-- **Mount the internal config path**, e.g. add `-v /opt/libation/logs:/config-internal` to your `docker run` command. Note that this directory also holds the staged copies of `AccountsSettings.json`/`Settings.json` and the database symlink, which are regenerated from `/config`/`/db` on every container start.
 - **Point the log file at an already-mounted directory** by adding a `Serilog` section to your `Settings.json` (in your `/config` volume) with a `File` sink `path` pointing somewhere persisted, such as `/data/Log.log`. Libation uses an existing `Serilog` section as-is apart from filling in the size-rolling arguments described below when they are missing:
 
   ```json

@@ -23,8 +23,8 @@ public static class LibationDaemon
 
 		var state = new CycleState();
 		var scheduler = new CycleScheduler(options, jobs, state, time);
-		using var health = new HealthServer(options.ListenUrl, state);
-		health.Start();
+		using var health = options.Once ? null : new HealthServer(options.ListenUrl, state);
+		health?.Start();
 
 		return await scheduler.RunAsync(cts.Token);
 	}

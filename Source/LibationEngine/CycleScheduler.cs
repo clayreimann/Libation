@@ -46,6 +46,9 @@ public sealed class CycleScheduler
 				}
 			}
 
+			if (options.Once)
+				return await RunCycleAsync(ct);
+
 			while (!ct.IsCancellationRequested)
 			{
 				await RunCycleAsync(ct);
@@ -59,7 +62,8 @@ public sealed class CycleScheduler
 		return 0;
 	}
 
-	public async Task RunCycleAsync(CancellationToken ct)
+	/// <summary>Returns the scan exit code if the scan failed, else the liberate exit code.</summary>
+	public async Task<int> RunCycleAsync(CancellationToken ct)
 	{
 		state.SetNextRun(null);
 		try
@@ -88,6 +92,7 @@ public sealed class CycleScheduler
 
 		state.Set(DaemonState.Idle);
 		WriteMetrics(time.GetUtcNow().ToUnixTimeSeconds(), scanRc);
+		return scanRc != 0 ? scanRc : liberateRc;
 	}
 
 	private void WriteMetrics(long runTs, int scanRc)

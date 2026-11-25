@@ -1,5 +1,6 @@
 using CommandLine;
 using LibationEngine;
+using LibationFileManager;
 using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
@@ -15,6 +16,9 @@ internal class ServeOptions : OptionsBase
 
 	[Option("reconcile-on-start", HelpText = "Run 'scan' then 'set-status --downloaded' before the first cycle. A failure exits with code 3.")]
 	public bool ReconcileOnStart { get; set; }
+
+	[Option("once", HelpText = "Run reconcile (if asked) and one cycle, then exit with its result. SLEEP_TIME=-1 does the same.")]
+	public bool Once { get; set; }
 
 	[Option("listen", HelpText = "URL for the /health endpoint. Default: http://127.0.0.1:8080")]
 	public string? Listen { get; set; }
@@ -33,7 +37,8 @@ internal class ServeOptions : OptionsBase
 	protected override async Task ProcessAsync()
 	{
 		var intervalText = Interval ?? Environment.GetEnvironmentVariable("SLEEP_TIME");
-		if (string.IsNullOrWhiteSpace(intervalText))
+		var once = Once || (Interval is null && intervalText?.Trim() == "-1");
+		if (once || string.IsNullOrWhiteSpace(intervalText))
 			intervalText = "1h";
 		if (!IntervalParser.TryParse(intervalText, out var interval))
 		{
@@ -42,7 +47,9 @@ internal class ServeOptions : OptionsBase
 			return;
 		}
 
-		var filesDir = LibationFiles?.FullName ?? Environment.GetEnvironmentVariable(LibationFileManager.LibationFiles.LIBATION_FILES_DIR);
+		var filesDir = LibationFiles?.FullName
+			?? Environment.GetEnvironmentVariable(LibationFileManager.LibationFiles.LIBATION_FILES_DIR)
+			?? Environment.GetEnvironmentVariable("LIBATION_CONFIG_DIR");
 		if (string.IsNullOrWhiteSpace(filesDir))
 		{
 			Console.Error.WriteLine($"serve needs a LibationFiles directory: use '--libationFiles' or the '{LibationFileManager.LibationFiles.LIBATION_FILES_DIR}' environment variable.");
@@ -102,6 +109,9 @@ internal class ServeOptions : OptionsBase
 		if (readonlyDir is not null)
 			Serilog.Log.Logger.Information("Read-only config from {ReadonlyDir}; writable LibationFiles at {LibationFiles}", readonlyDir, filesDir);
 
+		if (Environment.GetEnvironmentVariable("LIBATION_BOOKS_DIR") is { Length: > 0 } booksDir)
+			Configuration.Instance.Books = booksDir;
+
 		if (SettingOverrides is not null)
 			ProcessSettingsOverrides();
 
@@ -111,7 +121,8 @@ internal class ServeOptions : OptionsBase
 			Listen ?? "http://127.0.0.1:8080",
 			filesDir,
 			MetricsFile ?? Environment.GetEnvironmentVariable("LIBATION_METRICS_FILE"),
-			accountsImport);
+			accountsImport,
+			once);
 
 		var jobs = new DaemonJobs(
 			_ => new ScanOptions().ExecuteAsync(),
