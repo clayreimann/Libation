@@ -28,11 +28,64 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Accounts: id, name, locale and library-scan flag. Never tokens. */
+        /** Accounts: id, name, locale, library-scan flag, authState (signedIn or needsLogin), credentials (modern, legacy or none) and extra marketplaces. Never tokens. */
         get: operations["getAccounts"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/accounts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Removes an account. Its books stay in the library, as in the app. 200 with the removed account, 404 unknown, 409 ambiguous id (add ?locale=), accounts managed by an import file, or not writable. */
+        delete: operations["deleteAccount"];
+        options?: never;
+        head?: never;
+        /** Renames an account and/or sets whether it is scanned. The marketplace cannot change; add the account again for another. 200 with the account, 400 bad body, 404 unknown, 409 ambiguous id (add ?locale=), accounts managed by an import file, or not writable. */
+        patch: operations["patchAccount"];
+        trace?: never;
+    };
+    "/api/accounts/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Starts an external-browser sign-in. Open url, sign in, then post the final address-bar URL to /accounts/login/{loginId}. Needs --api-token-file (403 otherwise); 400 bad request, 409 new account while accounts come from an import file, 429 too many pending, 502 Audible unreachable. A login lasts 10 minutes and is held in memory. */
+        post: operations["startAccountLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/accounts/login/{loginId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Completes a sign-in with the final browser URL (treat it like a password; it is never logged or echoed). Single use. 200 with the account, 400 not the final URL (the login stays usable) or Audible rejected it (start again), 403 without an API token, 404 unknown, used or expired. */
+        post: operations["completeAccountLogin"];
+        /** Cancels a pending sign-in. 200, 403 without an API token, 404 unknown, used or expired. */
+        delete: operations["cancelAccountLogin"];
         options?: never;
         head?: never;
         patch?: never;
@@ -440,7 +493,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Runs a library scan now, without liberating. 202, or 409 if busy. */
+        /** Runs a library scan now, without liberating. An optional body {"accounts":["id or name"]} scans only those accounts, as the CLI's scan does; no body scans all. 202, 400 bad body or unknown account, or 409 if busy. */
         post: operations["scan"];
         delete?: never;
         options?: never;
@@ -642,9 +695,23 @@ export interface components {
     schemas: {
         AccountDto: {
             accountId: string;
-            accountName: null | string;
-            locale: null | string;
+            accountName?: null | string;
+            locale?: null | string;
             libraryScan: boolean;
+            /** @enum {string} */
+            authState: "signedIn" | "needsLogin";
+            /** @enum {string} */
+            credentials: "modern" | "legacy" | "none";
+            additionalLocales: string[];
+        };
+        AccountNeedsLogin: {
+            accountId: string;
+            /** Format: date-time */
+            at: string;
+        };
+        AccountPatchRequest: {
+            accountName?: null | string;
+            libraryScan?: null | boolean;
         };
         AudiobookshelfSettingsDto: {
             enabled: boolean;
@@ -722,7 +789,7 @@ export interface components {
         BookDto: {
             asin: string;
             title: string;
-            subtitle: null | string;
+            subtitle?: null | string;
             authors: string[];
             narrators: string[];
             series: components["schemas"]["SeriesDto"][];
@@ -731,7 +798,7 @@ export interface components {
             /** @enum {string} */
             bookStatus: "NotLiberated" | "Liberated" | "Error";
             /** @enum {null|string} */
-            pdfStatus: "NotLiberated" | "Liberated" | "Error" | null;
+            pdfStatus?: "NotLiberated" | "Liberated" | "Error" | null;
             /** Format: date-time */
             dateAdded: string;
             account: string;
@@ -746,14 +813,14 @@ export interface components {
             hasPdf: boolean;
             isAudiblePlus: boolean;
             /** Format: date-time */
-            includedUntil: null | string;
+            includedUntil?: null | string;
             /** Format: date-time */
-            lastDownloaded: null | string;
-            lastDownloadedVersion: null | string;
-            lastDownloadedFormat: null | string;
+            lastDownloaded?: null | string;
+            lastDownloadedVersion?: null | string;
+            lastDownloadedFormat?: null | string;
             isSpatial: boolean;
-            pictureId: null | string;
-            parentAsin: null | string;
+            pictureId?: null | string;
+            parentAsin?: null | string;
             absentFromLastScan: boolean;
             partialDownload: boolean;
             isPodcastParent: boolean;
@@ -798,7 +865,7 @@ export interface components {
             result: "ok" | "notFound" | "conflict";
         };
         BulkRequest: {
-            asins: null | string[];
+            asins?: null | string[];
         };
         BulkResultDto: {
             /** Format: int32 */
@@ -807,11 +874,11 @@ export interface components {
             results: components["schemas"]["BulkItemDto"][];
         };
         BulkStatusRequest: {
-            asins: null | string[];
-            status: null | string;
+            asins?: null | string[];
+            status?: null | string;
         };
         BulkTagsRequest: {
-            asins: null | string[];
+            asins?: null | string[];
             tags?: null | string;
             add?: null | string;
             remove?: null | string;
@@ -828,12 +895,12 @@ export interface components {
             at: string;
         };
         DecisionRequest: {
-            decision: null | string;
+            decision?: null | string;
             action?: null | string;
             /** @default false */
-            applyToAll: boolean;
+            applyToAll?: boolean;
             /** @default false */
-            remember: boolean;
+            remember?: boolean;
         };
         DownloadSettingsDto: {
             quality: string;
@@ -862,7 +929,7 @@ export interface components {
             lastWriteTime: string;
         };
         /** @description One server-sent event on /api/events; the SSE event name is the name of the matching schema. */
-        EngineEvent: components["schemas"]["BookFinished"] | components["schemas"]["BookLog"] | components["schemas"]["BookProgress"] | components["schemas"]["BookStarted"] | components["schemas"]["CycleFinished"] | components["schemas"]["LiberateFinished"] | components["schemas"]["LiberateStarted"] | components["schemas"]["LocateScanProgress"] | components["schemas"]["NextRunScheduled"] | components["schemas"]["QueueChanged"] | components["schemas"]["QueueDispatchPaused"] | components["schemas"]["QueueDispatchResumed"] | components["schemas"]["QueuePaused"] | components["schemas"]["QueueResumed"] | components["schemas"]["QueueWaitEnded"] | components["schemas"]["QueueWaiting"] | components["schemas"]["ScanFinished"] | components["schemas"]["ScanStarted"] | components["schemas"]["StateChanged"];
+        EngineEvent: components["schemas"]["AccountNeedsLogin"] | components["schemas"]["BookFinished"] | components["schemas"]["BookLog"] | components["schemas"]["BookProgress"] | components["schemas"]["BookStarted"] | components["schemas"]["CycleFinished"] | components["schemas"]["LiberateFinished"] | components["schemas"]["LiberateStarted"] | components["schemas"]["LocateScanProgress"] | components["schemas"]["NextRunScheduled"] | components["schemas"]["QueueChanged"] | components["schemas"]["QueueDispatchPaused"] | components["schemas"]["QueueDispatchResumed"] | components["schemas"]["QueuePaused"] | components["schemas"]["QueueResumed"] | components["schemas"]["QueueWaitEnded"] | components["schemas"]["QueueWaiting"] | components["schemas"]["ScanFinished"] | components["schemas"]["ScanStarted"] | components["schemas"]["StateChanged"];
         ErrorDto: {
             error: string;
         };
@@ -922,48 +989,51 @@ export interface components {
             savePodcastsToParentFolder: boolean;
         };
         LocateRequest: {
-            path: null | string;
+            path?: null | string;
         };
         LocateScanDto: {
             /** @enum {string} */
             state: "idle" | "running" | "completed" | "failed";
-            folder: null | string;
+            folder?: null | string;
             /** Format: int32 */
             found: number | string;
             /** Format: int32 */
             matched: number | string;
             /** Format: int32 */
             updated: number | string;
-            error: null | string;
+            error?: null | string;
             /** Format: date-time */
-            startedAt: null | string;
+            startedAt?: null | string;
             /** Format: date-time */
-            finishedAt: null | string;
+            finishedAt?: null | string;
         };
         LocateScanProgress: {
-            scan: {
-                state: string;
-                folder: null | string;
-                /** Format: int32 */
-                found: number | string;
-                /** Format: int32 */
-                matched: number | string;
-                /** Format: int32 */
-                updated: number | string;
-                error: null | string;
-                /** Format: date-time */
-                startedAt: null | string;
-                /** Format: date-time */
-                finishedAt: null | string;
-            };
+            scan: components["schemas"]["LocateScanDto"];
             /** Format: date-time */
             at: string;
         };
         LocateScanRequest: {
-            folder: null | string;
+            folder?: null | string;
+        };
+        LoginCancelDto: {
+            loginId: string;
+        };
+        LoginCompleteRequest: {
+            responseUrl?: null | string;
+        };
+        LoginStartDto: {
+            loginId: string;
+            url: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        LoginStartRequest: {
+            accountId?: null | string;
+            locale?: null | string;
+            deviceRegistration?: null | string;
         };
         MoveRequest: {
-            to: null | string;
+            to?: null | string;
         };
         NamingSettingsDto: {
             folderTemplate: string;
@@ -973,7 +1043,7 @@ export interface components {
         };
         NextRunScheduled: {
             /** Format: date-time */
-            nextRun: null | string;
+            nextRun?: null | string;
             /** Format: date-time */
             at: string;
         };
@@ -982,57 +1052,11 @@ export interface components {
             id: number | string;
             /** @enum {string} */
             reason: "badBook" | "licenseGuidance" | "widevineGuidance" | "diskFull";
-            jobId: null | string;
+            jobId?: null | string;
             allowed: string[];
         };
         QueueChanged: {
-            queue: {
-                running: boolean;
-                jobs: {
-                    id: string;
-                    asin: string;
-                    title: string;
-                    /** @enum {string} */
-                    state: "working" | "queued";
-                }[];
-                pending: {
-                    /** Format: int64 */
-                    id: number | string;
-                    /** @enum {string} */
-                    reason: "badBook" | "licenseGuidance" | "widevineGuidance" | "diskFull";
-                    jobId: null | string;
-                    allowed: string[];
-                }[];
-                waiting: {
-                    /** Format: int64 */
-                    id: number | string;
-                    reason: string;
-                    /** Format: date-time */
-                    since: string;
-                    /** Format: date-time */
-                    nextCheck: null | string;
-                    jobId: null | string;
-                    allowed: string[];
-                    volumes: null | {
-                        root: string;
-                        /** Format: int64 */
-                        freeBytes: null | number | string;
-                        /** Format: int64 */
-                        requiredBytes: number | string;
-                    }[];
-                };
-                paused: boolean;
-                stats: {
-                    /** Format: int32 */
-                    queued: number | string;
-                    /** Format: int32 */
-                    completed: number | string;
-                    /** Format: int32 */
-                    errors: number | string;
-                    /** Format: date-time */
-                    runningSince: null | string;
-                };
-            };
+            queue: components["schemas"]["QueueDto"];
             /** Format: date-time */
             at: string;
         };
@@ -1048,7 +1072,7 @@ export interface components {
             running: boolean;
             jobs: components["schemas"]["QueueJobDto"][];
             pending: components["schemas"]["PendingDecisionDto"][];
-            waiting: null | components["schemas"]["QueueWaitDto"];
+            waiting?: null | components["schemas"]["QueueWaitDto"];
             paused: boolean;
             stats: components["schemas"]["QueueStatsDto"];
         };
@@ -1060,13 +1084,7 @@ export interface components {
             state: "working" | "queued";
         };
         QueuePaused: {
-            pause: {
-                /** Format: int64 */
-                id: number | string;
-                reason: string;
-                jobId: null | string;
-                allowed: string[];
-            };
+            pause: components["schemas"]["PendingDecisionDto"];
             /** Format: date-time */
             at: string;
         };
@@ -1096,19 +1114,20 @@ export interface components {
             /** Format: int32 */
             errors: number | string;
             /** Format: date-time */
-            runningSince: null | string;
+            runningSince?: null | string;
         };
         QueueWaitDto: {
             /** Format: int64 */
             id: number | string;
-            reason: string;
+            /** @enum {string} */
+            reason: "dailyLimit" | "diskFull";
             /** Format: date-time */
             since: string;
             /** Format: date-time */
-            nextCheck: null | string;
-            jobId: null | string;
+            nextCheck?: null | string;
+            jobId?: null | string;
             allowed: string[];
-            volumes: null | components["schemas"]["VolumeDto"][];
+            volumes?: null | components["schemas"]["VolumeDto"][];
         };
         QueueWaitEnded: {
             /** Format: int64 */
@@ -1118,24 +1137,7 @@ export interface components {
             at: string;
         };
         QueueWaiting: {
-            wait: {
-                /** Format: int64 */
-                id: number | string;
-                reason: string;
-                /** Format: date-time */
-                since: string;
-                /** Format: date-time */
-                nextCheck: null | string;
-                jobId: null | string;
-                allowed: string[];
-                volumes: null | {
-                    root: string;
-                    /** Format: int64 */
-                    freeBytes: null | number | string;
-                    /** Format: int64 */
-                    requiredBytes: number | string;
-                }[];
-            };
+            wait: components["schemas"]["QueueWaitDto"];
             /** Format: date-time */
             at: string;
         };
@@ -1161,19 +1163,22 @@ export interface components {
             /** Format: date-time */
             at: string;
         };
+        ScanRequest: {
+            accounts?: null | string[];
+        };
         ScanStarted: {
             /** Format: date-time */
             at: string;
         };
         SeriesDto: {
             name: string;
-            order: null | string;
+            order?: null | string;
             /** Format: float */
             index: number | string;
             asin: string;
         };
         SettingsDto: {
-            books: null | string;
+            books?: null | string;
             inProgress: string;
             naming: components["schemas"]["NamingSettingsDto"];
             download: components["schemas"]["DownloadSettingsDto"];
@@ -1189,29 +1194,30 @@ export interface components {
         StatusDto: {
             state: string;
             /** Format: date-time */
-            lastRun: null | string;
+            lastRun?: null | string;
             /** Format: date-time */
-            lastSuccess: null | string;
+            lastSuccess?: null | string;
             /** Format: int32 */
-            scanExitCode: null | number | string;
+            scanExitCode?: null | number | string;
             /** Format: int32 */
-            liberateExitCode: null | number | string;
+            liberateExitCode?: null | number | string;
             /** Format: date-time */
-            nextRun: null | string;
+            nextRun?: null | string;
             /** Format: int32 */
             intervalSeconds: number | string;
-            version: null | string;
+            version?: null | string;
+            accountsNeedingLogin: string[];
         };
         StatusRequest: {
-            status: null | string;
+            status?: null | string;
         };
         TagsRequest: {
-            tags: null | string;
+            tags?: null | string;
         };
         VolumeDto: {
             root: string;
             /** Format: int64 */
-            freeBytes: null | number | string;
+            freeBytes?: null | number | string;
             /** Format: int64 */
             requiredBytes: number | string;
         };
@@ -1260,6 +1266,265 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountDto"][];
+                };
+            };
+        };
+    };
+    deleteAccount: {
+        parameters: {
+            query?: {
+                locale?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    patchAccount: {
+        parameters: {
+            query?: {
+                locale?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["AccountPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    startAccountLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["LoginStartRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginStartDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    completeAccountLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                loginId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["LoginCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    cancelAccountLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                loginId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginCancelDto"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
                 };
             };
         };
@@ -2115,7 +2380,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["ScanRequest"];
+            };
+        };
         responses: {
             /** @description Accepted */
             202: {
@@ -2124,6 +2393,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatusDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
                 };
             };
             /** @description Conflict */

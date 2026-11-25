@@ -34,9 +34,9 @@
     "/api/accounts": {
       "get": {
         "tags": [
-          "daemon"
+          "accounts"
         ],
-        "summary": "Accounts: id, name, locale and library-scan flag. Never tokens.",
+        "summary": "Accounts: id, name, locale, library-scan flag, authState (signedIn or needsLogin), credentials (modern, legacy or none) and extra marketplaces. Never tokens.",
         "operationId": "getAccounts",
         "responses": {
           "200": {
@@ -48,6 +48,359 @@
                   "items": {
                     "$ref": "#/components/schemas/AccountDto"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}": {
+      "patch": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Renames an account and/or sets whether it is scanned. The marketplace cannot change; add the account again for another. 200 with the account, 400 bad body, 404 unknown, 409 ambiguous id (add ?locale=), accounts managed by an import file, or not writable.",
+        "operationId": "patchAccount",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AccountPatchRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Removes an account. Its books stay in the library, as in the app. 200 with the removed account, 404 unknown, 409 ambiguous id (add ?locale=), accounts managed by an import file, or not writable.",
+        "operationId": "deleteAccount",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/login": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Starts an external-browser sign-in. Open url, sign in, then post the final address-bar URL to /accounts/login/{loginId}. Needs --api-token-file (403 otherwise); 400 bad request, 409 new account while accounts come from an import file, 429 too many pending, 502 Audible unreachable. A login lasts 10 minutes and is held in memory.",
+        "operationId": "startAccountLogin",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LoginStartRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginStartDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/login/{loginId}": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Completes a sign-in with the final browser URL (treat it like a password; it is never logged or echoed). Single use. 200 with the account, 400 not the final URL (the login stays usable) or Audible rejected it (start again), 403 without an API token, 404 unknown, used or expired.",
+        "operationId": "completeAccountLogin",
+        "parameters": [
+          {
+            "name": "loginId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LoginCompleteRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Cancels a pending sign-in. 200, 403 without an API token, 404 unknown, used or expired.",
+        "operationId": "cancelAccountLogin",
+        "parameters": [
+          {
+            "name": "loginId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginCancelDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
                 }
               }
             }
@@ -1289,8 +1642,24 @@
         "tags": [
           "daemon"
         ],
-        "summary": "Runs a library scan now, without liberating. 202, or 409 if busy.",
+        "summary": "Runs a library scan now, without liberating. An optional body {\"accounts\":[\"id or name\"]} scans only those accounts, as the CLI's scan does; no body scans all. 202, 400 bad body or unknown account, or 409 if busy.",
         "operationId": "scan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ScanRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "description": "Accepted",
@@ -1298,6 +1667,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StatusDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
                 }
               }
             }
@@ -1738,9 +2117,10 @@
       "AccountDto": {
         "required": [
           "accountId",
-          "accountName",
-          "locale",
-          "libraryScan"
+          "libraryScan",
+          "authState",
+          "credentials",
+          "additionalLocales"
         ],
         "type": "object",
         "properties": {
@@ -1761,6 +2141,60 @@
           },
           "libraryScan": {
             "type": "boolean"
+          },
+          "authState": {
+            "enum": [
+              "signedIn",
+              "needsLogin"
+            ],
+            "type": "string"
+          },
+          "credentials": {
+            "enum": [
+              "modern",
+              "legacy",
+              "none"
+            ],
+            "type": "string"
+          },
+          "additionalLocales": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "AccountNeedsLogin": {
+        "required": [
+          "accountId",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccountPatchRequest": {
+        "type": "object",
+        "properties": {
+          "accountName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "libraryScan": {
+            "type": [
+              "null",
+              "boolean"
+            ]
           }
         }
       },
@@ -2102,13 +2536,11 @@
         "required": [
           "asin",
           "title",
-          "subtitle",
           "authors",
           "narrators",
           "series",
           "lengthInMinutes",
           "bookStatus",
-          "pdfStatus",
           "dateAdded",
           "account",
           "locale",
@@ -2121,13 +2553,7 @@
           "myRating",
           "hasPdf",
           "isAudiblePlus",
-          "includedUntil",
-          "lastDownloaded",
-          "lastDownloadedVersion",
-          "lastDownloadedFormat",
           "isSpatial",
-          "pictureId",
-          "parentAsin",
           "absentFromLastScan",
           "partialDownload",
           "isPodcastParent"
@@ -2443,9 +2869,6 @@
         }
       },
       "BulkRequest": {
-        "required": [
-          "asins"
-        ],
         "type": "object",
         "properties": {
           "asins": {
@@ -2490,10 +2913,6 @@
         }
       },
       "BulkStatusRequest": {
-        "required": [
-          "asins",
-          "status"
-        ],
         "type": "object",
         "properties": {
           "asins": {
@@ -2514,9 +2933,6 @@
         }
       },
       "BulkTagsRequest": {
-        "required": [
-          "asins"
-        ],
         "type": "object",
         "properties": {
           "asins": {
@@ -2589,11 +3005,6 @@
         }
       },
       "DecisionRequest": {
-        "required": [
-          "decision",
-          "applyToAll",
-          "remember"
-        ],
         "type": "object",
         "properties": {
           "decision": {
@@ -2724,6 +3135,9 @@
       },
       "EngineEvent": {
         "oneOf": [
+          {
+            "$ref": "#/components/schemas/AccountNeedsLogin"
+          },
           {
             "$ref": "#/components/schemas/BookFinished"
           },
@@ -3028,9 +3442,6 @@
         }
       },
       "LocateRequest": {
-        "required": [
-          "path"
-        ],
         "type": "object",
         "properties": {
           "path": {
@@ -3044,13 +3455,9 @@
       "LocateScanDto": {
         "required": [
           "state",
-          "folder",
           "found",
           "matched",
-          "updated",
-          "error",
-          "startedAt",
-          "finishedAt"
+          "updated"
         ],
         "type": "object",
         "properties": {
@@ -3123,72 +3530,7 @@
         "type": "object",
         "properties": {
           "scan": {
-            "required": [
-              "state",
-              "folder",
-              "found",
-              "matched",
-              "updated",
-              "error",
-              "startedAt",
-              "finishedAt"
-            ],
-            "type": "object",
-            "properties": {
-              "state": {
-                "type": "string"
-              },
-              "folder": {
-                "type": [
-                  "null",
-                  "string"
-                ]
-              },
-              "found": {
-                "pattern": "^-?(?:0|[1-9]\\d*)$",
-                "type": [
-                  "integer",
-                  "string"
-                ],
-                "format": "int32"
-              },
-              "matched": {
-                "pattern": "^-?(?:0|[1-9]\\d*)$",
-                "type": [
-                  "integer",
-                  "string"
-                ],
-                "format": "int32"
-              },
-              "updated": {
-                "pattern": "^-?(?:0|[1-9]\\d*)$",
-                "type": [
-                  "integer",
-                  "string"
-                ],
-                "format": "int32"
-              },
-              "error": {
-                "type": [
-                  "null",
-                  "string"
-                ]
-              },
-              "startedAt": {
-                "type": [
-                  "null",
-                  "string"
-                ],
-                "format": "date-time"
-              },
-              "finishedAt": {
-                "type": [
-                  "null",
-                  "string"
-                ],
-                "format": "date-time"
-              }
-            }
+            "$ref": "#/components/schemas/LocateScanDto"
           },
           "at": {
             "type": "string",
@@ -3197,9 +3539,6 @@
         }
       },
       "LocateScanRequest": {
-        "required": [
-          "folder"
-        ],
         "type": "object",
         "properties": {
           "folder": {
@@ -3210,10 +3549,72 @@
           }
         }
       },
-      "MoveRequest": {
+      "LoginCancelDto": {
         "required": [
-          "to"
+          "loginId"
         ],
+        "type": "object",
+        "properties": {
+          "loginId": {
+            "type": "string"
+          }
+        }
+      },
+      "LoginCompleteRequest": {
+        "type": "object",
+        "properties": {
+          "responseUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "LoginStartDto": {
+        "required": [
+          "loginId",
+          "url",
+          "expiresAt"
+        ],
+        "type": "object",
+        "properties": {
+          "loginId": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LoginStartRequest": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "locale": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "deviceRegistration": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "MoveRequest": {
         "type": "object",
         "properties": {
           "to": {
@@ -3249,7 +3650,6 @@
       },
       "NextRunScheduled": {
         "required": [
-          "nextRun",
           "at"
         ],
         "type": "object",
@@ -3271,7 +3671,6 @@
         "required": [
           "id",
           "reason",
-          "jobId",
           "allowed"
         ],
         "type": "object",
@@ -3315,222 +3714,7 @@
         "type": "object",
         "properties": {
           "queue": {
-            "required": [
-              "running",
-              "jobs",
-              "pending",
-              "waiting",
-              "paused",
-              "stats"
-            ],
-            "type": "object",
-            "properties": {
-              "running": {
-                "type": "boolean"
-              },
-              "jobs": {
-                "type": "array",
-                "items": {
-                  "required": [
-                    "id",
-                    "asin",
-                    "title",
-                    "state"
-                  ],
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "asin": {
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "state": {
-                      "enum": [
-                        "working",
-                        "queued"
-                      ],
-                      "type": "string"
-                    }
-                  }
-                }
-              },
-              "pending": {
-                "type": "array",
-                "items": {
-                  "required": [
-                    "id",
-                    "reason",
-                    "jobId",
-                    "allowed"
-                  ],
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "pattern": "^-?(?:0|[1-9]\\d*)$",
-                      "type": [
-                        "integer",
-                        "string"
-                      ],
-                      "format": "int64"
-                    },
-                    "reason": {
-                      "enum": [
-                        "badBook",
-                        "licenseGuidance",
-                        "widevineGuidance",
-                        "diskFull"
-                      ],
-                      "type": "string"
-                    },
-                    "jobId": {
-                      "type": [
-                        "null",
-                        "string"
-                      ]
-                    },
-                    "allowed": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  }
-                }
-              },
-              "waiting": {
-                "required": [
-                  "id",
-                  "reason",
-                  "since",
-                  "nextCheck",
-                  "jobId",
-                  "allowed",
-                  "volumes"
-                ],
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "pattern": "^-?(?:0|[1-9]\\d*)$",
-                    "type": [
-                      "integer",
-                      "string"
-                    ],
-                    "format": "int64"
-                  },
-                  "reason": {
-                    "type": "string"
-                  },
-                  "since": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "nextCheck": {
-                    "type": [
-                      "null",
-                      "string"
-                    ],
-                    "format": "date-time"
-                  },
-                  "jobId": {
-                    "type": [
-                      "null",
-                      "string"
-                    ]
-                  },
-                  "allowed": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "volumes": {
-                    "type": [
-                      "null",
-                      "array"
-                    ],
-                    "items": {
-                      "required": [
-                        "root",
-                        "freeBytes",
-                        "requiredBytes"
-                      ],
-                      "type": "object",
-                      "properties": {
-                        "root": {
-                          "type": "string"
-                        },
-                        "freeBytes": {
-                          "pattern": "^-?(?:0|[1-9]\\d*)$",
-                          "type": [
-                            "null",
-                            "integer",
-                            "string"
-                          ],
-                          "format": "int64"
-                        },
-                        "requiredBytes": {
-                          "pattern": "^-?(?:0|[1-9]\\d*)$",
-                          "type": [
-                            "integer",
-                            "string"
-                          ],
-                          "format": "int64"
-                        }
-                      }
-                    }
-                  }
-                }
-              },
-              "paused": {
-                "type": "boolean"
-              },
-              "stats": {
-                "required": [
-                  "queued",
-                  "completed",
-                  "errors",
-                  "runningSince"
-                ],
-                "type": "object",
-                "properties": {
-                  "queued": {
-                    "pattern": "^-?(?:0|[1-9]\\d*)$",
-                    "type": [
-                      "integer",
-                      "string"
-                    ],
-                    "format": "int32"
-                  },
-                  "completed": {
-                    "pattern": "^-?(?:0|[1-9]\\d*)$",
-                    "type": [
-                      "integer",
-                      "string"
-                    ],
-                    "format": "int32"
-                  },
-                  "errors": {
-                    "pattern": "^-?(?:0|[1-9]\\d*)$",
-                    "type": [
-                      "integer",
-                      "string"
-                    ],
-                    "format": "int32"
-                  },
-                  "runningSince": {
-                    "type": [
-                      "null",
-                      "string"
-                    ],
-                    "format": "date-time"
-                  }
-                }
-              }
-            }
+            "$ref": "#/components/schemas/QueueDto"
           },
           "at": {
             "type": "string",
@@ -3567,7 +3751,6 @@
           "running",
           "jobs",
           "pending",
-          "waiting",
           "paused",
           "stats"
         ],
@@ -3641,38 +3824,7 @@
         "type": "object",
         "properties": {
           "pause": {
-            "required": [
-              "id",
-              "reason",
-              "jobId",
-              "allowed"
-            ],
-            "type": "object",
-            "properties": {
-              "id": {
-                "pattern": "^-?(?:0|[1-9]\\d*)$",
-                "type": [
-                  "integer",
-                  "string"
-                ],
-                "format": "int64"
-              },
-              "reason": {
-                "type": "string"
-              },
-              "jobId": {
-                "type": [
-                  "null",
-                  "string"
-                ]
-              },
-              "allowed": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            }
+            "$ref": "#/components/schemas/PendingDecisionDto"
           },
           "at": {
             "type": "string",
@@ -3755,8 +3907,7 @@
         "required": [
           "queued",
           "completed",
-          "errors",
-          "runningSince"
+          "errors"
         ],
         "type": "object",
         "properties": {
@@ -3798,10 +3949,7 @@
           "id",
           "reason",
           "since",
-          "nextCheck",
-          "jobId",
-          "allowed",
-          "volumes"
+          "allowed"
         ],
         "type": "object",
         "properties": {
@@ -3814,6 +3962,10 @@
             "format": "int64"
           },
           "reason": {
+            "enum": [
+              "dailyLimit",
+              "diskFull"
+            ],
             "type": "string"
           },
           "since": {
@@ -3883,88 +4035,7 @@
         "type": "object",
         "properties": {
           "wait": {
-            "required": [
-              "id",
-              "reason",
-              "since",
-              "nextCheck",
-              "jobId",
-              "allowed",
-              "volumes"
-            ],
-            "type": "object",
-            "properties": {
-              "id": {
-                "pattern": "^-?(?:0|[1-9]\\d*)$",
-                "type": [
-                  "integer",
-                  "string"
-                ],
-                "format": "int64"
-              },
-              "reason": {
-                "type": "string"
-              },
-              "since": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "nextCheck": {
-                "type": [
-                  "null",
-                  "string"
-                ],
-                "format": "date-time"
-              },
-              "jobId": {
-                "type": [
-                  "null",
-                  "string"
-                ]
-              },
-              "allowed": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "volumes": {
-                "type": [
-                  "null",
-                  "array"
-                ],
-                "items": {
-                  "required": [
-                    "root",
-                    "freeBytes",
-                    "requiredBytes"
-                  ],
-                  "type": "object",
-                  "properties": {
-                    "root": {
-                      "type": "string"
-                    },
-                    "freeBytes": {
-                      "pattern": "^-?(?:0|[1-9]\\d*)$",
-                      "type": [
-                        "null",
-                        "integer",
-                        "string"
-                      ],
-                      "format": "int64"
-                    },
-                    "requiredBytes": {
-                      "pattern": "^-?(?:0|[1-9]\\d*)$",
-                      "type": [
-                        "integer",
-                        "string"
-                      ],
-                      "format": "int64"
-                    }
-                  }
-                }
-              }
-            }
+            "$ref": "#/components/schemas/QueueWaitDto"
           },
           "at": {
             "type": "string",
@@ -4062,6 +4133,20 @@
           }
         }
       },
+      "ScanRequest": {
+        "type": "object",
+        "properties": {
+          "accounts": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ScanStarted": {
         "required": [
           "at"
@@ -4077,7 +4162,6 @@
       "SeriesDto": {
         "required": [
           "name",
-          "order",
           "index",
           "asin"
         ],
@@ -4107,7 +4191,6 @@
       },
       "SettingsDto": {
         "required": [
-          "books",
           "inProgress",
           "naming",
           "download",
@@ -4162,13 +4245,8 @@
       "StatusDto": {
         "required": [
           "state",
-          "lastRun",
-          "lastSuccess",
-          "scanExitCode",
-          "liberateExitCode",
-          "nextRun",
           "intervalSeconds",
-          "version"
+          "accountsNeedingLogin"
         ],
         "type": "object",
         "properties": {
@@ -4227,13 +4305,16 @@
               "null",
               "string"
             ]
+          },
+          "accountsNeedingLogin": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
       "StatusRequest": {
-        "required": [
-          "status"
-        ],
         "type": "object",
         "properties": {
           "status": {
@@ -4245,9 +4326,6 @@
         }
       },
       "TagsRequest": {
-        "required": [
-          "tags"
-        ],
         "type": "object",
         "properties": {
           "tags": {
@@ -4261,7 +4339,6 @@
       "VolumeDto": {
         "required": [
           "root",
-          "freeBytes",
           "requiredBytes"
         ],
         "type": "object",
@@ -4293,6 +4370,9 @@
   "tags": [
     {
       "name": "daemon"
+    },
+    {
+      "name": "accounts"
     },
     {
       "name": "library"
