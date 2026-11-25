@@ -47,7 +47,7 @@ public sealed class DbEngineData : IEngineData
 		}
 		catch (Lucene.Net.QueryParsers.ParseException ex)
 		{
-			throw new SearchQueryException($"Cannot parse the search query: {ex.Message}");
+			throw new SearchQueryException($"Cannot parse the search query: {ex.Message.Split('\n')[0]}");
 		}
 	}
 

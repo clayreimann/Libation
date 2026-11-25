@@ -98,7 +98,25 @@ Set `--metrics-file` (or `LIBATION_METRICS_FILE`) to write a Prometheus textfile
 
 ### HTTP API
 
-Off by default. `--api` (or `LIBATION_API=1`) serves a JSON API under `/api` on the same `--listen` address: `GET /api/status`, `/api/accounts`, `/api/library?offset=&limit=`, `/api/library/{asin}`, `/api/events` (Server-Sent Events), and `POST /api/scan` and `/api/liberate` (run now; `202`, or `409` if a job is running). Account responses never include tokens.
+Off by default. `--api` (or `LIBATION_API=1`) serves a JSON API under `/api` on the same `--listen` address: `GET /api/status`, `/api/accounts`, `/api/library`, `/api/library/{asin}`, `/api/settings`, `/api/events` (Server-Sent Events), and `POST /api/scan` and `/api/liberate` (run now; `202`, or `409` if a job is running). Account responses never include tokens. `GET /api/openapi.json` is the OpenAPI document for all of it, for generating a client; it follows the same opt-in and token rules.
+
+`GET /api/library` takes `offset` (default 0), `limit` (default 100, at most 1000), `q` and `trash`. `q` uses the same Lucene syntax as the filter box in the app (`author:herbert`, `-tags:skip`, `title:"the hobbit"`); the search index is built or repaired on demand. Results stay newest first, and `total` counts every match, not just the page. A query that cannot be parsed returns `400`. `trash=true` lists the trash instead and cannot be combined with `q`.
+
+```json
+{"total":1,"offset":0,"limit":100,"items":[{"asin":"B017V4IM1G","title":"…","authors":["…"],"bookStatus":"NotLiberated","tags":"fav","inTrash":false,"…":"…"}]}
+```
+
+Per-book actions return the updated book, `404` for an unknown ASIN and `400` for a body they cannot use:
+
+| Request | Body | Effect |
+| --- | --- | --- |
+| `PUT /api/library/{asin}/tags` | `{"tags":"one two"}` | Replaces the tags; an empty string clears them. |
+| `PUT /api/library/{asin}/status` | `{"status":"liberated"}` or `"notLiberated"` | Sets the liberated status without downloading anything. |
+| `POST /api/library/{asin}/trash` | none | Moves the book to the trash. |
+| `POST /api/library/{asin}/restore` | none | Restores it. |
+| `POST /api/library/{asin}/liberate` | none | Queues the book through the shared queue, re-downloading it if already liberated. `202` with `{"id":"…","asin":"…","title":"…","state":"queued"}`, or `409` if it is already queued. Follow it on `/api/queue` and `/api/events`. |
+
+`GET /api/settings` is read-only: the Books and working folders, file naming templates, download, queue and library options, and whether Audiobookshelf is enabled. It never includes tokens, key files, account data or server URLs. Settings are changed in `Settings.json`.
 
 The download queue is part of the API. `GET /api/queue` returns the running state, the jobs (`working` first, then `queued`), any pending decision and any wait:
 
