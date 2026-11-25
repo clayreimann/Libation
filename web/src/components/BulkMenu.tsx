@@ -5,6 +5,8 @@ import { Popover } from "./Popover";
 export type BulkOp =
   | { kind: "liberate" }
   | { kind: "trash" }
+  | { kind: "purge" }
+  | { kind: "pdfStatus"; status: "liberated" | "notLiberated" }
   | { kind: "status"; status: "liberated" | "notLiberated" }
   | { kind: "tags"; mode: "add" | "remove"; tags: string };
 
@@ -45,6 +47,12 @@ export function BulkMenu({ count, trash, disabled, onRun }: Props) {
                     <button onClick={() => act({ kind: "status", status: "notLiberated" })}>Set status: not liberated</button>
                   </li>
                   <li>
+                    <button onClick={() => act({ kind: "pdfStatus", status: "liberated" })}>Set PDF status: downloaded</button>
+                  </li>
+                  <li>
+                    <button onClick={() => act({ kind: "pdfStatus", status: "notLiberated" })}>Set PDF status: not downloaded</button>
+                  </li>
+                  <li>
                     <button onClick={() => { close(); setTagMode("add"); }}>Add tags...</button>
                   </li>
                   <li>
@@ -55,6 +63,11 @@ export function BulkMenu({ count, trash, disabled, onRun }: Props) {
               <li>
                 <button onClick={() => act({ kind: "trash" })}>{trash ? "Restore" : "Move to trash"}</button>
               </li>
+              {trash && (
+                <li>
+                  <button onClick={() => act({ kind: "purge" })}>Delete permanently...</button>
+                </li>
+              )}
             </ul>
           );
         }}

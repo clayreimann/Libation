@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runBulk, SKIPPED } from "./bulk";
+import { notOk, runBulk, runChunked } from "./bulk";
 
 const tick = () => new Promise((r) => setTimeout(r, 1));
 
@@ -21,7 +21,7 @@ describe("runBulk", () => {
       },
     });
     expect(peak).toBe(4);
-    expect(res).toEqual({ ok: 50, skipped: 0, failed: [], cancelled: false });
+    expect(res).toEqual({ ok: 50, failed: [], cancelled: false });
     expect(seen.sort((a, b) => a - b)).toEqual(items);
     expect(progress.at(-1)).toBe(50);
   });
@@ -50,9 +50,32 @@ describe("runBulk", () => {
   });
 });
 
-describe("runBulk skipped", () => {
-  it("counts SKIPPED separately from ok", async () => {
-    const res = await runBulk([1, 2, 3], { worker: async (i) => (i === 2 ? SKIPPED : undefined) });
-    expect(res).toMatchObject({ ok: 2, skipped: 1, failed: [] });
+describe("runChunked", () => {
+  const ok = async (chunk: string[]) => ({ updated: chunk.length, missing: [], results: chunk.map((asin) => ({ asin, result: "ok" })) });
+
+  it("splits into chunks and sums updated", async () => {
+    const sizes: number[] = [];
+    const s = await runChunked(["a", "b", "c", "d", "e"], async (c) => (sizes.push(c.length), ok(c)), { chunkSize: 2 });
+    expect(sizes).toEqual([2, 2, 1]);
+    expect(s).toMatchObject({ total: 5, updated: 5, conflict: [], notFound: [], failed: [], cancelled: false });
+  });
+
+  it("collects conflicts, missing and failed chunks", async () => {
+    let n = 0;
+    const s = await runChunked(["a", "b", "c", "d"], async () => {
+      if (n++ === 1) throw new Error("boom");
+      return { updated: 0, missing: ["b"], results: [{ asin: "a", result: "conflict" }, { asin: "b", result: "notFound" }] };
+    }, { chunkSize: 2 });
+    expect(s.conflict).toEqual(["a"]);
+    expect(s.notFound).toEqual(["b"]);
+    expect(s.failed).toEqual([{ asins: ["c", "d"], error: "boom" }]);
+    expect(notOk(s).sort()).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("stops between chunks when aborted", async () => {
+    const ctl = new AbortController();
+    const s = await runChunked(["a", "b", "c"], async (c) => (ctl.abort(), ok(c)), { chunkSize: 1, signal: ctl.signal });
+    expect(s.cancelled).toBe(true);
+    expect(s.updated).toBe(1);
   });
 });

@@ -20,6 +20,7 @@ export type QueueJob = Fix<S["QueueJobDto"]>;
 export type PendingDecision = Fix<S["PendingDecisionDto"]>;
 export type QueueWait = Fix<S["QueueWaitDto"]>;
 export type Queue = Fix<S["QueueDto"]>;
+export type BulkResult = Fix<S["BulkResultDto"]>;
 export type Settings = Fix<S["SettingsDto"]>;
 export interface DecisionRequest {
   decision: string;

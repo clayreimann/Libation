@@ -1,6 +1,5 @@
-import { runBulk, SKIPPED, type BulkOptions, type BulkResult } from "../bulk";
-import { addTags, removeTags } from "../tags";
-import type { Account, Book, DecisionRequest, LibraryPage, Queue, Settings, Status } from "./types";
+import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
+import type { Account, BulkResult, Book, DecisionRequest, LibraryPage, Queue, Settings, Status } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -33,7 +32,8 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
 }
 
 export type LiberatedChoice = "liberated" | "notLiberated";
-type BulkOpts = Omit<BulkOptions<string>, "worker">;
+export type PdfChoice = LiberatedChoice;
+type BulkOpts = Omit<ChunkOptions, "chunkSize">;
 
 const book = (asin: string) => `/api/library/${encodeURIComponent(asin)}`;
 
@@ -58,36 +58,17 @@ export const api = {
   liberate: () => request<Status>("POST", "/api/liberate"),
   decide: (id: number, body: DecisionRequest) => request<Queue>("POST", `/api/queue/decisions/${id}`, body),
 
-  // One function per operation: swap the body for a bulk endpoint when the API grows one.
-  bulkTrash: (asins: string[], o?: BulkOpts): Promise<BulkResult<string>> => runBulk(asins, { ...o, worker: (a) => api.trash(a) }),
-  bulkRestore: (asins: string[], o?: BulkOpts): Promise<BulkResult<string>> => runBulk(asins, { ...o, worker: (a) => api.restore(a) }),
-  bulkLiberate: (asins: string[], o?: BulkOpts): Promise<BulkResult<string>> =>
-    runBulk(asins, {
-      ...o,
-      worker: async (a) => {
-        try {
-          await api.liberateBook(a);
-        } catch (e) {
-          if (e instanceof ApiError && e.status === 409) return SKIPPED;
-          throw e;
-        }
-      },
-    }),
-  bulkSetStatus: (asins: string[], status: LiberatedChoice, o?: BulkOpts): Promise<BulkResult<string>> =>
-    runBulk(asins, { ...o, worker: (a) => api.setStatus(a, status) }),
-  bulkAddTags: (asins: string[], tags: string, o?: BulkOpts): Promise<BulkResult<string>> => bulkEditTags(asins, (cur) => addTags(cur, tags), o),
-  bulkRemoveTags: (asins: string[], tags: string, o?: BulkOpts): Promise<BulkResult<string>> =>
-    bulkEditTags(asins, (cur) => removeTags(cur, tags), o),
+  // One function per operation; each chunks at the API's 5000 ASIN limit.
+  bulkTrash: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/trash", asins, {}, o),
+  bulkRestore: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/restore", asins, {}, o),
+  bulkPurge: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/purge", asins, {}, o),
+  bulkLiberate: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/liberate", asins, {}, o),
+  bulkSetStatus: (asins: string[], status: LiberatedChoice, o?: BulkOpts) => chunked("PUT", "/api/library/status", asins, { status }, o),
+  bulkSetPdfStatus: (asins: string[], status: PdfChoice, o?: BulkOpts) => chunked("PUT", "/api/library/pdf-status", asins, { status }, o),
+  bulkAddTags: (asins: string[], tags: string, o?: BulkOpts) => chunked("PUT", "/api/library/tags", asins, { add: tags }, o),
+  bulkRemoveTags: (asins: string[], tags: string, o?: BulkOpts) => chunked("PUT", "/api/library/tags", asins, { remove: tags }, o),
 };
 
-function bulkEditTags(asins: string[], edit: (current: string) => string, o?: BulkOpts): Promise<BulkResult<string>> {
-  return runBulk(asins, {
-    ...o,
-    worker: async (a) => {
-      const current = (await api.getBook(a)).tags;
-      const next = edit(current);
-      if (next === current) return SKIPPED;
-      await api.setTags(a, next);
-    },
-  });
+function chunked(method: string, path: string, asins: string[], extra: object, o?: BulkOpts): Promise<BulkSummary> {
+  return runChunked(asins, (chunk) => request<BulkResult>(method, path, { asins: chunk, ...extra }, o?.signal), o);
 }

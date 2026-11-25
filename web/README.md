@@ -1,6 +1,6 @@
 # Libation web UI
 
-Browser UI for the libationd daemon (`LibationCli serve --api`): library search with bulk trash and restore, live download queue, status and read-only settings. React, Vite and TypeScript; talks to `/api` only.
+Browser UI for the libationd daemon (`LibationCli serve --api`): library search, book details drawer, counts bar, quick filters (kept in localStorage), bulk actions on a selection (liberate, status, PDF status, tags, trash, restore, permanent delete), live download queue, status and read-only settings. React, Vite and TypeScript; talks to `/api` only.
 
 ## Develop
 

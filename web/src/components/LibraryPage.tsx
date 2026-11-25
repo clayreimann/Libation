@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { Book, LibraryPage as Page } from "../api/types";
-import type { BulkResult } from "../bulk";
+import { notOk, type BulkSummary } from "../bulk";
 import { withHideEpisodes } from "../filters";
 import { formatLength } from "../format";
 import { useLive } from "../live";
@@ -17,11 +17,9 @@ const ALL_PAGE = 1000;
 interface BulkState {
   label: string;
   done: number;
-  skipped: number;
   total: number;
   running: boolean;
-  failed: { item: string; error: string }[];
-  cancelled: boolean;
+  summary: BulkSummary | null;
 }
 
 function seriesText(b: Book): string {
@@ -125,24 +123,16 @@ export function LibraryPage() {
     }
   };
 
-  const runAction = useCallback(async (label: string, asins: string[], run: (o: { signal: AbortSignal; onProgress: (d: number, t: number) => void }) => Promise<BulkResult<string>>) => {
+  const runAction = useCallback(async (label: string, asins: string[], run: (o: { signal: AbortSignal; onProgress: (d: number, t: number) => void }) => Promise<BulkSummary>) => {
     const ctl = new AbortController();
     abort.current = ctl;
-    setBulk({ label, done: 0, skipped: 0, total: asins.length, running: true, failed: [], cancelled: false });
-    const res = await run({
+    setBulk({ label, done: 0, total: asins.length, running: true, summary: null });
+    const summary = await run({
       signal: ctl.signal,
       onProgress: (done, total) => setBulk((b) => (b ? { ...b, done, total } : b)),
     });
-    setBulk({
-      label,
-      done: res.ok + res.skipped + res.failed.length,
-      skipped: res.skipped,
-      total: asins.length,
-      running: false,
-      failed: res.failed.map((f) => ({ item: f.item, error: f.error })),
-      cancelled: res.cancelled,
-    });
-    setSelected(new Set(res.failed.map((f) => f.item)));
+    setBulk({ label, done: asins.length, total: asins.length, running: false, summary });
+    setSelected(new Set(notOk(summary)));
     setReload((n) => n + 1);
   }, []);
 
@@ -153,8 +143,13 @@ export function LibraryPage() {
         return runAction("Queueing", asins, (o) => api.bulkLiberate(asins, o));
       case "trash":
         return runAction(trash ? "Restoring" : "Trashing", asins, (o) => (trash ? api.bulkRestore(asins, o) : api.bulkTrash(asins, o)));
+      case "purge":
+        if (!window.confirm(`Permanently delete ${asins.length} ${asins.length === 1 ? "book" : "books"} from the trash? This cannot be undone.`)) return;
+        return runAction("Deleting", asins, (o) => api.bulkPurge(asins, o));
       case "status":
         return runAction("Setting status", asins, (o) => api.bulkSetStatus(asins, op.status, o));
+      case "pdfStatus":
+        return runAction("Setting PDF status", asins, (o) => api.bulkSetPdfStatus(asins, op.status, o));
       case "tags":
         return runAction(op.mode === "add" ? "Adding tags" : "Removing tags", asins, (o) =>
           op.mode === "add" ? api.bulkAddTags(asins, op.tags, o) : api.bulkRemoveTags(asins, op.tags, o),
@@ -247,8 +242,7 @@ export function LibraryPage() {
         <div className="card">
           <div className="job-head">
             <span>
-              {bulk.running ? `${bulk.label}...` : bulk.cancelled ? "Cancelled" : "Done"} {bulk.done} / {bulk.total}
-              {bulk.skipped > 0 && ` (${bulk.skipped} skipped)`}
+              {bulk.running ? `${bulk.label}...` : bulk.summary?.cancelled ? "Cancelled" : "Done"} {bulk.done} / {bulk.total}
             </span>
             {bulk.running ? (
               <button onClick={() => abort.current?.abort()}>Cancel</button>
@@ -259,18 +253,7 @@ export function LibraryPage() {
           <div className="bar">
             <div style={{ width: `${bulk.total ? (bulk.done / bulk.total) * 100 : 0}%` }} />
           </div>
-          {!bulk.running && bulk.failed.length > 0 && (
-            <details open>
-              <summary className="error">{bulk.failed.length} failed (still selected)</summary>
-              <ul className="plain">
-                {bulk.failed.slice(0, 20).map((f) => (
-                  <li key={f.item}>
-                    {f.item}: {f.error}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
+          {bulk.summary && !bulk.running && <BulkReport s={bulk.summary} />}
         </div>
       )}
 
@@ -350,5 +333,29 @@ export function LibraryPage() {
       </div>
       {detail && <BookDetails book={detail} onChange={patchRow} onClose={() => setDetail(null)} />}
     </div>
+  );
+}
+
+function BulkReport({ s }: { s: BulkSummary }) {
+  const failed = s.failed.reduce((n, f) => n + f.asins.length, 0);
+  const parts = [`${s.updated} updated`];
+  if (s.conflict.length) parts.push(`${s.conflict.length} conflict`);
+  if (s.notFound.length) parts.push(`${s.notFound.length} not found`);
+  if (failed) parts.push(`${failed} failed`);
+  const bad = s.conflict.length + s.notFound.length + failed > 0;
+  return (
+    <>
+      <p className={bad ? "error" : "muted"}>
+        {parts.join(", ")}
+        {bad && " (still selected)"}
+      </p>
+      {s.failed.length > 0 && (
+        <ul className="plain small">
+          {[...new Set(s.failed.map((f) => f.error))].map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
