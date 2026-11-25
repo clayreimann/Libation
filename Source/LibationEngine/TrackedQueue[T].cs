@@ -358,6 +358,13 @@ public class TrackedQueue<T> : IReadOnlyCollection<T>, IList, INotifyCollectionC
 			return _active.ToList();
 	}
 
+	/// <summary>The completed items, copied under the lock.</summary>
+	public IReadOnlyList<T> GetCompleted()
+	{
+		lock (lockObject)
+			return _completed.ToList();
+	}
+
 	public void ClearQueue()
 	{
 		lock (lockObject)
@@ -382,8 +389,10 @@ public class TrackedQueue<T> : IReadOnlyCollection<T>, IList, INotifyCollectionC
 		DispatchPending();
 	}
 
-	public void MoveQueuePosition(T item, QueuePosition requestedPosition)
+	/// <returns>False when <paramref name="item"/> is not queued; true even if it was already where it was asked to go.</returns>
+	public bool MoveQueuePosition(T item, QueuePosition requestedPosition)
 	{
+		bool queued;
 		lock (lockObject)
 		{
 			int oldIndex = Queued.IndexOf(item);
@@ -395,14 +404,16 @@ public class TrackedQueue<T> : IReadOnlyCollection<T>, IList, INotifyCollectionC
 				QueuePosition.Last or _ => Queued.Count - 1
 			};
 
-			if (oldIndex < 0 || newIndex < 0 || newIndex >= Queued.Count || newIndex == oldIndex)
-				return;
+			queued = oldIndex >= 0;
+			if (!queued || newIndex < 0 || newIndex >= Queued.Count || newIndex == oldIndex)
+				return queued;
 
 			Queued.RemoveAt(oldIndex);
 			Queued.Insert(newIndex, item);
 			Pend(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Move, item, QueueStartIndex + newIndex, QueueStartIndex + oldIndex));
 		}
 		DispatchPending();
+		return queued;
 	}
 
 	public void Enqueue(IList<T> item)

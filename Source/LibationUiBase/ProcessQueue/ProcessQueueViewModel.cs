@@ -218,13 +218,7 @@ public class ProcessQueueViewModel : ReactiveObject
 
 	private void Queue_CompletedCountChanged(object? sender, int e)
 	{
-		var errCount = Queue.Completed.Count(p => p.Result
-			is ProcessBookResult.FailedAbort
-			or ProcessBookResult.FailedSkip
-			or ProcessBookResult.FailedRetry
-			or ProcessBookResult.ValidationFail
-			or ProcessBookResult.WidevineRecommended
-			or ProcessBookResult.DiskFull);
+		var errCount = Queue.Completed.Count(p => QueueStats.IsError(p.Result));
 		var completeCount = Queue.Completed.Count(p => p.Result is ProcessBookResult.Success);
 
 		ErrorCount = errCount;

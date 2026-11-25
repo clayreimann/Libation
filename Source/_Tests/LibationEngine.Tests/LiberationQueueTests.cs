@@ -571,4 +571,207 @@ public class LiberationQueueTests
 		Assert.AreEqual(0, h.Queue.Pending.Count);
 		Assert.AreEqual(1, h.Started.Count);
 	}
+
+	[TestMethod]
+	public async Task cancelling_a_queued_job_removes_it_and_it_never_starts()
+	{
+		var h = new Harness();
+		var gate = Gate();
+		h.Outcome = (asin, _, _) => asin == "A" ? Parked(gate) : Task.FromResult(ProcessBookResult.Success);
+		LiberationJob a = h.Job("A"), b = h.Job("B");
+		h.Add(a, b);
+		await Eventually(() => h.Queue.Jobs.GetActive().Count == 1, "A running");
+
+		Assert.AreEqual(CancelJobOutcome.Removed, await h.Queue.CancelJobAsync(b.Id));
+		gate.SetResult(ProcessBookResult.Success);
+		await h.Finished();
+
+		CollectionAssert.AreEqual(new[] { "A" }, h.Started.ToArray());
+		Assert.IsFalse(h.Queue.Jobs.GetAllItems().Contains(b));
+	}
+
+	[TestMethod]
+	public async Task cancelling_a_running_job_ends_it_cancelled_and_the_next_one_runs()
+	{
+		var h = new Harness();
+		h.Outcome = (asin, _, job) => asin == "A" ? UntilCancelled(job) : Task.FromResult(ProcessBookResult.Success);
+		LiberationJob a = h.Job("A"), b = h.Job("B");
+		var ended = new List<string>();
+		h.Queue.JobEnded += (_, j) => ended.Add($"{Harness.Asin(j)}:{j.Result}");
+		h.Add(a, b);
+		await Eventually(() => h.Queue.Jobs.GetActive().Count == 1, "A running");
+
+		Assert.AreEqual(CancelJobOutcome.Cancelling, await h.Queue.CancelJobAsync(a.Id));
+		await h.Finished();
+
+		CollectionAssert.AreEqual(new[] { "A:Cancelled", "B:Success" }, ended);
+		Assert.AreEqual(ProcessBookResult.Cancelled, a.Result);
+	}
+
+	[TestMethod]
+	public async Task cancelling_an_unknown_or_finished_job_finds_nothing()
+	{
+		var h = new Harness();
+		LiberationJob a = h.Job("A");
+		h.Add(a);
+		await h.Finished();
+
+		Assert.AreEqual(CancelJobOutcome.NotFound, await h.Queue.CancelJobAsync(a.Id));
+		Assert.AreEqual(CancelJobOutcome.NotFound, await h.Queue.CancelJobAsync(new JobId("nope")));
+	}
+
+	[TestMethod]
+	public async Task cancelling_a_job_parked_at_the_daily_limit_ends_it_cancelled_and_announces_it()
+	{
+		Configuration.Instance.DailyDownloadLimit = Configuration.DailyLimitScope.AllBooks;
+		Configuration.Instance.DailyDownloadLimitUnit = Configuration.DailyLimitUnit.Books;
+		Configuration.Instance.DailyDownloadLimitQuantity = 1;
+		var h = new Harness();
+		h.Queue.DownloadHistory = _ => [new DownloadHistoryEntry(h.Clock.GetUtcNow() - TimeSpan.FromHours(1), "USED", false, 1)];
+		var ended = new List<ProcessBookResult>();
+		h.Queue.JobEnded += (_, j) => ended.Add(j.Result);
+		LiberationJob a = h.Job("A", download: true);
+		h.Add(a);
+		await Eventually(() => h.Queue.Waiting is not null, "the limit wait");
+
+		Assert.AreEqual(CancelJobOutcome.Cancelling, await h.Queue.CancelJobAsync(a.Id));
+		await h.AdvanceUntil(() => h.Queue.Runner!.IsCompleted, TimeSpan.FromSeconds(20), "the run ends");
+
+		CollectionAssert.AreEqual(new[] { ProcessBookResult.Cancelled }, ended);
+		Assert.AreEqual(0, h.Started.Count);
+	}
+
+	[TestMethod]
+	public async Task moving_a_queued_job_reorders_dispatch()
+	{
+		var h = new Harness();
+		var gate = Gate();
+		h.Outcome = (asin, _, _) => asin == "A" ? Parked(gate) : Task.FromResult(ProcessBookResult.Success);
+		LiberationJob a = h.Job("A"), b = h.Job("B"), c = h.Job("C"), d = h.Job("D");
+		h.Add(a, b, c, d);
+		await Eventually(() => h.Queue.Jobs.GetActive().Count == 1, "A running");
+
+		Assert.AreEqual(MoveJobOutcome.Moved, h.Queue.MoveJob(d.Id, QueuePosition.First));
+		Assert.AreEqual(MoveJobOutcome.Moved, h.Queue.MoveJob(b.Id, QueuePosition.Last));
+		Assert.AreEqual(MoveJobOutcome.Moved, h.Queue.MoveJob(c.Id, QueuePosition.OneDown));
+		Assert.AreEqual(MoveJobOutcome.Moved, h.Queue.MoveJob(c.Id, QueuePosition.OneUp));
+		gate.SetResult(ProcessBookResult.Success);
+		await h.Finished();
+
+		CollectionAssert.AreEqual(new[] { "A", "D", "C", "B" }, h.Started.ToArray());
+	}
+
+	[TestMethod]
+	public async Task only_a_queued_job_can_be_moved()
+	{
+		var h = new Harness();
+		var gate = Gate();
+		h.Outcome = (_, _, _) => Parked(gate);
+		LiberationJob a = h.Job("A");
+		h.Add(a);
+		await Eventually(() => h.Queue.Jobs.GetActive().Count == 1, "A running");
+
+		Assert.AreEqual(MoveJobOutcome.NotQueued, h.Queue.MoveJob(a.Id, QueuePosition.First));
+		Assert.AreEqual(MoveJobOutcome.NotFound, h.Queue.MoveJob(new JobId("nope"), QueuePosition.First));
+		gate.SetResult(ProcessBookResult.Success);
+		await h.Finished();
+		Assert.AreEqual(MoveJobOutcome.NotQueued, h.Queue.MoveJob(a.Id, QueuePosition.First));
+	}
+
+	[TestMethod]
+	public async Task a_user_pause_holds_new_books_while_running_ones_finish_and_resume_releases_them()
+	{
+		var h = new Harness();
+		var gate = Gate();
+		h.Outcome = (asin, _, _) => asin == "A" ? Parked(gate) : Task.FromResult(ProcessBookResult.Success);
+		var changes = 0;
+		h.Queue.DispatchPauseChanged += (_, _) => Interlocked.Increment(ref changes);
+		h.Add(h.Job("A"), h.Job("B"));
+		await Eventually(() => h.Queue.Jobs.GetActive().Count == 1, "A running");
+
+		Assert.IsTrue(h.Queue.SetDispatchPaused(true));
+		Assert.IsFalse(h.Queue.SetDispatchPaused(true));
+		gate.SetResult(ProcessBookResult.Success);
+		await Eventually(() => h.Queue.Jobs.GetCompleted().Count == 1, "A finished");
+		await Task.Delay(100);
+
+		CollectionAssert.AreEqual(new[] { "A" }, h.Started.ToArray());
+		Assert.IsTrue(h.Queue.Running);
+		Assert.IsTrue(h.Queue.DispatchPaused);
+
+		Assert.IsTrue(h.Queue.SetDispatchPaused(false));
+		await h.Finished();
+
+		CollectionAssert.AreEqual(new[] { "A", "B" }, h.Started.ToArray());
+		Assert.AreEqual(2, changes);
+	}
+
+	[TestMethod]
+	public async Task a_pause_set_while_idle_holds_the_next_run()
+	{
+		var h = new Harness();
+		h.Queue.SetDispatchPaused(true);
+		h.Add(h.Job("A"));
+		await Task.Delay(100);
+		Assert.AreEqual(0, h.Started.Count);
+
+		h.Queue.SetDispatchPaused(false);
+		await h.Finished();
+		Assert.AreEqual(1, h.Started.Count);
+	}
+
+	[TestMethod]
+	public async Task finished_jobs_are_recorded_newest_first_and_clearing_resets_the_counts()
+	{
+		var h = new Harness();
+		h.Outcome = (asin, _, _) => Task.FromResult(asin == "B" ? ProcessBookResult.FailedRetry : ProcessBookResult.Success);
+		h.Add(h.Job("A"), h.Job("B"), h.Job("C"));
+		await h.Finished();
+
+		var history = h.Queue.History.Snapshot();
+		CollectionAssert.AreEqual(new[] { "C", "B", "A" }, history.Select(j => j.Asin).ToArray());
+		Assert.AreEqual(ProcessBookResult.FailedRetry, history[1].Result);
+		Assert.AreEqual(h.Clock.GetUtcNow(), history[0].FinishedAt);
+		var stats = h.Queue.Stats();
+		Assert.AreEqual((0, 2, 1), (stats.Queued, stats.Completed, stats.Errors));
+		Assert.IsNull(stats.RunningSince);
+
+		h.Queue.ClearFinished();
+
+		Assert.AreEqual(0, h.Queue.History.Snapshot().Count);
+		Assert.AreEqual((0, 0, 0), (h.Queue.Stats().Queued, h.Queue.Stats().Completed, h.Queue.Stats().Errors));
+	}
+
+	[TestMethod]
+	public async Task stats_count_queued_jobs_and_start_the_clock_with_the_run()
+	{
+		var h = new Harness();
+		var gate = Gate();
+		h.Outcome = (_, _, _) => Parked(gate);
+		h.Add(h.Job("A"), h.Job("B"), h.Job("C"));
+		await Eventually(() => h.Queue.Jobs.GetActive().Count == 1, "A running");
+
+		var stats = h.Queue.Stats();
+		Assert.AreEqual((2, 0, 0), (stats.Queued, stats.Completed, stats.Errors));
+		Assert.AreEqual(h.Clock.GetUtcNow(), stats.RunningSince);
+
+		await h.Queue.CancelAllAsync();
+		gate.SetResult(ProcessBookResult.Cancelled);
+		await h.Finished();
+	}
+
+	[TestMethod]
+	public void history_keeps_only_the_newest_entries_up_to_its_capacity()
+	{
+		var h = new Harness();
+		var history = new QueueHistory(3);
+		var jobs = Enumerable.Range(1, 5).Select(i => h.Job($"J{i}")).ToArray();
+		foreach (var job in jobs)
+			history.Add(job, DateTimeOffset.UnixEpoch);
+
+		CollectionAssert.AreEqual(new[] { "J5", "J4", "J3" }, history.Snapshot().Select(j => j.Asin).ToArray());
+		Assert.IsNull(history.Find(jobs[0].Id));
+		Assert.IsNotNull(history.Find(jobs[4].Id));
+		Assert.AreEqual(200, new QueueHistory().Capacity);
+	}
 }

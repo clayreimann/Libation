@@ -67,6 +67,7 @@ public sealed partial class LiberationQueue
 	{
 		_policy = policy;
 		Jobs.QueuedCountChanged += (_, count) => Volatile.Write(ref _queuedCount, count);
+		JobEnded += (_, job) => History.Add(job, Clock.GetUtcNow());
 	}
 
 	/// <summary>Wakes a running loop for newly enqueued jobs, or starts one.</summary>
@@ -342,6 +343,7 @@ public sealed partial class LiberationQueue
 
 			BadBookSession.Reset();
 			_announcedSkip = false;
+			_runStartedAt = Clock.GetUtcNow();
 			BeginRun();
 			RunStarted?.Invoke(this, EventArgs.Empty);
 
@@ -376,7 +378,7 @@ public sealed partial class LiberationQueue
 				}
 
 				// A pause or wait stops dispatch only; books already running carry on.
-				if (HasPendingDecision)
+				if (HasPendingDecision || _dispatchPaused)
 				{
 					await enqueued;
 					continue;
@@ -437,6 +439,7 @@ public sealed partial class LiberationQueue
 						nextBook.Status = ProcessBookStatus.Cancelled;
 						// Nothing else would take it off the active list.
 						Jobs.MarkCompleted(nextBook);
+						JobEnded?.Invoke(this, nextBook);
 						continue;
 					}
 
