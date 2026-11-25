@@ -159,7 +159,7 @@ public static class ApiEndpoints
 			await next();
 		});
 
-	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null, LoginSessions? logins = null, Func<string, LiberationJob?>? createUploadJob = null)
+	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null, LoginSessions? logins = null, Func<string, LiberationJob?>? createUploadJob = null, Func<string, ConvertJobResult>? createConvertJob = null)
 	{
 		logins ??= new LoginSessions(new AudibleLoginBackend());
 		IReadOnlyList<AccountDto> Accounts()
@@ -849,6 +849,65 @@ public static class ApiEndpoints
 			.Accepts<BulkRequest>("application/json")
 			.Produces<BulkResultDto>(StatusCodes.Status202Accepted)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapPost("/library/convert-mp3", (BulkRequest? body) =>
+		{
+			if (Validate(body?.Asins) is { } invalid)
+				return invalid;
+			var results = new List<BulkItemDto>();
+			lock (enqueueLock)
+			{
+				var active = queue.Jobs.GetAllItems().Except(queue.Jobs.Completed)
+					.Select(j => j.LibraryBook.Book.AudibleProductId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+				var jobs = new List<LiberationJob>();
+				foreach (var asin in Distinct(body!.Asins!))
+				{
+					if (active.Contains(asin))
+						results.Add(new(asin, BulkResults.Conflict));
+					else if (createConvertJob?.Invoke(asin) is not { } made || made.Outcome == ConvertOutcome.NotFound)
+						results.Add(new(asin, BulkResults.NotFound));
+					else if (made.Outcome == ConvertOutcome.Conflict)
+						results.Add(new(asin, BulkResults.Conflict));
+					else
+					{
+						jobs.Add(made.Job!);
+						results.Add(new(asin, BulkResults.Ok));
+					}
+				}
+				if (jobs.Count > 0)
+				{
+					queue.Jobs.Enqueue(jobs);
+					queue.StartOrWake();
+				}
+			}
+			return Results.Json(BulkResults.Summarize(results), statusCode: StatusCodes.Status202Accepted);
+		}).WithSummary("Queues convert-only jobs that re-encode liberated books to mp3 with the saved mp3 settings, as desktop's Convert to Mp3. conflict means the book is not liberated, has no m4b still to convert, is not a product (podcast episode), is absent from the last scan or already has a job; notFound is an unknown ASIN. 202 with a result per ASIN, 400 bad body or over 5000 ASINs.")
+			.WithName("bulkConvertToMp3").WithTags("library")
+			.Accepts<BulkRequest>("application/json")
+			.Produces<BulkResultDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapPost("/library/{asin}/convert-mp3", (string asin) =>
+		{
+			lock (enqueueLock)
+			{
+				if (queue.Jobs.GetAllItems().Except(queue.Jobs.Completed).Any(j => string.Equals(j.LibraryBook.Book.AudibleProductId, asin, StringComparison.OrdinalIgnoreCase)))
+					return Error("That book is already queued.", StatusCodes.Status409Conflict);
+				var made = createConvertJob?.Invoke(asin) ?? new ConvertJobResult(ConvertOutcome.NotFound);
+				if (made.Outcome == ConvertOutcome.NotFound)
+					return NoSuchBook();
+				if (made.Outcome == ConvertOutcome.Conflict)
+					return Error("That book is not liberated or has no m4b left to convert.", StatusCodes.Status409Conflict);
+
+				queue.Jobs.Enqueue([made.Job!]);
+				queue.StartOrWake();
+				return Results.Json(QueueMapper.ToDto(made.Job!, "queued"), statusCode: StatusCodes.Status202Accepted);
+			}
+		}).WithSummary("Queues one convert-only mp3 job for a liberated book. 202 with the job, 404 unknown ASIN, 409 not convertible or already queued.")
+			.WithName("convertBookToMp3").WithTags("library")
+			.Produces<QueueJobDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
 			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapPost("/scan", (ScanRequest? body) =>

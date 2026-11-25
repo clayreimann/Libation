@@ -293,6 +293,12 @@ public partial class ApiTests
 					"B000000002" => Job(asin),
 					_ => null
 				},
+				CreateConvertJob = asin => asin switch
+				{
+					"B000000001" => new(ConvertOutcome.Ok, Job(asin)),
+					"B000000002" => new(ConvertOutcome.Conflict),
+					_ => new(ConvertOutcome.NotFound)
+				},
 				ScanAccounts = (selection, _) =>
 				{
 					ScanSubsets.Add(string.Join(',', selection.Accounts ?? []));

@@ -166,6 +166,7 @@ internal class ServeOptions : OptionsBase
 		{
 			CreateBookJob = asin => new LiberateOptions { SharedQueue = queue }.CreateTargetedJob(queue, asin),
 			CreateUploadJob = asin => AudiobookshelfUploadJob.Create(queue, asin),
+			CreateConvertJob = asin => Mp3ConversionJob.Create(queue, asin),
 			ScanAccounts = (selection, _) => new ScanOptions { AccountNames = selection.Accounts, Locale = selection.Locale }.ExecuteAsync()
 		};
 
