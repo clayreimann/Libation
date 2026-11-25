@@ -86,6 +86,8 @@ public sealed partial class LiberationQueue
 			activeJob.Configuration.DownloadSpeedLimit = bytesPerSecond;
 	}
 
+	private bool HasQueuedJobs() => Jobs.Any(j => j is not null && j.Status is ProcessBookStatus.Queued);
+
 	public LiberationJob? FindJob(JobId id) => Jobs.FirstOrDefault(j => j is not null && j.Id == id);
 
 	private TaskCompletionSource _enqueueSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -319,7 +321,18 @@ public sealed partial class LiberationQueue
 		Serilog.Log.Logger.Information("Begin processing queued item: '{item_LibraryBook}'", book.LibraryBook);
 		JobStarted?.Invoke(this, book);
 
-		var result = await RunJob(book);
+		ProcessBookResult result;
+		try
+		{
+			result = await RunJob(book);
+		}
+		catch (Exception ex)
+		{
+			Serilog.Log.Logger.Error(ex, "A book failed to process and did not report a result: '{item_LibraryBook}'", book.LibraryBook);
+			book.Result = ProcessBookResult.FailedRetry;
+			book.Status = ProcessBookStatus.Failed;
+			result = ProcessBookResult.FailedRetry;
+		}
 
 		switch (result)
 		{
@@ -380,7 +393,9 @@ public sealed partial class LiberationQueue
 				// A pause or wait stops dispatch only; books already running carry on.
 				if (HasPendingDecision || _dispatchPaused)
 				{
-					await enqueued;
+					if (activeTasks.Count == 0 && !enqueued.IsCompleted && CanFinishRun() && !HasQueuedJobs())
+						break;
+					await Task.WhenAny(activeTasks.Append(enqueued));
 					continue;
 				}
 

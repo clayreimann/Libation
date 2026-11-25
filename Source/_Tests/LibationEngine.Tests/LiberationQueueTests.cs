@@ -760,6 +760,63 @@ public class LiberationQueueTests
 		await h.Finished();
 	}
 
+	private static async Task AssertRunEnded(Harness h, string because)
+	{
+		await Eventually(() => !h.Queue.Running, because);
+		var stats = h.Queue.Stats();
+		Assert.IsNull(stats.RunningSince);
+		Assert.AreEqual(0, stats.Queued);
+	}
+
+	[TestMethod]
+	public async Task cancel_all_ends_the_run_while_dispatch_is_paused()
+	{
+		var h = new Harness();
+		h.Queue.SetDispatchPaused(true);
+		h.Add(h.Job("A"), h.Job("B"));
+		await Eventually(() => h.Queue.Running, "run started");
+
+		await h.Queue.CancelAllAsync();
+
+		await AssertRunEnded(h, "the run to end after Cancel all");
+	}
+
+	[TestMethod]
+	public async Task cancel_all_ends_the_run_when_the_running_job_unwinds()
+	{
+		var h = new Harness();
+		var gate = Gate();
+		h.Outcome = (_, _, _) => Parked(gate);
+		h.Add(h.Job("A"), h.Job("B"));
+		await Eventually(() => h.Queue.Jobs.GetActive().Count == 1, "A running");
+
+		await h.Queue.CancelAllAsync();
+		gate.SetResult(ProcessBookResult.Cancelled);
+
+		await AssertRunEnded(h, "the run to end after Cancel all");
+	}
+
+	[TestMethod]
+	public async Task a_failed_abort_ends_the_run()
+	{
+		var h = new Harness();
+		h.Outcome = (_, _, _) => Task.FromResult(ProcessBookResult.FailedAbort);
+		h.Add(h.Job("A"), h.Job("B"));
+
+		await AssertRunEnded(h, "the run to end after a failed abort");
+	}
+
+	[TestMethod]
+	public async Task a_job_that_throws_ends_the_run_and_is_not_left_running()
+	{
+		var h = new Harness();
+		h.Outcome = (_, _, _) => throw new InvalidOperationException("boom");
+		h.Add(h.Job("A"), h.Job("B"));
+
+		await AssertRunEnded(h, "the run to end after a job threw");
+		Assert.AreEqual(0, h.Queue.Jobs.GetActive().Count);
+	}
+
 	[TestMethod]
 	public void history_keeps_only_the_newest_entries_up_to_its_capacity()
 	{
