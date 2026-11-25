@@ -43,7 +43,7 @@ public sealed class DbEngineData : IEngineData
 			.OrderByDescending(lb => lb.DateAdded)
 			.ThenBy(lb => lb.Book.AudibleProductId, StringComparer.Ordinal)
 			.ToList();
-		var path = Path.Combine(Path.GetTempPath(), $"libation-export-{Guid.NewGuid():N}");
+		var path = Path.Combine(Path.GetTempPath(), $"libation-export-{Guid.NewGuid():N}.{format.ToString().ToLowerInvariant()}");
 		try
 		{
 			switch (format)

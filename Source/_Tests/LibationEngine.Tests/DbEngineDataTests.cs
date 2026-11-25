@@ -54,6 +54,27 @@ public class DbEngineDataTests
 		context.LibraryBooks.Add(new LibraryBook(book, new DateTime(2020, 1, 1), "acct") { IsDeleted = deleted });
 	}
 
+	[DataTestMethod]
+	[DataRow(ExportFormat.Csv, ".csv")]
+	[DataRow(ExportFormat.Json, ".json")]
+	[DataRow(ExportFormat.Xlsx, ".xlsx")]
+	public void ExportLibrary_writes_a_real_file_for_every_format(ExportFormat format, string extension)
+	{
+		var path = data.ExportLibrary(format);
+		try
+		{
+			Assert.AreEqual(extension, Path.GetExtension(path));
+			Assert.IsTrue(new FileInfo(path).Length > 0);
+			if (format == ExportFormat.Xlsx)
+				using (var zip = System.IO.Compression.ZipFile.OpenRead(path))
+					Assert.IsNotNull(zip.GetEntry("xl/workbook.xml"));
+		}
+		finally
+		{
+			File.Delete(path);
+		}
+	}
+
 	private static string[] Results(IReadOnlyList<BulkItemDto> items) => items.Select(i => $"{i.Asin}:{i.Result}").ToArray();
 
 	[TestMethod]
