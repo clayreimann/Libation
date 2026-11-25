@@ -19,6 +19,7 @@ public sealed partial class LiberationQueue
 	private readonly LiberationPolicy _policy;
 	private int _queuedCount;
 	private bool _aborted;
+	private bool _announcedSkip;
 
 	public TrackedQueue<LiberationJob> Jobs { get; } = new();
 	public BadBookSessionContext BadBookSession { get; } = new();
@@ -37,6 +38,9 @@ public sealed partial class LiberationQueue
 
 	/// <summary>The single call the dispatch loop makes into a book; replaced by a fake in tests.</summary>
 	internal Func<LiberationJob, Task<ProcessBookResult>> RunJob { get; set; } = job => job.ProcessOneAsync();
+
+	/// <summary>Asked before each book starts; a message ends the run, dropping this book and every one still queued.</summary>
+	public Func<LiberationJob, string?>? StopBeforeDispatch { get; set; }
 
 	internal TimeProvider Clock { get; set; } = TimeProvider.System;
 
@@ -101,6 +105,7 @@ public sealed partial class LiberationQueue
 		Proceed,
 		/// <summary>Limited, but something else in the queue is not; try it later.</summary>
 		Defer,
+		Skip,
 		Cancelled
 	}
 
@@ -140,6 +145,21 @@ public sealed partial class LiberationQueue
 						WriteLog(resumed);
 					}
 					return DailyLimitGate.Proceed;
+				}
+
+				if (_policy.OnDailyLimit == DailyLimitPolicy.Skip)
+				{
+					Serilog.Log.Logger.Information(
+						"Daily download limit reached; skipping {libraryBook}. {@DebugInfo}",
+						nextBook.LibraryBook.LogFriendly(),
+						new { allowance.Scope, allowance.Unit, allowance.Quantity, allowance.UsedBooks, allowance.UsedBytes, allowance.NextCapacityAt });
+					if (!_announcedSkip)
+					{
+						_announcedSkip = true;
+						foreach (var line in DailyDownloadLimitUserMessage.BuildCliSkippedLines(allowance))
+							WriteLog(line);
+					}
+					return DailyLimitGate.Skip;
 				}
 
 				// Under "Plus titles only" a mixed queue can keep going; do not stall owned titles behind a Plus title.
@@ -321,6 +341,7 @@ public sealed partial class LiberationQueue
 			Serilog.Log.Logger.Information("Begin processing queue");
 
 			BadBookSession.Reset();
+			_announcedSkip = false;
 			BeginRun();
 			RunStarted?.Invoke(this, EventArgs.Empty);
 
@@ -375,7 +396,28 @@ public sealed partial class LiberationQueue
 				{
 					// In this single dispatch loop, not the book task: a per-book wait would have every blocked
 					// book polling at once. Books already in flight keep running while the loop is held here.
+					if (StopBeforeDispatch?.Invoke(nextBook) is { } stopMessage)
+					{
+						Serilog.Log.Logger.Information("{StopMessage}", stopMessage);
+						WriteLog(stopMessage);
+						Jobs.ClearQueue();
+						nextBook.Result = ProcessBookResult.Cancelled;
+						nextBook.Status = ProcessBookStatus.Cancelled;
+						Jobs.MarkCompleted(nextBook);
+						JobEnded?.Invoke(this, nextBook);
+						continue;
+					}
+
 					var gate = await WaitForDailyLimitAsync(nextBook, consecutiveDeferrals);
+
+					if (gate is DailyLimitGate.Skip)
+					{
+						nextBook.Result = ProcessBookResult.SkippedDailyLimit;
+						nextBook.Status = ProcessBookStatus.Cancelled;
+						Jobs.MarkCompleted(nextBook);
+						JobEnded?.Invoke(this, nextBook);
+						continue;
+					}
 
 					if (gate is DailyLimitGate.Defer)
 					{

@@ -42,9 +42,9 @@ public class LiberationQueueTests
 		public Func<string, int, LiberationJob, Task<ProcessBookResult>> Outcome { get; set; }
 			= (_, _, _) => Task.FromResult(ProcessBookResult.Success);
 
-		public Harness(int atOnce = 1, DiskFullPolicy onDiskFull = DiskFullPolicy.Ask)
+		public Harness(int atOnce = 1, DiskFullPolicy onDiskFull = DiskFullPolicy.Ask, DailyLimitPolicy onDailyLimit = DailyLimitPolicy.Wait)
 		{
-			Queue = new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => atOnce, OnDiskFull = onDiskFull })
+			Queue = new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => atOnce, OnDiskFull = onDiskFull, OnDailyLimit = onDailyLimit })
 			{
 				Clock = Clock,
 				MachineCeilingOverride = atOnce,
@@ -486,6 +486,47 @@ public class LiberationQueueTests
 		await h.Finished();
 
 		CollectionAssert.AreEqual(new[] { "waiting:DailyLimit", "waitEnded:DailyLimit" }, h.Events.ToArray());
+	}
+
+	[TestMethod]
+	public async Task the_skip_policy_leaves_blocked_books_for_the_next_run()
+	{
+		Configuration.Instance.DailyDownloadLimit = Configuration.DailyLimitScope.AllBooks;
+		Configuration.Instance.DailyDownloadLimitUnit = Configuration.DailyLimitUnit.Books;
+		Configuration.Instance.DailyDownloadLimitQuantity = 1;
+		var h = new Harness(onDailyLimit: DailyLimitPolicy.Skip);
+		h.Queue.DownloadHistory = _ => [new DownloadHistoryEntry(h.Clock.GetUtcNow() - TimeSpan.FromHours(1), "USED", false, 1)];
+		var logs = new ConcurrentQueue<string>();
+		h.Queue.LogWritten += (_, line) => logs.Enqueue(line);
+		LiberationJob a = h.Job("A", download: true), b = h.Job("B", download: true), c = h.Job("C");
+
+		h.Add(a, b, c);
+		await h.Finished();
+
+		CollectionAssert.AreEqual(new[] { "C" }, h.Started.ToArray());
+		Assert.AreEqual(ProcessBookResult.SkippedDailyLimit, a.Result);
+		Assert.AreEqual(ProcessBookResult.SkippedDailyLimit, b.Result);
+		Assert.IsNull(h.Queue.Waiting);
+		Assert.IsTrue(logs.Count > 0, "The limit was not announced.");
+		CollectionAssert.AreEqual(new[] { "A", "B", "C" }, h.Queue.Jobs.Completed.Select(Harness.Asin).ToArray());
+	}
+
+	[TestMethod]
+	public async Task a_stop_before_dispatch_drops_the_book_and_everything_behind_it()
+	{
+		var h = new Harness();
+		h.Queue.StopBeforeDispatch = job => Harness.Asin(job) == "B" ? "enough" : null;
+		var logs = new ConcurrentQueue<string>();
+		h.Queue.LogWritten += (_, line) => logs.Enqueue(line);
+		LiberationJob a = h.Job("A"), b = h.Job("B"), c = h.Job("C");
+
+		h.Add(a, b, c);
+		await h.Finished();
+
+		CollectionAssert.AreEqual(new[] { "A" }, h.Started.ToArray());
+		Assert.AreEqual(ProcessBookResult.Cancelled, b.Result);
+		CollectionAssert.AreEqual(new[] { "enough" }, logs.ToArray());
+		Assert.AreEqual(0, h.Queue.Jobs.Count(j => j.Status == ProcessBookStatus.Queued));
 	}
 
 	[TestMethod]

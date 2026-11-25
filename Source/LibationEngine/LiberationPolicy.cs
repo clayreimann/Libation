@@ -10,8 +10,17 @@ public enum DiskFullPolicy
 	WaitForSpace
 }
 
+public enum DailyLimitPolicy
+{
+	/// <summary>Hold dispatch until the limit lifts; see <see cref="QueueWait"/>.</summary>
+	Wait,
+	/// <summary>Leave blocked books un-liberated for the next run.</summary>
+	Skip
+}
+
 public sealed record LiberationPolicy
 {
 	public required Func<int> MaxConcurrentDownloads { get; init; }
 	public DiskFullPolicy OnDiskFull { get; init; } = DiskFullPolicy.Ask;
+	public DailyLimitPolicy OnDailyLimit { get; init; } = DailyLimitPolicy.Wait;
 }

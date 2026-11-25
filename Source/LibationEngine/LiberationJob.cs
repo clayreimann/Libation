@@ -50,15 +50,22 @@ public sealed class LiberationJob
 	#region Process Queue Logging
 
 	public event EventHandler<string>? LogWritten;
+	/// <summary>The log lines a person running unattended needs to see: errors, license and disk guidance.</summary>
+	public event EventHandler<string>? AttentionWritten;
 	private void OnLogWritten(string text) => LogWritten?.Invoke(this, text.Trim());
 
 	private void LogError(string? message, Exception? ex = null)
 	{
-		OnLogWritten(message ?? "Automated backup: error");
+		LogAttention(message ?? "Automated backup: error");
 		if (ex is not null)
-			OnLogWritten("ERROR: " + ex.Message);
+			LogAttention("ERROR: " + ex.Message);
 	}
 	private void LogInfo(string text) => OnLogWritten(text);
+	private void LogAttention(string text)
+	{
+		OnLogWritten(text);
+		AttentionWritten?.Invoke(this, text.Trim());
+	}
 
 	#endregion
 
@@ -152,7 +159,7 @@ public sealed class LiberationJob
 				// Prefer disk-full detection over generic retry; avoids treating truncated .aaxc as a normal failure.
 				if (statusHandler.Errors.Any(DiskSpaceHelper.ErrorMessageIndicatesDiskFull))
 				{
-					LogInfo($"{procName}:  Disk is full. Free space or change Books / In progress in Settings. - {LibraryBook.Book}");
+					LogAttention($"{procName}:  Disk is full. Free space or change Books / In progress in Settings. - {LibraryBook.Book}");
 					result = ProcessBookResult.DiskFull;
 				}
 			}
@@ -166,7 +173,7 @@ public sealed class LiberationJob
 				var account = persister.AccountsSettings.GetAccount(LibraryBook.Account, LibraryBook.Book.Locale);
 				ThrottledDeviceRecovery.ApplyRecovery(persister.AccountsSettings, Configuration, account);
 			}
-			LogInfo($"{procName}:  {WidevineRecommendation.BuildLogSummary(LibraryBook.Book.TitleWithSubtitle, LibraryBook.Account.ToMask())}");
+			LogAttention($"{procName}:  {WidevineRecommendation.BuildLogSummary(LibraryBook.Book.TitleWithSubtitle, LibraryBook.Account.ToMask())}");
 			result = ProcessBookResult.WidevineRecommended;
 		}
 		catch (ContentLicenseDeniedException ldex)
@@ -182,7 +189,7 @@ public sealed class LiberationJob
 					if (ThrottledDeviceRecovery.ShouldRecover(ldex, account, Configuration.Instance))
 					{
 						ThrottledDeviceRecovery.ApplyRecovery(persister.AccountsSettings, Configuration.Instance, account);
-						LogInfo($"{procName}:  Audible reports throttling on a legacy or non-Widevine registration. Libation updated settings to Android + Widevine and marked account '{LibraryBook.Account.ToMask()}' for re-registration. Sign in on next scan or liberate to complete setup. - {LibraryBook.Book}");
+						LogAttention($"{procName}:  Audible reports throttling on a legacy or non-Widevine registration. Libation updated settings to Android + Widevine and marked account '{LibraryBook.Account.ToMask()}' for re-registration. Sign in on next scan or liberate to complete setup. - {LibraryBook.Book}");
 						result = ProcessBookResult.LicenseDeniedThrottledRecovered;
 						recovered = true;
 					}
@@ -190,23 +197,23 @@ public sealed class LiberationJob
 
 				if (!recovered)
 				{
-					LogInfo($"{procName}:  Audible reports throttling. Try deregistering Libation devices and recreating the account first. Recovery steps: {AppScaffolding.LicenseRecoveryGuidance.DocumentationUrl}. If it persists, wait 24 to 48 hours, sometimes a few days. - {LibraryBook.Book}");
+					LogAttention($"{procName}:  Audible reports throttling. Try deregistering Libation devices and recreating the account first. Recovery steps: {AppScaffolding.LicenseRecoveryGuidance.DocumentationUrl}. If it persists, wait 24 to 48 hours, sometimes a few days. - {LibraryBook.Book}");
 					result = ProcessBookResult.LicenseDeniedThrottled;
 				}
 			}
 			else if (ldex.AYCL?.RejectionReason is null or RejectionReason.GenericError)
 			{
-				LogInfo($"{procName}:  Content license denied. A temporary interruption of service is possible. If Audible's app plays the title, try registration recovery: {AppScaffolding.LicenseRecoveryGuidance.DocumentationUrl}. Otherwise, waiting 24 to 48 hours, sometimes a few days, may help. - {LibraryBook.Book}");
+				LogAttention($"{procName}:  Content license denied. A temporary interruption of service is possible. If Audible's app plays the title, try registration recovery: {AppScaffolding.LicenseRecoveryGuidance.DocumentationUrl}. Otherwise, waiting 24 to 48 hours, sometimes a few days, may help. - {LibraryBook.Book}");
 				result = ProcessBookResult.LicenseDeniedPossibleOutage;
 			}
 			else if (LibraryBook.IsAudiblePlus)
 			{
-				LogInfo($"{procName}:  Content license denied for this Audible Plus catalog title. Check access in the Audible app. If it plays, try registration recovery: {AppScaffolding.LicenseRecoveryGuidance.DocumentationUrl}. Heavy Plus use can also require waiting 24 to 48 hours, sometimes a few days. - {LibraryBook.Book}");
+				LogAttention($"{procName}:  Content license denied for this Audible Plus catalog title. Check access in the Audible app. If it plays, try registration recovery: {AppScaffolding.LicenseRecoveryGuidance.DocumentationUrl}. Heavy Plus use can also require waiting 24 to 48 hours, sometimes a few days. - {LibraryBook.Book}");
 				result = ProcessBookResult.LicenseDenied;
 			}
 			else
 			{
-				LogInfo($"{procName}:  Content license denied. Check your Audible account to see if you have access to this title. - {LibraryBook.Book}");
+				LogAttention($"{procName}:  Content license denied. Check your Audible account to see if you have access to this title. - {LibraryBook.Book}");
 				result = ProcessBookResult.LicenseDenied;
 			}
 		}
@@ -214,7 +221,7 @@ public sealed class LiberationJob
 		catch (Exception ex) when (DiskSpaceHelper.IsDiskFullException(ex))
 		{
 			Serilog.Log.Logger.Error(ex, "Disk full during {ProcName} for {{@Book}}", procName, LibraryBook.LogFriendly());
-			LogInfo($"{procName}:  Disk is full. Free space or change Books / In progress in Settings. - {LibraryBook.Book}");
+			LogAttention($"{procName}:  Disk is full. Free space or change Books / In progress in Settings. - {LibraryBook.Book}");
 			result = ProcessBookResult.DiskFull;
 		}
 		catch (Exception ex)
@@ -278,10 +285,17 @@ public sealed class LiberationJob
 	}
 
 	public LiberationJob AddDownloadPdf() => AddProcessable<DownloadPdf>();
-	public LiberationJob AddDownloadDecryptBook()
+	public LiberationJob AddDownloadDecryptBook(DownloadOptions.LicenseInfo? license = null)
 	{
 		IncludesBookDownload = true;
-		return AddProcessable<DownloadDecryptBook>();
+		return license is null
+			? AddProcessable<DownloadDecryptBook>()
+			: AddProcessable(cfg =>
+			{
+				var step = DownloadDecryptBook.Create(cfg);
+				step.LicenseInfo = license;
+				return step;
+			});
 	}
 	public LiberationJob AddConvertToMp3() => AddProcessable<ConvertToMp3>();
 	public LiberationJob AddUploadToAudiobookshelf() => AddProcessable<UploadToAudiobookshelf>();
@@ -298,7 +312,7 @@ public sealed class LiberationJob
 
 			// Each step is created as it is reached, so by now an earlier step has published whatever license
 			// it obtained. Handing it on is what keeps a title to one license request per run.
-			if (processable is ILicensedDownload licensed)
+			if (processable is ILicensedDownload licensed && obtainedLicense is not null)
 				licensed.LicenseInfo = obtainedLicense;
 
 			return processable;

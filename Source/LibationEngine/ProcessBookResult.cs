@@ -20,5 +20,7 @@ public enum ProcessBookResult
 	/// <summary>Volume full on write; the queue applies its <see cref="DiskFullPolicy"/>.</summary>
 	DiskFull,
 	/// <summary>Failed with Bad Book set to Ask; the queue is holding a <see cref="PendingDecision"/> for it.</summary>
-	AwaitingDecision
+	AwaitingDecision,
+	/// <summary>Left for the next run because the daily download limit blocks it and the policy is <see cref="DailyLimitPolicy.Skip"/>.</summary>
+	SkippedDailyLimit
 }
