@@ -22,6 +22,7 @@
   </Folder>
   <Folder Name="/6 Application/">
     <Project Path="AppScaffolding/AppScaffolding.csproj" />
+    <Project Path="LibationEngine/LibationEngine.csproj" />
   </Folder>
   <Folder Name="/6 Application/Hangover/">
     <Project Path="HangoverAvalonia/HangoverAvalonia.csproj" />
