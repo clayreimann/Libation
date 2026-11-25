@@ -114,6 +114,15 @@ public class LiberateOptions : ProcessableOptionsBase
 
 	internal virtual Processable CreateUploadStep() => CreateProcessable<UploadToAudiobookshelf>();
 
+	internal LiberationJob? CreateTargetedJob(LiberationQueue queue, string asin)
+	{
+		if (DbContexts.GetLibraryBook_Flat_NoTracking(asin, caseSensative: false) is not LibraryBook lb)
+			return null;
+
+		PrepareBookForLiberate(lb, isTargetedRun: true);
+		return NewJob(queue, lb, pdfOnly: false);
+	}
+
 	private LiberationJob NewJob(LiberationQueue queue, LibraryBook libraryBook, bool pdfOnly, DownloadOptions.LicenseInfo? license = null)
 	{
 		var job = new LiberationJob(libraryBook, Configuration.Instance, queue.BadBookSession);

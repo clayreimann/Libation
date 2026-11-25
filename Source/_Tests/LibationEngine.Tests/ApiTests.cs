@@ -5,6 +5,7 @@ using System.Text.Json;
 using LibationEngine.Contracts;
 using LibationEngine.Host;
 using DataLayer;
+using LibationEngine;
 using LibationFileManager;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -35,19 +36,45 @@ public class ApiTests
 	private sealed class FakeData : IEngineData
 	{
 		public (int Offset, int Limit)? LastPage;
+		public (string? Query, bool Trash)? LastFilter;
+		public readonly List<string> Calls = [];
 
 		public IReadOnlyList<AccountDto> GetAccounts() => [new("a@example.com", "Main", "us", true)];
 
-		public LibraryPageDto GetLibrary(int offset, int limit)
+		public LibraryPageDto GetLibrary(int offset, int limit, string? query = null, bool trash = false)
 		{
 			LastPage = (offset, limit);
-			return new(1, offset, limit, [Book("B000000001")]);
+			LastFilter = (query, trash);
+			if (query == "bad[")
+				throw new SearchQueryException("Cannot parse the search query: bad[");
+			return new(7, offset, limit, [Book("B000000001")]);
 		}
 
 		public BookDto? GetBook(string asin) => asin == "B000000001" ? Book(asin) : null;
 
+		public Task<BookDto?> SetTags(string asin, string tags)
+		{
+			Calls.Add($"tags:{asin}:{tags}");
+			return Task.FromResult(GetBook(asin) is { } b ? b with { Tags = tags } : null);
+		}
+
+		public Task<BookDto?> SetBookStatus(string asin, LiberatedStatus status)
+		{
+			Calls.Add($"status:{asin}:{status}");
+			return Task.FromResult(GetBook(asin) is { } b ? b with { BookStatus = status.ToString() } : null);
+		}
+
+		public Task<BookDto?> SetTrash(string asin, bool inTrash)
+		{
+			Calls.Add($"trash:{asin}:{inTrash}");
+			return Task.FromResult(GetBook(asin) is { } b ? b with { InTrash = inTrash } : null);
+		}
+
+		public SettingsDto GetSettings()
+			=> SettingsMapper.From(Configuration.Instance);
+
 		private static BookDto Book(string asin)
-			=> new(asin, "Title", null, ["Author"], ["Narrator"], [], 60, "NotLiberated", null, DateTime.UnixEpoch, "a@example.com", "us", "Product", false);
+			=> new(asin, "Title", null, ["Author"], ["Narrator"], [], 60, "NotLiberated", null, DateTime.UnixEpoch, "a@example.com", "us", "Product", false, "", false);
 	}
 
 	private sealed class Harness : IAsyncDisposable
@@ -96,7 +123,10 @@ public class ApiTests
 					return 0;
 				},
 				_ => { Interlocked.Increment(ref LiberateCalls); return Task.FromResult(0); },
-				_ => Task.FromResult(0));
+				_ => Task.FromResult(0))
+			{
+				CreateBookJob = asin => asin == "B000000001" ? Job(asin) : null
+			};
 
 			run = LibationDaemon.RunAsync(
 				new DaemonOptions(TimeSpan.FromMinutes(30), false, Base, dir.Path, ApiEnabled: api, ApiTokenFile: tokenFile),
@@ -355,6 +385,217 @@ public class ApiTests
 
 		Assert.AreEqual(HttpStatusCode.OK, (await h.Http.GetAsync(h.Base + "/api/library/B000000001")).StatusCode);
 		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.GetAsync(h.Base + "/api/library/nope")).StatusCode);
+	}
+
+	private static HttpRequestMessage Authed(HttpMethod method, string url, string? json = null)
+	{
+		var request = new HttpRequestMessage(method, url);
+		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "s3cret");
+		if (json is not null)
+			request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+		return request;
+	}
+
+	private static async Task<Harness> TokenHarness()
+	{
+		var dir = new TempDir();
+		var tokenFile = dir.File("token");
+		File.WriteAllText(tokenFile, "s3cret\n");
+		var h = new Harness(api: true, tokenFile);
+		await h.WaitIdleAfterFirstCycle();
+		return h;
+	}
+
+	private static HttpRequestMessage Send(HttpMethod method, string url, string? json = null)
+		=> new(method, url) { Content = json is null ? null : new StringContent(json, System.Text.Encoding.UTF8, "application/json") };
+
+	[TestMethod]
+	public async Task Library_passes_query_and_trash_and_reports_the_match_total()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		using var doc = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/library?q=author%3AAuthor&offset=3&limit=2"));
+		Assert.AreEqual(("author:Author", false), h.Data.LastFilter);
+		Assert.AreEqual((3, 2), h.Data.LastPage);
+		Assert.AreEqual(7, doc.RootElement.GetProperty("total").GetInt32());
+
+		await h.Http.GetStringAsync(h.Base + "/api/library?trash=true");
+		Assert.AreEqual((null, true), h.Data.LastFilter);
+		await h.Http.GetStringAsync(h.Base + "/api/library");
+		Assert.AreEqual((null, false), h.Data.LastFilter);
+	}
+
+	[TestMethod]
+	public async Task Library_rejects_an_unparseable_query_with_400()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var response = await h.Http.GetAsync(h.Base + "/api/library?q=bad%5B");
+		Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
+		StringAssert.Contains(await response.Content.ReadAsStringAsync(), "Cannot parse");
+	}
+
+	[TestMethod]
+	public async Task Setting_tags_replaces_them_and_validates_the_body()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var ok = await h.Http.SendAsync(Send(HttpMethod.Put, h.Base + "/api/library/B000000001/tags", "{\"tags\":\"one two\"}"));
+		Assert.AreEqual(HttpStatusCode.OK, ok.StatusCode);
+		using var doc = JsonDocument.Parse(await ok.Content.ReadAsStringAsync());
+		Assert.AreEqual("one two", doc.RootElement.GetProperty("tags").GetString());
+		Assert.AreEqual("tags:B000000001:one two", h.Data.Calls.Single());
+
+		Assert.AreEqual(HttpStatusCode.OK, (await h.Http.SendAsync(Send(HttpMethod.Put, h.Base + "/api/library/B000000001/tags", "{\"tags\":\"\"}"))).StatusCode);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Put, h.Base + "/api/library/B000000001/tags", "{}"))).StatusCode);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Put, h.Base + "/api/library/B000000001/tags"))).StatusCode);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.SendAsync(Send(HttpMethod.Put, h.Base + "/api/library/nope/tags", "{\"tags\":\"x\"}"))).StatusCode);
+		Assert.AreEqual(3, h.Data.Calls.Count);
+	}
+
+	[TestMethod]
+	[DataRow("liberated", "Liberated")]
+	[DataRow("notLiberated", "NotLiberated")]
+	[DataRow(" NOTLIBERATED ", "NotLiberated")]
+	public async Task Setting_status_accepts_liberated_and_not_liberated(string wire, string expected)
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var response = await h.Http.SendAsync(Send(HttpMethod.Put, h.Base + "/api/library/B000000001/status", $"{{\"status\":\"{wire}\"}}"));
+		Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+		using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+		Assert.AreEqual(expected, doc.RootElement.GetProperty("bookStatus").GetString());
+		Assert.AreEqual($"status:B000000001:{expected}", h.Data.Calls.Single());
+	}
+
+	[TestMethod]
+	public async Task Setting_status_validates_the_body_and_404s_unknown_asins()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		foreach (var body in new[] { "{\"status\":\"error\"}", "{\"status\":\"bogus\"}", "{}" })
+			Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Put, h.Base + "/api/library/B000000001/status", body))).StatusCode, body);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.SendAsync(Send(HttpMethod.Put, h.Base + "/api/library/nope/status", "{\"status\":\"liberated\"}"))).StatusCode);
+		Assert.AreEqual(0, h.Data.Calls.Count(c => c.StartsWith("status:B000000001")));
+	}
+
+	[TestMethod]
+	public async Task Trash_and_restore_toggle_the_flag_and_404_unknown_asins()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var trashed = await h.Http.PostAsync(h.Base + "/api/library/B000000001/trash", null);
+		Assert.AreEqual(HttpStatusCode.OK, trashed.StatusCode);
+		using (var doc = JsonDocument.Parse(await trashed.Content.ReadAsStringAsync()))
+			Assert.IsTrue(doc.RootElement.GetProperty("inTrash").GetBoolean());
+
+		var restored = await h.Http.PostAsync(h.Base + "/api/library/B000000001/restore", null);
+		using (var doc = JsonDocument.Parse(await restored.Content.ReadAsStringAsync()))
+			Assert.IsFalse(doc.RootElement.GetProperty("inTrash").GetBoolean());
+
+		CollectionAssert.AreEqual(new[] { "trash:B000000001:True", "trash:B000000001:False" }, h.Data.Calls);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.PostAsync(h.Base + "/api/library/nope/trash", null)).StatusCode);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.PostAsync(h.Base + "/api/library/nope/restore", null)).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Liberating_one_book_queues_it_and_returns_202_with_the_job_id()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		var release = new TaskCompletionSource();
+		h.Outcome = async _ => { await release.Task; return ProcessBookResult.Success; };
+
+		var response = await h.Http.PostAsync(h.Base + "/api/library/B000000001/liberate", null);
+		Assert.AreEqual(HttpStatusCode.Accepted, response.StatusCode);
+		using var accepted = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+		Assert.AreEqual("B000000001", accepted.RootElement.GetProperty("asin").GetString());
+		Assert.AreEqual("queued", accepted.RootElement.GetProperty("state").GetString());
+		var id = accepted.RootElement.GetProperty("id").GetString();
+
+		await Eventually(async () => (await h.QueueJson()).RootElement.GetProperty("jobs").EnumerateArray().Any(j => j.GetProperty("id").GetString() == id));
+
+		Assert.AreEqual(HttpStatusCode.Conflict, (await h.Http.PostAsync(h.Base + "/api/library/B000000001/liberate", null)).StatusCode);
+
+		release.SetResult();
+		await h.Queue.Runner!;
+		Assert.AreEqual(HttpStatusCode.Accepted, (await h.Http.PostAsync(h.Base + "/api/library/B000000001/liberate", null)).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Liberating_an_unknown_book_is_404()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.PostAsync(h.Base + "/api/library/nope/liberate", null)).StatusCode);
+		Assert.AreEqual(0, h.Queue.Jobs.GetAllItems().Count());
+	}
+
+	[TestMethod]
+	public async Task Book_actions_and_settings_are_404_when_the_api_is_off_and_401_without_the_token()
+	{
+		await using (var off = new Harness(api: false))
+		{
+			await off.WaitIdleAfterFirstCycle();
+			Assert.AreEqual(HttpStatusCode.NotFound, (await off.Http.GetAsync(off.Base + "/api/settings")).StatusCode);
+			Assert.AreEqual(HttpStatusCode.NotFound, (await off.Http.PostAsync(off.Base + "/api/library/B000000001/liberate", null)).StatusCode);
+		}
+
+		await using var h = await TokenHarness();
+		var calls = new (HttpMethod Method, string Path, string? Body)[]
+		{
+			(HttpMethod.Get, "/api/library?q=x", null),
+			(HttpMethod.Get, "/api/settings", null),
+			(HttpMethod.Put, "/api/library/B000000001/tags", "{\"tags\":\"x\"}"),
+			(HttpMethod.Put, "/api/library/B000000001/status", "{\"status\":\"liberated\"}"),
+			(HttpMethod.Post, "/api/library/B000000001/trash", null),
+			(HttpMethod.Post, "/api/library/B000000001/restore", null),
+			(HttpMethod.Post, "/api/library/B000000001/liberate", null)
+		};
+		foreach (var (method, path, body) in calls)
+		{
+			Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.SendAsync(Send(method, h.Base + path, body))).StatusCode, path);
+			Assert.AreNotEqual(HttpStatusCode.Unauthorized, (await h.Http.SendAsync(Authed(method, h.Base + path, body))).StatusCode, path);
+		}
+	}
+
+	[TestMethod]
+	public async Task Settings_endpoint_returns_the_curated_subset()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		using var doc = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/settings"));
+		var root = doc.RootElement;
+		Assert.IsTrue(root.TryGetProperty("books", out _));
+		Assert.IsTrue(root.GetProperty("naming").TryGetProperty("folderTemplate", out _));
+		Assert.IsTrue(root.GetProperty("download").TryGetProperty("overwriteExisting", out _));
+		Assert.IsTrue(root.GetProperty("queue").TryGetProperty("maxConcurrentDownloads", out _));
+	}
+
+	[TestMethod]
+	public void Settings_mapping_never_carries_secrets()
+	{
+		var c = Configuration.Instance;
+		c.AudiobookshelfApiToken = "abs-token-VALUE";
+		c.AudiobookshelfServerUrl = "https://abs.example.com/secret-path";
+		c.AudiobookshelfLibraryId = "lib-id-VALUE";
+		c.AudiobookshelfFolderId = "folder-id-VALUE";
+
+		var json = JsonSerializer.Serialize(SettingsMapper.From(c), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+		foreach (var secret in new[] { "abs-token-VALUE", "abs.example.com", "lib-id-VALUE", "folder-id-VALUE" })
+			Assert.DoesNotContain(secret, json);
+		StringAssert.Contains(json, "\"serverConfigured\":true");
+		foreach (var name in typeof(SettingsDto).Assembly.GetTypes().Where(t => t.Name.EndsWith("SettingsDto")).SelectMany(t => t.GetProperties()).Select(p => p.Name))
+			Assert.IsFalse(name.Contains("Token") || name.Contains("Key") || name.Contains("Secret") || name.Contains("Password"), name);
 	}
 
 	[TestMethod]

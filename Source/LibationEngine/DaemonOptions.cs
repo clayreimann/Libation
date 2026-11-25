@@ -15,4 +15,8 @@ public sealed record DaemonOptions(
 public sealed record DaemonJobs(
 	Func<CancellationToken, Task<int>> Scan,
 	Func<CancellationToken, Task<int>> Liberate,
-	Func<CancellationToken, Task<int>> Reconcile);
+	Func<CancellationToken, Task<int>> Reconcile)
+{
+	/// <summary>Builds the job for one book by ASIN, or null when the book is not in the library.</summary>
+	public Func<string, LiberationJob?>? CreateBookJob { get; init; }
+}

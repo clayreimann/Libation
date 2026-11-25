@@ -1,6 +1,6 @@
-using LibationEngine;
 using System.Text.Json;
 using AppScaffolding;
+using DataLayer;
 using LibationEngine.Contracts;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -31,7 +31,7 @@ public static class ApiEndpoints
 			await next();
 		});
 
-	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue)
+	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null)
 	{
 		StatusDto Status()
 		{
@@ -53,14 +53,58 @@ public static class ApiEndpoints
 		api.MapGet("/accounts", () => data.GetAccounts())
 			.WithSummary("Accounts: id, name, locale and library-scan flag. Never tokens.");
 
-		api.MapGet("/library", (int? offset, int? limit) =>
+		api.MapGet("/library", (int? offset, int? limit, string? q, bool? trash) =>
 		{
 			var (o, l) = LibraryPaging.Clamp(offset, limit);
-			return data.GetLibrary(o, l);
-		}).WithSummary("Books, newest first. offset (default 0), limit (default 100, max 1000).");
+			try
+			{
+				return Results.Json(data.GetLibrary(o, l, q, trash ?? false));
+			}
+			catch (SearchQueryException ex)
+			{
+				return Error(ex.Message, StatusCodes.Status400BadRequest);
+			}
+		}).WithSummary("Books, newest first. offset (default 0), limit (default 100, max 1000), q (Lucene filter syntax), trash=true for the trash. total counts all matches.");
 
-		api.MapGet("/library/{asin}", (string asin) => data.GetBook(asin) is { } book ? Results.Json(book) : Results.NotFound(new ErrorDto("No such book.")))
-			.WithSummary("One book by ASIN, or 404.");
+		api.MapGet("/library/{asin}", (string asin) => data.GetBook(asin) is { } book ? Results.Json(book) : NoSuchBook())
+			.WithSummary("One book by ASIN, trashed ones included, or 404.");
+
+		api.MapPut("/library/{asin}/tags", async (string asin, TagsRequest? body) =>
+			body?.Tags is null
+				? Error("tags is required; an empty string clears them.", StatusCodes.Status400BadRequest)
+				: await data.SetTags(asin, body.Tags) is { } book ? Results.Json(book) : NoSuchBook())
+			.WithSummary("Replaces a book's tags. 200 with the book, 400 bad body, 404 unknown ASIN.");
+
+		api.MapPut("/library/{asin}/status", async (string asin, StatusRequest? body) =>
+			!TryParseStatus(body?.Status, out var status)
+				? Error("status must be liberated or notLiberated.", StatusCodes.Status400BadRequest)
+				: await data.SetBookStatus(asin, status) is { } book ? Results.Json(book) : NoSuchBook())
+			.WithSummary("Sets a book's liberated status to liberated or notLiberated. 200 with the book, 400 bad body, 404 unknown ASIN.");
+
+		api.MapPost("/library/{asin}/trash", async (string asin) => await data.SetTrash(asin, true) is { } book ? Results.Json(book) : NoSuchBook())
+			.WithSummary("Moves a book to the trash. 200 with the book, 404 unknown ASIN.");
+
+		api.MapPost("/library/{asin}/restore", async (string asin) => await data.SetTrash(asin, false) is { } book ? Results.Json(book) : NoSuchBook())
+			.WithSummary("Restores a book from the trash. 200 with the book, 404 unknown ASIN.");
+
+		var enqueueLock = new object();
+		api.MapPost("/library/{asin}/liberate", (string asin) =>
+		{
+			lock (enqueueLock)
+			{
+				if (queue.Jobs.GetAllItems().Except(queue.Jobs.Completed).Any(j => string.Equals(j.LibraryBook.Book.AudibleProductId, asin, StringComparison.OrdinalIgnoreCase)))
+					return Error("That book is already queued.", StatusCodes.Status409Conflict);
+				if (createBookJob?.Invoke(asin) is not { } job)
+					return NoSuchBook();
+
+				queue.Jobs.Enqueue([job]);
+				queue.StartOrWake();
+				return Results.Json(QueueMapper.ToDto(job, "queued"), statusCode: StatusCodes.Status202Accepted);
+			}
+		}).WithSummary("Queues one book for liberation, re-downloading it if already liberated. 202 with the job, 404 unknown ASIN, 409 already queued.");
+
+		api.MapGet("/settings", () => data.GetSettings())
+			.WithSummary("Curated read-only settings: Books and working folders, naming templates, download, queue and library options. No secrets.");
 
 		api.MapPost("/scan", () => Run(RunKind.Scan))
 			.WithSummary("Runs a library scan now, without liberating. 202, or 409 if busy.");
@@ -76,6 +120,21 @@ public static class ApiEndpoints
 
 		api.MapGet("/events", (HttpContext context) => StreamEvents(context, scheduler.Events))
 			.WithSummary("Server-Sent Events; event name is the record type, data is its JSON.");
+	}
+
+	private static IResult Error(string message, int status) => Results.Json(new ErrorDto(message), statusCode: status);
+
+	private static IResult NoSuchBook() => Error("No such book.", StatusCodes.Status404NotFound);
+
+	private static bool TryParseStatus(string? text, out LiberatedStatus status)
+	{
+		status = text?.Trim().ToLowerInvariant() switch
+		{
+			"liberated" => LiberatedStatus.Liberated,
+			"notliberated" => LiberatedStatus.NotLiberated,
+			_ => LiberatedStatus.Error
+		};
+		return status != LiberatedStatus.Error;
 	}
 
 	private static IResult Decide(LiberationQueue queue, PauseId id, DecisionRequest? body)

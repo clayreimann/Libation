@@ -52,7 +52,7 @@ public static class LibationDaemon
 		var state = new CycleState();
 		var scheduler = new CycleScheduler(options, jobs, state, time);
 		_ = new QueueEventPublisher(queue, scheduler.Events, time);
-		await using var host = options.Once ? null : DaemonHost.Build(options, state, scheduler, queue, data, apiToken);
+		await using var host = options.Once ? null : DaemonHost.Build(options, state, scheduler, queue, data, apiToken, jobs.CreateBookJob);
 		if (host is not null)
 			await host.StartAsync(cts.Token);
 

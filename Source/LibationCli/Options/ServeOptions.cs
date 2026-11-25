@@ -161,7 +161,10 @@ internal class ServeOptions : OptionsBase
 			{
 				var rc = await new ScanOptions().ExecuteAsync();
 				return rc != 0 ? rc : await new SetDownloadStatusOptions { SetDownloaded = true }.ExecuteAsync();
-			});
+			})
+		{
+			CreateBookJob = asin => new LiberateOptions { SharedQueue = queue }.CreateTargetedJob(queue, asin)
+		};
 
 		Environment.ExitCode = await LibationDaemon.RunAsync(options, jobs, queue: queue);
 	}
