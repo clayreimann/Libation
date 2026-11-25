@@ -1,0 +1,35 @@
+server {
+    listen 8080;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location /api/ {
+        set $libation_api ${LIBATION_API_URL};
+        include /etc/nginx/conf.d/api-auth.inc;
+        proxy_pass $libation_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+    }
+
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri /index.html;
+    }
+}
