@@ -24,6 +24,7 @@
     <Project Path="AppScaffolding/AppScaffolding.csproj" />
     <Project Path="LibationEngine/LibationEngine.csproj" />
     <Project Path="LibationEngine.Contracts/LibationEngine.Contracts.csproj" />
+    <Project Path="LibationEngine.Host/LibationEngine.Host.csproj" />
   </Folder>
   <Folder Name="/6 Application/Hangover/">
     <Project Path="HangoverAvalonia/HangoverAvalonia.csproj" />

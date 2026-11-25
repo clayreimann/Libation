@@ -7,11 +7,6 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<FrameworkReference Include="Microsoft.AspNetCore.App" />
-		<PackageReference Include="Serilog.Extensions.Logging" Version="10.0.0" />
-	</ItemGroup>
-
-	<ItemGroup>
 		<ProjectReference Include="..\ApplicationServices\ApplicationServices.csproj" />
 		<ProjectReference Include="..\AppScaffolding\AppScaffolding.csproj" />
 		<ProjectReference Include="..\FileLiberator\FileLiberator.csproj" />

@@ -1,7 +1,8 @@
+using LibationEngine;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace LibationEngine;
+namespace LibationEngine.Host;
 
 public static class ApiToken
 {

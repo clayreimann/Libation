@@ -1,7 +1,8 @@
+using LibationEngine;
 using System.Runtime.InteropServices;
 using Serilog;
 
-namespace LibationEngine;
+namespace LibationEngine.Host;
 
 public static class LibationDaemon
 {

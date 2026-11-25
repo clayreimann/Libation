@@ -1,3 +1,4 @@
+using LibationEngine;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -6,7 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Serilog;
 
-namespace LibationEngine;
+namespace LibationEngine.Host;
 
 /// <summary>Kestrel host for <c>/health</c> and, when enabled, <c>/api</c>.</summary>
 public static class DaemonHost

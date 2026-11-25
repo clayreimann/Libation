@@ -1,3 +1,4 @@
+using LibationEngine;
 using System.Text.Json;
 using AppScaffolding;
 using LibationEngine.Contracts;
@@ -5,7 +6,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 
-namespace LibationEngine;
+namespace LibationEngine.Host;
 
 public static class ApiEndpoints
 {

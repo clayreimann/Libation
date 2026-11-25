@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text.Json;
 using LibationEngine.Contracts;
+using LibationEngine.Host;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace LibationEngine.Tests;

@@ -55,6 +55,7 @@
 		<ProjectReference Include="..\AppScaffolding\AppScaffolding.csproj" />
 		<ProjectReference Include="..\FileLiberator\FileLiberator.csproj" />
 		<ProjectReference Include="..\LibationEngine\LibationEngine.csproj" />
+		<ProjectReference Include="..\LibationEngine.Host\LibationEngine.Host.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>
