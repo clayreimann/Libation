@@ -420,7 +420,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Working and queued jobs, pending decisions and the current wait, if any. */
+        /** Working and queued jobs, pending decisions, the current wait if any, whether the user has paused dispatch, and the desktop's counters: queued, completed, errors and when the run began. */
         get: operations["getQueue"];
         put?: never;
         post?: never;
@@ -441,6 +441,126 @@ export interface paths {
         put?: never;
         /** Answers a pending decision or wait. 200 with the queue, 400 bad body, 404 unknown id, 409 decision not allowed. */
         post: operations["decide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/queue/jobs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Removes a queued job, or cancels a running one, which then finishes as cancelled. 200 with the outcome, removed or cancelling; 404 unknown or finished job. */
+        delete: operations["cancelJob"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/queue/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clears the queue and cancels every running job, as desktop's Cancel All. 200 with the queue. */
+        post: operations["cancelAll"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/queue/jobs/{id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Moves a queued job to the top, up one, down one or the bottom. 200 with the queue, 400 bad body, 404 unknown job, 409 job not queued. */
+        post: operations["moveJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/queue/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stops starting new jobs; running ones finish. Held until resumed, across runs. 200 with the queue, also when already paused. */
+        post: operations["pauseQueue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/queue/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resumes starting jobs after a pause. 200 with the queue, also when not paused. */
+        post: operations["resumeQueue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/queue/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The last 200 finished jobs, newest first, with result, status and finish time. */
+        get: operations["getQueueHistory"];
+        put?: never;
+        post?: never;
+        /** Forgets finished jobs, their logs and the completed and error counts, as desktop's Clear Finished. 200 with the queue. */
+        delete: operations["clearQueueHistory"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/queue/jobs/{id}/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A job's last 500 log lines, oldest first, with secrets and URL queries removed; works for queued, running and finished jobs. 404 unknown job. */
+        get: operations["getJobLog"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -602,6 +722,10 @@ export interface components {
             add?: null | string;
             remove?: null | string;
         };
+        CancelJobDto: {
+            id: string;
+            outcome: string;
+        };
         DecisionRequest: {
             decision: null | string;
             action?: null | string;
@@ -638,6 +762,27 @@ export interface components {
         };
         ErrorDto: {
             error: string;
+        };
+        FinishedJobDto: {
+            id: string;
+            asin: string;
+            title: string;
+            result: string;
+            status: string;
+            /** Format: date-time */
+            finishedAt: string;
+        };
+        JobLogDto: {
+            jobId: string;
+            /** Format: int32 */
+            dropped: number | string;
+            lines: components["schemas"]["JobLogLineDto"][];
+        };
+        JobLogLineDto: {
+            /** Format: date-time */
+            at: string;
+            level: string;
+            message: string;
         };
         LibraryAsinsDto: {
             /** Format: int32 */
@@ -681,6 +826,9 @@ export interface components {
         LocateScanRequest: {
             folder: null | string;
         };
+        MoveRequest: {
+            to: null | string;
+        };
         NamingSettingsDto: {
             folderTemplate: string;
             fileTemplate: string;
@@ -699,6 +847,8 @@ export interface components {
             jobs: components["schemas"]["QueueJobDto"][];
             pending: components["schemas"]["PendingDecisionDto"][];
             waiting: null | components["schemas"]["QueueWaitDto"];
+            paused: boolean;
+            stats: components["schemas"]["QueueStatsDto"];
         };
         QueueJobDto: {
             id: string;
@@ -716,6 +866,16 @@ export interface components {
             dailyDownloadLimitQuantity: number | string;
             dailyDownloadLimitUnit: string;
             badBook: string;
+        };
+        QueueStatsDto: {
+            /** Format: int32 */
+            queued: number | string;
+            /** Format: int32 */
+            completed: number | string;
+            /** Format: int32 */
+            errors: number | string;
+            /** Format: date-time */
+            runningSince: null | string;
         };
         QueueWaitDto: {
             /** Format: int64 */
@@ -1668,6 +1828,221 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    cancelJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CancelJobDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    cancelAll: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueDto"];
+                };
+            };
+        };
+    };
+    moveJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["MoveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    pauseQueue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueDto"];
+                };
+            };
+        };
+    };
+    resumeQueue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueDto"];
+                };
+            };
+        };
+    };
+    getQueueHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FinishedJobDto"][];
+                };
+            };
+        };
+    };
+    clearQueueHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueDto"];
+                };
+            };
+        };
+    };
+    getJobLog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobLogDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

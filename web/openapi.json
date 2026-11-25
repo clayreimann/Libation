@@ -1158,7 +1158,7 @@
         "tags": [
           "queue"
         ],
-        "summary": "Working and queued jobs, pending decisions and the current wait, if any.",
+        "summary": "Working and queued jobs, pending decisions, the current wait if any, whether the user has paused dispatch, and the desktop's counters: queued, completed, errors and when the run began.",
         "operationId": "getQueue",
         "responses": {
           "200": {
@@ -1242,6 +1242,271 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/jobs/{id}": {
+      "delete": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Removes a queued job, or cancels a running one, which then finishes as cancelled. 200 with the outcome, removed or cancelling; 404 unknown or finished job.",
+        "operationId": "cancelJob",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelJobDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/cancel": {
+      "post": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Clears the queue and cancels every running job, as desktop's Cancel All. 200 with the queue.",
+        "operationId": "cancelAll",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/jobs/{id}/move": {
+      "post": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Moves a queued job to the top, up one, down one or the bottom. 200 with the queue, 400 bad body, 404 unknown job, 409 job not queued.",
+        "operationId": "moveJob",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MoveRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/pause": {
+      "post": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Stops starting new jobs; running ones finish. Held until resumed, across runs. 200 with the queue, also when already paused.",
+        "operationId": "pauseQueue",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/resume": {
+      "post": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Resumes starting jobs after a pause. 200 with the queue, also when not paused.",
+        "operationId": "resumeQueue",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/history": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "The last 200 finished jobs, newest first, with result, status and finish time.",
+        "operationId": "getQueueHistory",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FinishedJobDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Forgets finished jobs, their logs and the completed and error counts, as desktop's Clear Finished. 200 with the queue.",
+        "operationId": "clearQueueHistory",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/jobs/{id}/log": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "A job's last 500 log lines, oldest first, with secrets and URL queries removed; works for queued, running and finished jobs. 404 unknown job.",
+        "operationId": "getJobLog",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobLogDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1886,6 +2151,21 @@
           }
         }
       },
+      "CancelJobDto": {
+        "required": [
+          "id",
+          "outcome"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          }
+        }
+      },
       "DecisionRequest": {
         "required": [
           "decision"
@@ -2025,6 +2305,85 @@
         "type": "object",
         "properties": {
           "error": {
+            "type": "string"
+          }
+        }
+      },
+      "FinishedJobDto": {
+        "required": [
+          "id",
+          "asin",
+          "title",
+          "result",
+          "status",
+          "finishedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "JobLogDto": {
+        "required": [
+          "jobId",
+          "dropped",
+          "lines"
+        ],
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "dropped": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobLogLineDto"
+            }
+          }
+        }
+      },
+      "JobLogLineDto": {
+        "required": [
+          "at",
+          "level",
+          "message"
+        ],
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "level": {
+            "type": "string"
+          },
+          "message": {
             "type": "string"
           }
         }
@@ -2216,6 +2575,20 @@
           }
         }
       },
+      "MoveRequest": {
+        "required": [
+          "to"
+        ],
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "NamingSettingsDto": {
         "required": [
           "folderTemplate",
@@ -2278,7 +2651,9 @@
           "running",
           "jobs",
           "pending",
-          "waiting"
+          "waiting",
+          "paused",
+          "stats"
         ],
         "type": "object",
         "properties": {
@@ -2306,6 +2681,12 @@
                 "$ref": "#/components/schemas/QueueWaitDto"
               }
             ]
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/QueueStatsDto"
           }
         }
       },
@@ -2375,6 +2756,48 @@
           },
           "badBook": {
             "type": "string"
+          }
+        }
+      },
+      "QueueStatsDto": {
+        "required": [
+          "queued",
+          "completed",
+          "errors",
+          "runningSince"
+        ],
+        "type": "object",
+        "properties": {
+          "queued": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "completed": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "errors": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "runningSince": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
           }
         }
       },

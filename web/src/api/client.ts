@@ -1,6 +1,6 @@
 import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, AsinList, BulkResult, Book, BookDetail, DecisionRequest, LibraryPage, Queue, LocateScan, Settings, Stats, Status } from "./types";
+import type { Account, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, MoveTo, Queue, LocateScan, Settings, Stats, Status } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -72,6 +72,14 @@ export const api = {
   locateScan: () => request<LocateScan>("GET", "/api/library/locate-scan"),
   scan: () => request<Status>("POST", "/api/scan"),
   liberate: () => request<Status>("POST", "/api/liberate"),
+  queueHistory: (signal?: AbortSignal) => request<FinishedJob[]>("GET", "/api/queue/history", undefined, signal),
+  clearHistory: () => request<Queue>("DELETE", "/api/queue/history"),
+  jobLog: (id: string, signal?: AbortSignal) => request<JobLog>("GET", `/api/queue/jobs/${encodeURIComponent(id)}/log`, undefined, signal),
+  cancelJob: (id: string) => request<CancelJob>("DELETE", `/api/queue/jobs/${encodeURIComponent(id)}`),
+  cancelAll: () => request<Queue>("POST", "/api/queue/cancel"),
+  moveJob: (id: string, to: MoveTo) => request<Queue>("POST", `/api/queue/jobs/${encodeURIComponent(id)}/move`, { to }),
+  pauseQueue: () => request<Queue>("POST", "/api/queue/pause"),
+  resumeQueue: () => request<Queue>("POST", "/api/queue/resume"),
   decide: (id: number, body: DecisionRequest) => request<Queue>("POST", `/api/queue/decisions/${id}`, body),
 
   // One function per operation; each chunks at the API's 5000 ASIN limit.

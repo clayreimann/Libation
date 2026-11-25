@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EngineEvent, Queue } from "./api/types";
-import { applyQueueEvent, applySnapshot, applyStatusEvent, emptyQueue, needsQueueRefetch, parseEvent } from "./events";
+import { appendLog, applyQueueEvent, applySnapshot, applyStatusEvent, emptyQueue, emptyStats, MAX_LOG_LINES, mergeLog, needsQueueRefetch, parseEvent } from "./events";
 
 const started: EngineEvent = { type: "BookStarted", jobId: "j1", asin: "A1", title: "One" };
 
@@ -14,11 +14,10 @@ describe("queue reducer", () => {
     v = applyQueueEvent(v, { type: "BookFinished", jobId: "j1", asin: "A1", title: "One", result: "success", status: "Liberated" });
     expect(v.jobs).toEqual([]);
     expect(v.progress).toEqual({});
-    expect(v.finished[0]?.title).toBe("One");
   });
 
   it("promotes a queued job instead of duplicating it", () => {
-    const v0 = applySnapshot(emptyQueue, { running: true, jobs: [{ id: "j1", asin: "A1", title: "One", state: "queued" }], pending: [], waiting: null });
+    const v0 = applySnapshot(emptyQueue, { running: true, jobs: [{ id: "j1", asin: "A1", title: "One", state: "queued" }], pending: [], waiting: null, paused: false, stats: emptyStats });
     expect(applyQueueEvent(v0, started).jobs).toHaveLength(1);
     expect(applyQueueEvent(v0, started).jobs[0]?.state).toBe("working");
   });
@@ -39,14 +38,65 @@ describe("queue reducer", () => {
     expect(v.waiting).toBeNull();
   });
 
-  it("snapshot drops progress of jobs that are gone but keeps history", () => {
+  it("snapshot drops progress and logs of jobs that are gone", () => {
     let v = applyQueueEvent(emptyQueue, started);
     v = applyQueueEvent(v, { type: "BookProgress", jobId: "j1", asin: "A1", percent: 10 });
-    v = { ...v, finished: [{ jobId: "x", asin: "X", title: "X", result: "ok", at: 1 }] };
-    const snap: Queue = { running: false, jobs: [], pending: [], waiting: null };
+    v = applyQueueEvent(v, { type: "BookLog", jobId: "j1", level: "info", message: "hi", at: "2026-01-01T00:00:00Z" });
+    const snap: Queue = { running: false, jobs: [], pending: [], waiting: null, paused: false, stats: emptyStats };
     const out = applySnapshot(v, snap);
     expect(out.progress).toEqual({});
-    expect(out.finished).toHaveLength(1);
+    expect(out.logs).toEqual({});
+  });
+
+  it("takes paused and stats from the snapshot", () => {
+    const stats = { queued: 2, completed: 3, errors: 1, runningSince: "2026-01-01T00:00:00Z" };
+    const out = applySnapshot(emptyQueue, { running: true, jobs: [], pending: [], waiting: null, paused: true, stats });
+    expect(out.paused).toBe(true);
+    expect(out.stats).toEqual(stats);
+  });
+
+  it("toggles dispatch pause from events", () => {
+    let v = applyQueueEvent(emptyQueue, { type: "QueueDispatchPaused" });
+    expect(v.paused).toBe(true);
+    expect(applyQueueEvent(v, { type: "QueueDispatchPaused" })).toBe(v);
+    v = applyQueueEvent(v, { type: "QueueDispatchResumed" });
+    expect(v.paused).toBe(false);
+  });
+});
+
+describe("job logs", () => {
+  const line = (n: number) => ({ at: `2026-01-01T00:00:${String(n % 60).padStart(2, "0")}Z`, level: "info", message: `m${n}` });
+
+  it("appends BookLog lines for known jobs only", () => {
+    let v = applyQueueEvent(emptyQueue, { type: "BookLog", jobId: "j1", level: "info", message: "early" });
+    expect(v.logs).toEqual({});
+    v = applyQueueEvent(emptyQueue, started);
+    v = applyQueueEvent(v, { type: "BookLog", jobId: "j1", level: "warning", message: "careful", at: "2026-01-01T00:00:00Z" });
+    expect(v.logs.j1).toEqual({ dropped: 0, lines: [{ at: "2026-01-01T00:00:00Z", level: "warning", message: "careful" }] });
+  });
+
+  it("caps at the limit and counts dropped lines", () => {
+    let log = appendLog(undefined, line(0));
+    for (let i = 1; i < MAX_LOG_LINES + 3; i++) log = appendLog(log, line(i));
+    expect(log.lines).toHaveLength(MAX_LOG_LINES);
+    expect(log.dropped).toBe(3);
+    expect(log.lines[0]?.message).toBe("m3");
+  });
+
+  it("clears the live log when the job finishes", () => {
+    let v = applyQueueEvent(emptyQueue, started);
+    v = applyQueueEvent(v, { type: "BookLog", jobId: "j1", level: "info", message: "x" });
+    v = applyQueueEvent(v, { type: "BookFinished", jobId: "j1", asin: "A1", title: "One", result: "success", status: "completed" });
+    expect(v.logs).toEqual({});
+  });
+
+  it("merges a fetched log with live lines without duplicating", () => {
+    const server = { jobId: "j1", dropped: 2, lines: [line(1), line(2)] };
+    const live = { dropped: 0, lines: [line(2), line(3)] };
+    const merged = mergeLog(server, live);
+    expect(merged.lines.map((l) => l.message)).toEqual(["m1", "m2", "m3"]);
+    expect(merged.dropped).toBe(2);
+    expect(mergeLog(server, undefined).lines).toHaveLength(2);
   });
 });
 
@@ -67,7 +117,9 @@ describe("status and parsing", () => {
 
   it("skips queue refetch for progress ticks only", () => {
     expect(needsQueueRefetch({ type: "BookProgress", jobId: "j", asin: "A", percent: 1 })).toBe(false);
+    expect(needsQueueRefetch({ type: "BookLog", jobId: "j", level: "info", message: "x" })).toBe(false);
     expect(needsQueueRefetch(started)).toBe(true);
+    expect(needsQueueRefetch({ type: "QueueDispatchPaused" })).toBe(true);
   });
 });
 
@@ -75,6 +127,7 @@ describe("locate scan event", () => {
   it("is subscribed and parsed", async () => {
     const { eventTypes } = await import("./api/types");
     expect(eventTypes).toContain("LocateScanProgress");
+    expect(eventTypes).toEqual(expect.arrayContaining(["BookLog", "QueueDispatchPaused", "QueueDispatchResumed"]));
     const evt = parseEvent("LocateScanProgress", '{"scan":{"state":"running","found":2}}');
     expect(evt).toMatchObject({ type: "LocateScanProgress", scan: { found: 2 } });
   });

@@ -24,6 +24,12 @@ export type QueueJob = Fix<S["QueueJobDto"]>;
 export type PendingDecision = Fix<S["PendingDecisionDto"]>;
 export type QueueWait = Fix<S["QueueWaitDto"]>;
 export type Queue = Fix<S["QueueDto"]>;
+export type QueueStats = Fix<S["QueueStatsDto"]>;
+export type FinishedJob = Fix<S["FinishedJobDto"]>;
+export type JobLog = Fix<S["JobLogDto"]>;
+export type JobLogLine = Fix<S["JobLogLineDto"]>;
+export type CancelJob = Fix<S["CancelJobDto"]>;
+export type MoveTo = "top" | "up" | "down" | "bottom";
 export type BulkResult = Fix<S["BulkResultDto"]>;
 export type Settings = Fix<S["SettingsDto"]>;
 export interface DecisionRequest {
@@ -48,11 +54,14 @@ export type EngineEvent = { at?: string } & (
   | { type: "QueueResumed"; pauseId: number; decision: string }
   | { type: "QueueWaiting"; wait: QueueWait }
   | { type: "QueueWaitEnded"; pauseId: number; reason: string }
+  | { type: "QueueDispatchPaused" }
+  | { type: "QueueDispatchResumed" }
+  | { type: "BookLog"; jobId: string; level: string; message: string }
   | { type: "LocateScanProgress"; scan: LocateScan }
 );
 
 export const eventTypes = [
   "StateChanged", "ScanStarted", "ScanFinished", "LiberateStarted", "LiberateFinished", "CycleFinished",
   "NextRunScheduled", "BookStarted", "BookProgress", "BookFinished", "QueuePaused", "QueueResumed",
-  "QueueWaiting", "QueueWaitEnded", "LocateScanProgress",
+  "QueueWaiting", "QueueWaitEnded", "QueueDispatchPaused", "QueueDispatchResumed", "BookLog", "LocateScanProgress",
 ] as const satisfies readonly EngineEvent["type"][];

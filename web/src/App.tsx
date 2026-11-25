@@ -39,6 +39,11 @@ export function App() {
             <a key={t.id} href={`#/${t.id}`} className={tab === t.id ? "active" : ""}>
               {t.label}
               {t.id === "queue" && active > 0 && <span className="badge">{active}</span>}
+              {t.id === "queue" && queue.stats.errors > 0 && (
+                <span className="badge bad" title={`${queue.stats.errors} failed`} aria-label={`${queue.stats.errors} failed`}>
+                  !
+                </span>
+              )}
             </a>
           ))}
         </nav>
