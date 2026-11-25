@@ -366,7 +366,7 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
                     {error ? (
                       <span className="muted">{f.label}</span>
                     ) : (
-                      <a className="menu-link" href={api.exportUrl(f.id, { q: effectiveQ, trash })} download onClick={close}>
+                      <a className="menu-link" href={api.exportUrl(f.id, { q: effectiveQ, trash })} download onClick={() => window.setTimeout(close)}>
                         {f.label}
                       </a>
                     )}
