@@ -60,4 +60,50 @@ internal sealed class GuiLiberationInteraction : ILiberationInteraction
 			DialogResult.Ignore => Configuration.BadBookAction.Ignore,
 			_ => Configuration.BadBookAction.Retry
 		};
+
+	public async Task NotifyAsync(QueueNotice notice)
+	{
+		var libraryBook = notice.LibraryBook;
+		switch (notice.Kind)
+		{
+			case QueueNoticeKind.DiskFull:
+				await MessageBoxBase.Show(
+					DiskFullUserMessage.BuildQueueStoppedBody(),
+					DiskFullUserMessage.DialogCaption,
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Warning);
+				break;
+			case QueueNoticeKind.LicenseGuidance:
+				var title = libraryBook.Book.TitleWithSubtitle;
+				var (locale, hasAdditionalMarketplaces) = AppScaffolding.LicenseRecoveryGuidance.GetAccountContext(libraryBook);
+				var updateStatus = AppScaffolding.LibationScaffolding.LastVersionCheckOutcome;
+				var body = notice.Result switch
+				{
+					ProcessBookResult.LicenseDeniedPossibleOutage => ContentLicenseDeniedUserMessage.BuildDialogBodyForPossibleOutage(title, locale, updateStatus, hasAdditionalMarketplaces),
+					ProcessBookResult.LicenseDeniedThrottled => ContentLicenseDeniedUserMessage.BuildDialogBodyForThrottling(title, locale, updateStatus, hasAdditionalMarketplaces),
+					ProcessBookResult.LicenseDeniedThrottledRecovered => ContentLicenseDeniedUserMessage.BuildDialogBodyForThrottlingRecovered(title),
+					_ => ContentLicenseDeniedUserMessage.BuildDialogBodyForPlusCatalog(title, locale, updateStatus, hasAdditionalMarketplaces)
+				};
+				await MessageBoxBase.Show(
+					body,
+					ContentLicenseDeniedUserMessage.DialogCaption,
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Asterisk);
+				break;
+			case QueueNoticeKind.WidevineGuidance:
+				await MessageBoxBase.Show(
+					WidevineRecommendationUserMessage.BuildDialogBody(libraryBook.Book.TitleWithSubtitle),
+					WidevineRecommendationUserMessage.DialogCaption,
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Asterisk);
+				break;
+			case QueueNoticeKind.DailyLimitPaused when notice.Allowance is { } allowance:
+				await MessageBoxBase.Show(
+					DailyDownloadLimitUserMessage.BuildQueuePausedBody(allowance, libraryBook.Book.TitleWithSubtitle),
+					DailyDownloadLimitUserMessage.DialogCaption,
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Information);
+				break;
+		}
+	}
 }
