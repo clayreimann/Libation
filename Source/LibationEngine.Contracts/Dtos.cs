@@ -176,6 +176,9 @@ public sealed record BulkTagsRequest(IReadOnlyList<string>? Asins, string? Tags 
 /// <summary>Body of <c>PUT /api/library/status</c> and <c>/pdf-status</c>; Status is liberated or notLiberated.</summary>
 public sealed record BulkStatusRequest(IReadOnlyList<string>? Asins, string? Status);
 
+/// <summary>Body of <c>PUT /api/library/{asin}/rating</c>; each star count is 0 to 5, and a zero Overall changes nothing, as in the desktop grid.</summary>
+public sealed record RatingRequest(int? Overall, int? Performance, int? Story);
+
 /// <summary>Body of <c>POST /api/library/{asin}/locate</c>; Path is an absolute audio file under the Books folder.</summary>
 public sealed record LocateRequest(string? Path);
 

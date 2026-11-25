@@ -7,8 +7,10 @@ using LibationFileManager;
 
 namespace LibationEngine;
 
-public sealed class DbEngineData : IEngineData
+public sealed class DbEngineData(IAudibleReviews? reviews = null) : IEngineData
 {
+	private readonly IAudibleReviews audibleReviews = reviews ?? new AudibleReviews();
+
 	public IReadOnlyList<AccountDto> GetAccounts()
 	{
 		using var persister = AudibleApiStorage.GetAccountsSettingsPersister();
@@ -248,6 +250,27 @@ public sealed class DbEngineData : IEngineData
 		var definition = new PictureDefinition(pictureId, size == CoverSize.Large ? PictureSize._500x500 : PictureSize._80x80);
 		var bytes = await Task.Run(() => PictureStorage.GetPictureSynchronously(definition, ct), ct);
 		return bytes.Length == 0 ? null : bytes;
+	}
+
+	public async Task<RatingResult> SetMyRating(string asin, int overall, int performance, int story, CancellationToken ct)
+	{
+		if (Find(asin) is not { } lb)
+			return new(RatingOutcome.NoSuchBook);
+		if (overall == 0)
+			return new(RatingOutcome.Ok, GetBookDetail(asin));
+
+		try
+		{
+			if (!await audibleReviews.SubmitAsync(lb, overall, performance, story, ct))
+				return new(RatingOutcome.AudibleFailed, Error: "Audible rejected the rating.");
+		}
+		catch (Exception ex) when (ex is not OperationCanceledException)
+		{
+			return new(RatingOutcome.AudibleFailed, Error: $"Audible could not be reached: {ex.Message}");
+		}
+
+		await lb.UpdateUserDefinedItemAsync(rating: new Rating(overall, performance, story));
+		return new(RatingOutcome.Ok, GetBookDetail(asin));
 	}
 
 	public Task<BookDto?> SetTags(string asin, string tags)

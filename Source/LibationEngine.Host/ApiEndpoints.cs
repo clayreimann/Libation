@@ -585,6 +585,28 @@ public static class ApiEndpoints
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
 			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
+		api.MapPut("/library/{asin}/rating", async (string asin, RatingRequest? body, CancellationToken ct) =>
+		{
+			if (body is not { Overall: { } overall, Performance: { } performance, Story: { } story })
+				return Error("overall, performance and story are required.", StatusCodes.Status400BadRequest);
+			if (new[] { overall, performance, story }.Any(v => v is < 0 or > 5))
+				return Error("overall, performance and story must each be 0 to 5.", StatusCodes.Status400BadRequest);
+
+			var result = await data.SetMyRating(asin, overall, performance, story, ct);
+			return result.Outcome switch
+			{
+				RatingOutcome.NoSuchBook => NoSuchBook(),
+				RatingOutcome.AudibleFailed => Error(result.Error!, StatusCodes.Status502BadGateway),
+				_ => Results.Json(result.Book)
+			};
+		}).WithSummary("Sets the account's own star rating, 0 to 5 each for overall, performance and story, by sending it to Audible and then storing it, as the desktop grid does. A zero overall changes nothing. 200 with the book, 400 missing or out-of-range values, 404 unknown ASIN, 502 when Audible rejects it or cannot be reached (nothing is stored).")
+			.WithName("setBookRating").WithTags("library")
+			.Accepts<RatingRequest>("application/json")
+			.Produces<BookDetailDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
+			.Produces<ErrorDto>(StatusCodes.Status502BadGateway);
+
 		api.MapPost("/library/{asin}/trash", async (string asin) => await data.SetTrash(asin, true) is { } book ? Results.Json(book) : NoSuchBook())
 			.WithSummary("Moves a book to the trash. 200 with the book, 404 unknown ASIN.")
 			.WithName("trashBook").WithTags("library")

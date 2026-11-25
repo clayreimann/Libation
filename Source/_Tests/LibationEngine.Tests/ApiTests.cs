@@ -170,6 +170,15 @@ public partial class ApiTests
 			return Task.FromResult<byte[]?>(pictureId == "GONE" ? null : [0xFF, 0xD8, 0xFF, 0xD9]);
 		}
 
+		public Task<RatingResult> SetMyRating(string asin, int overall, int performance, int story, CancellationToken ct)
+		{
+			Calls.Add($"rating:{asin}:{overall}:{performance}:{story}");
+			return Task.FromResult(
+				GetBookDetail(asin) is not { } book ? new RatingResult(RatingOutcome.NoSuchBook)
+				: overall == 3 ? new RatingResult(RatingOutcome.AudibleFailed, Error: "Audible rejected the rating.")
+				: new RatingResult(RatingOutcome.Ok, book with { MyRating = new(overall, performance, story) }));
+		}
+
 		public Task<BookDto?> SetTags(string asin, string tags)
 		{
 			Calls.Add($"tags:{asin}:{tags}");

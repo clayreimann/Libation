@@ -38,6 +38,10 @@ public sealed record LocateResult(LocateOutcome Outcome, BookDetailDto? Book = n
 
 public sealed record LocateScanStart(LocateOutcome Outcome, LocateScanDto? Scan = null, string? Error = null);
 
+public enum RatingOutcome { Ok, NoSuchBook, AudibleFailed }
+
+public sealed record RatingResult(RatingOutcome Outcome, BookDetailDto? Book = null, string? Error = null);
+
 public interface IEngineData
 {
 	IReadOnlyList<AccountDto> GetAccounts();
@@ -94,6 +98,9 @@ public interface IEngineData
 
 	/// <summary>Cached jpeg bytes, fetched on first use; null when unavailable.</summary>
 	Task<byte[]?> LoadCover(string pictureId, CoverSize size, CancellationToken ct);
+	/// <summary>Pushes the stars to Audible, then stores them; nothing is stored when Audible fails. A zero <paramref name="overall"/> is a no-op, as in the grid.</summary>
+	Task<RatingResult> SetMyRating(string asin, int overall, int performance, int story, CancellationToken ct);
+
 	Task<BookDto?> SetTags(string asin, string tags);
 	Task<BookDto?> SetBookStatus(string asin, LiberatedStatus status);
 	Task<BookDto?> SetTrash(string asin, bool inTrash);
