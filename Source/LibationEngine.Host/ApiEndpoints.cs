@@ -31,7 +31,7 @@ public static class ApiEndpoints
 			await next();
 		});
 
-	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data)
+	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue)
 	{
 		StatusDto Status()
 		{
@@ -68,8 +68,31 @@ public static class ApiEndpoints
 		api.MapPost("/liberate", () => Run(RunKind.Cycle))
 			.WithSummary("Runs a full cycle now: scan, then liberate if the scan succeeded. 202, or 409 if busy.");
 
+		api.MapGet("/queue", () => QueueMapper.Snapshot(queue))
+			.WithSummary("Working and queued jobs, pending decisions and the current wait, if any.");
+
+		api.MapPost("/queue/decisions/{pauseId:long}", (long pauseId, DecisionRequest? body) => Decide(queue, new PauseId(pauseId), body))
+			.WithSummary("Answers a pending decision or wait. 200 with the queue, 400 bad body, 404 unknown id, 409 decision not allowed.");
+
 		api.MapGet("/events", (HttpContext context) => StreamEvents(context, scheduler.Events))
 			.WithSummary("Server-Sent Events; event name is the record type, data is its JSON.");
+	}
+
+	private static IResult Decide(LiberationQueue queue, PauseId id, DecisionRequest? body)
+	{
+		if (!QueueMapper.TryParse(body, out var decision, out var error))
+			return Results.Json(new ErrorDto(error), statusCode: StatusCodes.Status400BadRequest);
+
+		var allowed = queue.Pending.FirstOrDefault(p => p.Id == id)?.Allowed
+			?? (queue.Waiting is { } wait && wait.Id == id ? wait.Allowed : null);
+		if (allowed is null)
+			return Results.Json(new ErrorDto("No such pending decision."), statusCode: StatusCodes.Status404NotFound);
+		if (!allowed.Contains(decision.Kind))
+			return Results.Json(new ErrorDto("That decision is not allowed here."), statusCode: StatusCodes.Status409Conflict);
+
+		return queue.Resume(id, decision)
+			? Results.Json(QueueMapper.Snapshot(queue))
+			: Results.Json(new ErrorDto("No such pending decision."), statusCode: StatusCodes.Status404NotFound);
 	}
 
 	private static async Task StreamEvents(HttpContext context, EventBroadcaster events)

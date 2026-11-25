@@ -4,6 +4,8 @@ using System.Net.Sockets;
 using System.Text.Json;
 using LibationEngine.Contracts;
 using LibationEngine.Host;
+using DataLayer;
+using LibationFileManager;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace LibationEngine.Tests;
@@ -11,6 +13,25 @@ namespace LibationEngine.Tests;
 [TestClass]
 public class ApiTests
 {
+	private string configDir = "";
+
+	[TestInitialize]
+	public void Init()
+	{
+		configDir = Path.Combine(Path.GetTempPath(), $"libation-engine-api-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(configDir);
+		Environment.SetEnvironmentVariable(LibationFiles.LIBATION_FILES_DIR, configDir);
+		Configuration.CreateMockInstance();
+	}
+
+	[TestCleanup]
+	public void Cleanup()
+	{
+		Configuration.RestoreSingletonInstance();
+		Environment.SetEnvironmentVariable(LibationFiles.LIBATION_FILES_DIR, null);
+		try { Directory.Delete(configDir, recursive: true); } catch { }
+	}
+
 	private sealed class FakeData : IEngineData
 	{
 		public (int Offset, int Limit)? LastPage;
@@ -41,8 +62,24 @@ public class ApiTests
 		public volatile TaskCompletionSource? Gate;
 		public readonly SemaphoreSlim ScanEntered = new(0);
 
-		public Harness(bool api, string? tokenFile = null, bool startRun = true)
+		public readonly LiberationQueue Queue;
+		public volatile Func<LiberationJob, Task<ProcessBookResult>> Outcome = _ => Task.FromResult(ProcessBookResult.Success);
+
+		public Harness(bool api, string? tokenFile = null, bool startRun = true, DiskFullPolicy onDiskFull = DiskFullPolicy.Ask)
 		{
+			Queue = new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => 1, OnDiskFull = onDiskFull })
+			{
+				MachineCeilingOverride = 1,
+				SpaceProbe = () => null
+			};
+			Queue.RunJob = async job =>
+			{
+				var result = await Outcome(job);
+				job.Result = result;
+				job.Status = result == ProcessBookResult.Success ? ProcessBookStatus.Completed : ProcessBookStatus.Failed;
+				return result;
+			};
+
 			var listener = new TcpListener(IPAddress.Loopback, 0);
 			listener.Start();
 			var port = ((IPEndPoint)listener.LocalEndpoint).Port;
@@ -63,10 +100,29 @@ public class ApiTests
 
 			run = LibationDaemon.RunAsync(
 				new DaemonOptions(TimeSpan.FromMinutes(30), false, Base, dir.Path, ApiEnabled: api, ApiTokenFile: tokenFile),
-				jobs, cts.Token, data: Data);
+				jobs, cts.Token, data: Data, queue: Queue);
 		}
 
 		public Task<int> Run => run;
+
+		public LiberationJob Job(string asin)
+		{
+			var contributor = Contributor.GetEmpty();
+			var book = new Book(new AudibleProductId(asin), $"Title {asin}", null, null, 1, ContentType.Product, [contributor], [contributor], "us");
+			return new LiberationJob(new LibraryBook(book, new DateTime(2026, 8, 10), "account"), Configuration.Instance, Queue.BadBookSession);
+		}
+
+		public void Enqueue(params LiberationJob[] jobs)
+		{
+			Queue.Jobs.Enqueue(jobs);
+			Queue.StartOrWake();
+		}
+
+		public async Task<JsonDocument> QueueJson()
+			=> JsonDocument.Parse(await Http.GetStringAsync(Base + "/api/queue"));
+
+		public Task<HttpResponseMessage> Decide(long id, string json)
+			=> Http.PostAsync($"{Base}/api/queue/decisions/{id}", new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
 
 		public async Task WaitIdleAfterFirstCycle()
 		{
@@ -318,4 +374,170 @@ public class ApiTests
 	[DataRow("http://192.168.1.5:8080", false)]
 	public void Loopback_detection(string url, bool loopback)
 		=> Assert.AreEqual(loopback, ListenUrl.IsLoopback(url));
+
+	[TestMethod]
+	public async Task Queue_endpoints_follow_the_api_gate_and_the_token()
+	{
+		await using (var off = new Harness(api: false))
+		{
+			await off.WaitIdleAfterFirstCycle();
+			Assert.AreEqual(HttpStatusCode.NotFound, (await off.Http.GetAsync(off.Base + "/api/queue")).StatusCode);
+			Assert.AreEqual(HttpStatusCode.NotFound, (await off.Decide(1, "{\"decision\":\"continue\"}")).StatusCode);
+		}
+
+		using var dir = new TempDir();
+		var tokenFile = dir.File("token");
+		File.WriteAllText(tokenFile, "s3cret\n");
+		await using var h = new Harness(api: true, tokenFile);
+		await h.WaitIdleAfterFirstCycle();
+
+		Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.GetAsync(h.Base + "/api/queue")).StatusCode);
+		Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Decide(1, "{\"decision\":\"continue\"}")).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Queue_is_empty_when_idle()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		using var doc = await h.QueueJson();
+		Assert.AreEqual("{\"running\":false,\"jobs\":[],\"pending\":[],\"waiting\":null}", doc.RootElement.GetRawText());
+	}
+
+	[TestMethod]
+	public async Task Queue_lists_working_and_queued_jobs_with_their_states()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		var release = new TaskCompletionSource();
+		h.Outcome = async _ => { await release.Task; return ProcessBookResult.Success; };
+		var a = h.Job("B000000001");
+		var b = h.Job("B000000002");
+
+		h.Enqueue(a, b);
+		await Eventually(async () => (await h.QueueJson()).RootElement.GetProperty("jobs").EnumerateArray().Any(j => j.GetProperty("state").GetString() == "working"));
+
+		using var doc = await h.QueueJson();
+		var jobs = doc.RootElement.GetProperty("jobs");
+		Assert.IsTrue(doc.RootElement.GetProperty("running").GetBoolean());
+		Assert.AreEqual(a.Id.Value, jobs[0].GetProperty("id").GetString());
+		Assert.AreEqual("B000000001", jobs[0].GetProperty("asin").GetString());
+		Assert.AreEqual("Title B000000001", jobs[0].GetProperty("title").GetString());
+		CollectionAssert.AreEqual(new[] { "working", "queued" }, jobs.EnumerateArray().Select(j => j.GetProperty("state").GetString()).ToArray());
+
+		release.SetResult();
+		await h.Queue.Runner!;
+	}
+
+	[TestMethod]
+	public async Task A_bad_book_pause_is_listed_and_answered_over_the_api()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		h.Outcome = _ => Task.FromResult(ProcessBookResult.AwaitingDecision);
+		var job = h.Job("B000000001");
+
+		h.Enqueue(job);
+		await Eventually(async () => (await h.QueueJson()).RootElement.GetProperty("pending").GetArrayLength() == 1);
+
+		long id;
+		using (var doc = await h.QueueJson())
+		{
+			var pause = doc.RootElement.GetProperty("pending")[0];
+			id = pause.GetProperty("id").GetInt64();
+			Assert.AreEqual("badBook", pause.GetProperty("reason").GetString());
+			Assert.AreEqual(job.Id.Value, pause.GetProperty("jobId").GetString());
+			CollectionAssert.AreEqual(new[] { "badBook" }, pause.GetProperty("allowed").EnumerateArray().Select(e => e.GetString()).ToArray());
+		}
+
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Decide(id, "{\"decision\":\"explode\"}")).StatusCode);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Decide(id, "{\"decision\":\"badBook\"}")).StatusCode);
+		Assert.AreEqual(HttpStatusCode.Conflict, (await h.Decide(id, "{\"decision\":\"continue\"}")).StatusCode);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Decide(id + 100, "{\"decision\":\"badBook\",\"action\":\"retry\"}")).StatusCode);
+		Assert.AreEqual(1, h.Queue.Pending.Count, "A refused answer must leave the pause in place.");
+
+		var ok = await h.Decide(id, "{\"decision\":\"badBook\",\"action\":\"retry\",\"applyToAll\":true}");
+		Assert.AreEqual(HttpStatusCode.OK, ok.StatusCode);
+		await h.Queue.Runner!.WaitAsync(TimeSpan.FromSeconds(10));
+		Assert.AreEqual(ProcessBookResult.FailedRetry, job.Result);
+
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Decide(id, "{\"decision\":\"badBook\",\"action\":\"retry\"}")).StatusCode, "A stale id must be refused.");
+	}
+
+	[TestMethod]
+	public async Task A_disk_full_wait_can_be_resumed_over_the_api_but_the_daily_limit_wait_cannot()
+	{
+		await using var h = new Harness(api: true, onDiskFull: DiskFullPolicy.WaitForSpace);
+		await h.WaitIdleAfterFirstCycle();
+		var calls = 0;
+		h.Outcome = _ => Task.FromResult(Interlocked.Increment(ref calls) == 1 ? ProcessBookResult.DiskFull : ProcessBookResult.Success);
+
+		h.Enqueue(h.Job("B000000001"));
+		await Eventually(async () => (await h.QueueJson()).RootElement.GetProperty("waiting").ValueKind == JsonValueKind.Object);
+
+		long id;
+		using (var doc = await h.QueueJson())
+		{
+			var wait = doc.RootElement.GetProperty("waiting");
+			id = wait.GetProperty("id").GetInt64();
+			Assert.AreEqual("diskFull", wait.GetProperty("reason").GetString());
+			CollectionAssert.AreEqual(new[] { "resume", "stop" }, wait.GetProperty("allowed").EnumerateArray().Select(e => e.GetString()).ToArray());
+		}
+
+		Assert.AreEqual(HttpStatusCode.Conflict, (await h.Decide(id, "{\"decision\":\"continue\"}")).StatusCode);
+		Assert.AreEqual(HttpStatusCode.OK, (await h.Decide(id, "{\"decision\":\"resume\"}")).StatusCode);
+		await h.Queue.Runner!.WaitAsync(TimeSpan.FromSeconds(10));
+		Assert.AreEqual(2, calls);
+	}
+
+	[TestMethod]
+	public async Task Events_stream_delivers_book_and_queue_events()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		using var request = new HttpRequestMessage(HttpMethod.Get, h.Base + "/api/events");
+		using var response = await h.Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+		using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+
+		h.Outcome = _ => Task.FromResult(ProcessBookResult.AwaitingDecision);
+		var job = h.Job("B000000001");
+		h.Enqueue(job);
+
+		var data = new Dictionary<string, string>();
+		string? current = null;
+		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+		while (!data.ContainsKey(nameof(QueuePaused)))
+		{
+			var line = await reader.ReadLineAsync(timeout.Token);
+			Assert.IsNotNull(line);
+			if (line.StartsWith("event: "))
+				current = line[7..];
+			else if (line.StartsWith("data: ") && current is not null)
+				data[current] = line[6..];
+		}
+
+		Assert.AreEqual(job.Id.Value, JsonDocument.Parse(data[nameof(BookStarted)]).RootElement.GetProperty("jobId").GetString());
+		Assert.AreEqual("B000000001", JsonDocument.Parse(data[nameof(BookStarted)]).RootElement.GetProperty("asin").GetString());
+		var pause = JsonDocument.Parse(data[nameof(QueuePaused)]).RootElement.GetProperty("pause");
+		Assert.AreEqual("badBook", pause.GetProperty("reason").GetString());
+
+		Assert.IsTrue(h.Queue.Resume(h.Queue.Pending[0].Id, Decision.BadBook(Configuration.BadBookAction.Retry)));
+		while (!data.ContainsKey(nameof(BookFinished)))
+		{
+			var line = await reader.ReadLineAsync(timeout.Token);
+			Assert.IsNotNull(line);
+			if (line.StartsWith("event: "))
+				current = line[7..];
+			else if (line.StartsWith("data: ") && current is not null)
+				data[current] = line[6..];
+		}
+
+		using var finished = JsonDocument.Parse(data[nameof(BookFinished)]);
+		Assert.AreEqual("failedRetry", finished.RootElement.GetProperty("result").GetString());
+		Assert.AreEqual("failed", finished.RootElement.GetProperty("status").GetString());
+		Assert.IsTrue(data.ContainsKey(nameof(QueueResumed)));
+		Assert.IsFalse(data.Values.Any(v => v.Contains("token", StringComparison.OrdinalIgnoreCase)));
+	}
 }
