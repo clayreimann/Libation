@@ -142,6 +142,10 @@ public partial class ApiTests
 			_ => null
 		};
 
+		public readonly Dictionary<string, AudioLookup> Audio = [];
+
+		public AudioLookup FindAudio(string asin) => Audio.TryGetValue(asin, out var lookup) ? lookup : new(AudioOutcome.NoSuchBook);
+
 		public Task<byte[]?> LoadCover(string pictureId, CoverSize size, CancellationToken ct)
 		{
 			LastCover = (size, pictureId);

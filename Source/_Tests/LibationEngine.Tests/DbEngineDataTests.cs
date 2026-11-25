@@ -287,6 +287,63 @@ public class DbEngineDataTests
 	}
 
 	[TestMethod]
+	public async Task FindAudio_resolves_a_liberated_books_files_in_play_order_with_its_cue()
+	{
+		var folder = Path.Combine(booksDirectory, "Author", "Book");
+		var ten = WriteFile(folder, "Book - 10 [B0PLAIN0001].m4b");
+		var two = WriteFile(folder, "Book - 2 [B0PLAIN0001].m4b");
+		WriteFile(folder, "Book - 2 [B0PLAIN0001].mp3");
+		var cue = WriteFile(folder, "Book.cue");
+		FilePathCache.Insert("B0PLAIN0001", ten);
+		FilePathCache.Insert("B0PLAIN0001", two);
+		FilePathCache.Insert("B0PLAIN0001", cue);
+		await data.SetBookStatus("B0PLAIN0001", LiberatedStatus.Liberated);
+
+		var audio = data.FindAudio("B0PLAIN0001");
+
+		Assert.AreEqual(AudioOutcome.Ok, audio.Outcome);
+		CollectionAssert.AreEqual(new[] { two, ten }, audio.Paths!.ToArray());
+		Assert.AreEqual(cue, audio.CuePath);
+	}
+
+	[TestMethod]
+	public async Task FindAudio_looks_for_a_cue_beside_a_single_file_when_none_is_indexed()
+	{
+		var book = WriteFile(booksDirectory, "Single [B0PDF000001].m4b");
+		FilePathCache.Insert("B0PDF000001", book);
+		await data.SetBookStatus("B0PDF000001", LiberatedStatus.Liberated);
+
+		Assert.AreEqual(Path.Combine(booksDirectory, "Single [B0PDF000001].cue"), data.FindAudio("B0PDF000001").CuePath);
+	}
+
+	[TestMethod]
+	public async Task FindAudio_says_why_a_book_has_no_audio()
+	{
+		Assert.AreEqual(AudioOutcome.NoSuchBook, data.FindAudio("B0NOSUCH001").Outcome);
+
+		WriteFile(booksDirectory, "B0PLAIN0001.m4b");
+		FilePathCache.Insert("B0PLAIN0001", Path.Combine(booksDirectory, "B0PLAIN0001.m4b"));
+		Assert.AreEqual(AudioOutcome.NotLiberated, data.FindAudio("B0PLAIN0001").Outcome);
+
+		await data.SetBookStatus("B0PDF000001", LiberatedStatus.Liberated);
+		Assert.AreEqual(AudioOutcome.FilesMissing, data.FindAudio("B0PDF000001").Outcome);
+
+		await data.SetBookStatus("B0PLAIN0001", LiberatedStatus.Liberated);
+		File.Delete(Path.Combine(booksDirectory, "B0PLAIN0001.m4b"));
+		Assert.AreEqual(AudioOutcome.FilesMissing, data.FindAudio("B0PLAIN0001").Outcome);
+	}
+
+	[TestMethod]
+	public async Task FindAudio_finds_a_trashed_liberated_book()
+	{
+		var path = WriteFile(booksDirectory, "B0TRASHED01.m4b");
+		FilePathCache.Insert("B0TRASHED01", path);
+		await data.SetBookStatus("B0TRASHED01", LiberatedStatus.Liberated);
+
+		Assert.AreEqual(AudioOutcome.Ok, data.FindAudio("B0TRASHED01").Outcome);
+	}
+
+	[TestMethod]
 	public async Task LocateFile_without_a_Books_folder_is_invalid()
 	{
 		var inside = WriteFile(booksDirectory, "real.m4b");

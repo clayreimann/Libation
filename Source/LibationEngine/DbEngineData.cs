@@ -209,6 +209,21 @@ public sealed class DbEngineData : IEngineData
 	public CoverInfo? FindCover(string asin)
 		=> Find(asin) is { } lb ? new(lb.Book.PictureId ?? lb.Book.PictureLarge) : null;
 
+	public AudioLookup FindAudio(string asin)
+	{
+		if (Find(asin) is not { } lb)
+			return new(AudioOutcome.NoSuchBook);
+		if (lb.Book.UserDefinedItem.BookStatus is not LiberatedStatus.Liberated)
+			return new(AudioOutcome.NotLiberated);
+		if (AudibleFileStorage.Audio.GetPath(asin)?.PathWithoutPrefix is not { } primary)
+			return new(AudioOutcome.FilesMissing);
+
+		var paths = AudioFiles.PlayOrder(primary, AudibleFileStorage.Audio.GetPaths(asin).Select(p => p.PathWithoutPrefix));
+		var cue = FilePathCache.GetFiles(asin).Where(f => f.fileType == FileType.Cue).Select(f => f.path.PathWithoutPrefix).FirstOrDefault()
+			?? Path.ChangeExtension(primary, ".cue");
+		return new(AudioOutcome.Ok, paths, cue);
+	}
+
 	public async Task<byte[]?> LoadCover(string pictureId, CoverSize size, CancellationToken ct)
 	{
 		var definition = new PictureDefinition(pictureId, size == CoverSize.Large ? PictureSize._500x500 : PictureSize._80x80);

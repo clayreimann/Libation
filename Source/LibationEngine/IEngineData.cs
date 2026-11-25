@@ -81,6 +81,9 @@ public interface IEngineData
 	/// <summary>Null when no such book exists.</summary>
 	CoverInfo? FindCover(string asin);
 
+	/// <summary>The book's audio files in play order, resolved from the library and file index only.</summary>
+	AudioLookup FindAudio(string asin);
+
 	/// <summary>Cached jpeg bytes, fetched on first use; null when unavailable.</summary>
 	Task<byte[]?> LoadCover(string pictureId, CoverSize size, CancellationToken ct);
 	Task<BookDto?> SetTags(string asin, string tags);
