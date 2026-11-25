@@ -6,6 +6,7 @@ using DataLayer;
 using Dinah.Core;
 using Dinah.Core.ErrorHandling;
 using FileLiberator;
+using LibationEngine;
 using LibationFileManager;
 using LibationUiBase.Forms;
 using System;
@@ -14,36 +15,6 @@ using System.Linq;
 using System.Threading.Tasks;
 
 namespace LibationUiBase.ProcessQueue;
-
-public enum ProcessBookResult
-{
-	None,
-	Success,
-	Cancelled,
-	ValidationFail,
-	FailedRetry,
-	FailedSkip,
-	FailedAbort,
-	LicenseDenied,
-	LicenseDeniedPossibleOutage,
-	/// <summary>Audible named CustomerThrottled on the license denial.</summary>
-	LicenseDeniedThrottled,
-	/// <summary>Audible throttled on legacy/non-Widevine registration; settings thunked to Android+Widevine and account marked for re-registration.</summary>
-	LicenseDeniedThrottledRecovered,
-	/// <summary>ADRM licenserequest failed with Sable acr:null; Widevine may work (see WidevineRecommendation).</summary>
-	WidevineRecommended,
-	/// <summary>Volume full on write; queue should stop (see ProcessQueueViewModel queue loop).</summary>
-	DiskFull
-}
-
-public enum ProcessBookStatus
-{
-	Queued,
-	Cancelled,
-	Working,
-	Completed,
-	Failed
-}
 
 /// <summary>
 /// This is the viewmodel for queued processables

@@ -20,6 +20,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\LibationUiBase\LibationUiBase.csproj" />
+    <ProjectReference Include="..\..\LibationEngine\LibationEngine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="LibationEngine" />
   </ItemGroup>
 
   <ItemGroup>

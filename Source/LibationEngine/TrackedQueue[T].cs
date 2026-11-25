@@ -6,7 +6,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
-namespace LibationUiBase;
+namespace LibationEngine;
 
 public enum QueuePosition
 {
