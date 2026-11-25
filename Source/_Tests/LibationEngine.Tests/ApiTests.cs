@@ -804,6 +804,9 @@ public class ApiTests
 		StringAssert.EndsWith(response.Content.Headers.ContentDisposition?.FileName, extension);
 		Assert.AreEqual($"exported {Enum.Parse<ExportFormat>(format, ignoreCase: true)}", await response.Content.ReadAsStringAsync());
 		Assert.AreEqual(("x", true), h.Data.LastFilter);
+		var deadline = DateTime.UtcNow.AddSeconds(5);
+		while (File.Exists(h.Data.LastExportPath) && DateTime.UtcNow < deadline)
+			await Task.Delay(20);
 		Assert.IsFalse(File.Exists(h.Data.LastExportPath), "the temp file is removed once streamed");
 	}
 
