@@ -58,7 +58,8 @@ public static class ApiEndpoints
 						schema.Enum = values.Select(v => (System.Text.Json.Nodes.JsonNode)System.Text.Json.Nodes.JsonValue.Create(v)!).ToList();
 				foreach (var (status, response) in operation.Responses?.ToList() ?? [])
 					foreach (var (contentType, media) in response.Content ?? new Dictionary<string, Microsoft.OpenApi.OpenApiMediaType>())
-						if (contentType == "image/jpeg" || contentType.StartsWith("audio/", StringComparison.Ordinal) || operation.OperationId == ExportOperation && status == "200")
+						if (contentType == "image/jpeg" || contentType.StartsWith("audio/", StringComparison.Ordinal) || operation.OperationId == ExportOperation && status == "200"
+							|| operation.OperationId == BookmarksOperation && contentType is "text/csv" or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 							media.Schema = new Microsoft.OpenApi.OpenApiSchema { Type = Microsoft.OpenApi.JsonSchemaType.String, Format = "binary" };
 				return Task.CompletedTask;
 			});
@@ -121,12 +122,15 @@ public static class ApiEndpoints
 		["QueueWaitDto.Reason"] = Names<WaitReason>(),
 		["BulkItemDto.Result"] = [BulkResults.Ok, BulkResults.NotFound, BulkResults.Conflict],
 		["LocateScanDto.State"] = ["idle", "running", "completed", "failed"],
+		["QualityScanDto.State"] = ["idle", "running", "cancelling", "completed", "cancelled", "failed"],
+		["BookmarkDto.Type"] = ["Clip", "Note", "Bookmark", "LastHeard"],
 		["CancelJobDto.Outcome"] = ["removed", "cancelling"],
 		["AccountDto.AuthState"] = [AuthStates.SignedIn, AuthStates.NeedsLogin],
 		["AccountDto.Credentials"] = [CredentialKinds.Modern, CredentialKinds.Legacy, CredentialKinds.None]
 	};
 
 	private const string ExportOperation = "exportLibrary";
+	private const string BookmarksOperation = "getBookBookmarks";
 
 	private static readonly Dictionary<string, (string ContentType, string Extension)> ExportFormats = new(StringComparer.OrdinalIgnoreCase)
 	{
@@ -673,6 +677,86 @@ public static class ApiEndpoints
 			.WithSummary("State of the last or running locate scan.")
 			.WithName("getLocateScan").WithTags("library")
 			.Produces<LocateScanDto>(StatusCodes.Status200OK);
+
+		api.MapPost("/library/quality-scan", (QualityScanRequest? body) =>
+		{
+			if (body?.Asins is not null && Validate(body.Asins) is { } invalid)
+				return invalid;
+			var start = data.StartQualityScan(body?.Asins is { } asins ? Distinct(asins) : null, body?.Widevine, scheduler.Events.Publish);
+			return start.Outcome switch
+			{
+				QualityOutcome.Invalid => Error(start.Error!, StatusCodes.Status400BadRequest),
+				QualityOutcome.Busy => Error("A quality scan is already running.", StatusCodes.Status409Conflict),
+				_ => Results.Json(start.Scan, statusCode: StatusCodes.Status202Accepted)
+			};
+		}).WithSummary("Scans liberated books in the background for a higher quality version on Audible, as desktop's Find better quality: each book's downloaded file (else its last downloaded format) is compared with Audible's best format. asins limits the scan; widevine (default: the Use Widevine setting) asks for Widevine rather than Audible DRM formats. Progress arrives as QualityScanProgress events. 202, 400 bad asins or nothing to scan, 409 already running.")
+			.WithName("startQualityScan").WithTags("library")
+			.Accepts<QualityScanRequest>("application/json")
+			.Produces<QualityScanDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapGet("/library/quality-scan", () => Results.Json(data.GetQualityScan()))
+			.WithSummary("State and results of the last or running quality scan. results holds the books whose available bitrate is at least 15% above the downloaded file's.")
+			.WithName("getQualityScan").WithTags("library")
+			.Produces<QualityScanDto>(StatusCodes.Status200OK);
+
+		api.MapDelete("/library/quality-scan", () =>
+		{
+			var cancel = data.CancelQualityScan(scheduler.Events.Publish);
+			return cancel.Outcome is QualityOutcome.NotRunning
+				? Error("No quality scan is running.", StatusCodes.Status409Conflict)
+				: Results.Json(cancel.Scan);
+		}).WithSummary("Cancels the running quality scan; results found so far are kept. 200 with the scan, now cancelling, 409 when none is running.")
+			.WithName("cancelQualityScan").WithTags("library")
+			.Produces<QualityScanDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapPost("/library/quality-scan/apply", async (QualityApplyRequest? body) =>
+		{
+			if (Validate(body?.Asins) is { } invalid)
+				return invalid;
+			var result = await data.ApplyQualityUpgrades(Distinct(body!.Asins!));
+			return result.Outcome is QualityOutcome.Busy
+				? Error("A quality scan is still running.", StatusCodes.Status409Conflict)
+				: Results.Json(result.Applied);
+		}).WithSummary("Marks upgrades from the last scan as not liberated (Download Pending), as desktop's Mark books, and enables Widevine, xHE-AAC and account re-registration when the better audio needs them. The next liberate cycle, or POST /library/{asin}/liberate, downloads them. 200 with counts and the settings changed, 400 bad asins, 409 while a scan runs.")
+			.WithName("applyQualityUpgrades").WithTags("library")
+			.Accepts<QualityApplyRequest>("application/json")
+			.Produces<QualityApplyDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapGet("/library/{asin}/bookmarks", async (string asin, string? format, CancellationToken ct) =>
+		{
+			ExportFormat? export = null;
+			(string ContentType, string Extension) type = default;
+			if (format is not null)
+			{
+				if (!ExportFormats.TryGetValue(format.Trim(), out type))
+					return Error("format must be csv, xlsx or json.", StatusCodes.Status400BadRequest);
+				export = Enum.Parse<ExportFormat>(format.Trim(), ignoreCase: true);
+			}
+
+			var result = export is { } wanted ? await data.ExportBookmarks(asin, wanted, ct) : await data.GetBookmarks(asin, ct);
+			if (result.Outcome is BookmarksOutcome.NoSuchBook)
+				return NoSuchBook();
+			if (result.Outcome is BookmarksOutcome.AudibleFailed)
+				return Error(result.Error!, StatusCodes.Status502BadGateway);
+			if (export is null)
+				return Results.Json(result.Records);
+			if (result.FilePath is null)
+				return Results.NoContent();
+
+			var stream = new FileStream(result.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.DeleteOnClose | FileOptions.SequentialScan);
+			return Results.File(stream, type.ContentType, $"libation-{asin}-records.{type.Extension}");
+		}).WithSummary("The book's clips, notes and bookmarks, fetched live from Audible; start and end are seconds. With format=csv|xlsx|json the same records download as desktop's export file (204 when there are none). 200, 400 bad format, 404 unknown ASIN, 502 when Audible fails.")
+			.WithName(BookmarksOperation).WithTags("library")
+			.Produces<BookmarkDto[]>(StatusCodes.Status200OK, "application/json", ExportFormats["csv"].ContentType, ExportFormats["xlsx"].ContentType)
+			.Produces(StatusCodes.Status204NoContent)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
+			.Produces<ErrorDto>(StatusCodes.Status502BadGateway);
 
 		api.MapPut("/library/tags", async (BulkTagsRequest? body) =>
 		{

@@ -29,3 +29,4 @@ public sealed record AccountNeedsLogin(string AccountId) : EngineEvent;
 public sealed record AccountSignedIn(string AccountId, string? Locale) : EngineEvent;
 
 public sealed record LocateScanProgress(LocateScanDto Scan) : EngineEvent;
+public sealed record QualityScanProgress(QualityScanDto Scan) : EngineEvent;

@@ -188,6 +188,27 @@ public sealed record LocateScanRequest(string? Folder);
 /// <summary>State is idle, running, completed or failed. Found counts audio files carrying an ASIN, Matched those whose book is in the library, Updated the books newly marked liberated.</summary>
 public sealed record LocateScanDto(string State, string? Folder, int Found, int Matched, int Updated, string? Error, DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt);
 
+/// <summary>Body of <c>POST /api/library/quality-scan</c>; Asins limits the scan (default: every liberated book), Widevine defaults to the Use Widevine setting.</summary>
+public sealed record QualityScanRequest(IReadOnlyList<string>? Asins, bool? Widevine);
+
+/// <summary>Codec is as desktop shows it (AAC-LC, xHE-AAC, EC-3, AC-4, MP3); Bitrate is kbps.</summary>
+public sealed record QualityDto(string Codec, int Bitrate);
+
+/// <summary>A book whose available bitrate is at least 15% above the downloaded file's, the desktop threshold.</summary>
+public sealed record QualityResultDto(string Asin, string Title, QualityDto CurrentQuality, QualityDto AvailableQuality);
+
+/// <summary>State is idle, running, cancelling, completed, cancelled or failed. Results lists the upgrades found so far, and is null in running and cancelling events.</summary>
+public sealed record QualityScanDto(string State, bool Widevine, int Total, int Scanned, int Failed, IReadOnlyList<QualityResultDto>? Results, string? Error, DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt);
+
+/// <summary>Body of <c>POST /api/library/quality-scan/apply</c>; Asins come from the last scan's results.</summary>
+public sealed record QualityApplyRequest(IReadOnlyList<string>? Asins);
+
+/// <summary>Marked books are NotLiberated again; Missing lists ASINs not in the last scan's results. The flags report settings changed to fetch the better audio.</summary>
+public sealed record QualityApplyDto(int Marked, IReadOnlyList<string> Missing, bool WidevineEnabled, bool XHeAacRequested, bool AccountsMarkedForReRegistration);
+
+/// <summary>Type is Clip, Note, Bookmark or LastHeard; Start and End are seconds into the book.</summary>
+public sealed record BookmarkDto(string Type, double Start, double? End, string? Note, string? Title, DateTimeOffset Created);
+
 /// <summary>Result is ok, notFound or conflict.</summary>
 public sealed record BulkItemDto(string Asin, string Result);
 

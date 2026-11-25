@@ -42,6 +42,17 @@ public enum RatingOutcome { Ok, NoSuchBook, AudibleFailed }
 
 public sealed record RatingResult(RatingOutcome Outcome, BookDetailDto? Book = null, string? Error = null);
 
+public enum QualityOutcome { Ok, Invalid, Busy, NotRunning }
+
+public sealed record QualityScanStart(QualityOutcome Outcome, QualityScanDto? Scan = null, string? Error = null);
+
+public sealed record QualityApplyResult(QualityOutcome Outcome, QualityApplyDto? Applied = null);
+
+public enum BookmarksOutcome { Ok, NoSuchBook, AudibleFailed }
+
+/// <summary>FilePath is the exported temp file, null when the book has no records to export.</summary>
+public sealed record BookmarksResult(BookmarksOutcome Outcome, IReadOnlyList<BookmarkDto>? Records = null, string? FilePath = null, string? Error = null);
+
 public interface IEngineData
 {
 	IReadOnlyList<AccountDto> GetAccounts();
@@ -132,4 +143,20 @@ public interface IEngineData
 	/// <summary>Starts the background folder scan; <paramref name="publish"/> receives its progress.</summary>
 	LocateScanStart StartLocateScan(string folder, Action<EngineEvent> publish);
 	LocateScanDto GetLocateScan();
+
+	/// <summary>Starts a background quality scan of <paramref name="asins"/> (default: every liberated book); only liberated, non-spatial books are scanned.</summary>
+	QualityScanStart StartQualityScan(IReadOnlyList<string>? asins, bool? widevine, Action<EngineEvent> publish);
+	QualityScanDto GetQualityScan();
+
+	/// <summary>NotRunning when no scan is running.</summary>
+	QualityScanStart CancelQualityScan(Action<EngineEvent> publish);
+
+	/// <summary>Marks scanned upgrades NotLiberated and prepares settings for the better audio, as desktop's Mark as Download Pending; Busy while a scan runs.</summary>
+	Task<QualityApplyResult> ApplyQualityUpgrades(IReadOnlyList<string> asins);
+
+	/// <summary>The book's clips, notes and bookmarks, fetched live from Audible.</summary>
+	Task<BookmarksResult> GetBookmarks(string asin, CancellationToken ct);
+
+	/// <summary>Writes the records to a new temp file with desktop's exporter; the caller deletes it.</summary>
+	Task<BookmarksResult> ExportBookmarks(string asin, ExportFormat format, CancellationToken ct);
 }

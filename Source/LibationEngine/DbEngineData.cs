@@ -7,9 +7,11 @@ using LibationFileManager;
 
 namespace LibationEngine;
 
-public sealed class DbEngineData(IAudibleReviews? reviews = null) : IEngineData
+public sealed class DbEngineData(IAudibleReviews? reviews = null, IAudibleQuality? quality = null, IAudibleRecords? records = null) : IEngineData
 {
 	private readonly IAudibleReviews audibleReviews = reviews ?? new AudibleReviews();
+	private readonly QualityScanner qualityScanner = new(quality ?? new AudibleQuality());
+	private readonly IAudibleRecords audibleRecords = records ?? new AudibleRecords();
 
 	public IReadOnlyList<AccountDto> GetAccounts()
 	{
@@ -413,6 +415,117 @@ public sealed class DbEngineData(IAudibleReviews? reviews = null) : IEngineData
 	}
 
 	public LocateScanDto GetLocateScan() => locateScanner.Current;
+
+	public QualityScanStart StartQualityScan(IReadOnlyList<string>? asins, bool? widevine, Action<EngineEvent> publish)
+	{
+		var wanted = asins is null ? null : new HashSet<string>(asins, StringComparer.OrdinalIgnoreCase);
+		var books = DbContexts.GetLibrary_Flat_NoTracking()
+			.Where(QualityCheck.ShouldScan)
+			.Where(lb => wanted is null || wanted.Contains(lb.Book.AudibleProductId))
+			.OrderBy(lb => lb.Book.AudibleProductId, StringComparer.Ordinal)
+			.ToList();
+		if (books.Count == 0)
+			return new(QualityOutcome.Invalid, Error: "No liberated, non-spatial books to scan.");
+		return qualityScanner.TryStart(books, widevine ?? LibationFileManager.Configuration.Instance.UseWidevine, publish)
+			? new(QualityOutcome.Ok, qualityScanner.Current)
+			: new(QualityOutcome.Busy);
+	}
+
+	public QualityScanDto GetQualityScan() => qualityScanner.Current;
+
+	public QualityScanStart CancelQualityScan(Action<EngineEvent> publish)
+		=> qualityScanner.Cancel(publish) is { } scan ? new(QualityOutcome.Ok, scan) : new(QualityOutcome.NotRunning);
+
+	public async Task<QualityApplyResult> ApplyQualityUpgrades(IReadOnlyList<string> asins)
+	{
+		if (qualityScanner.Running)
+			return new(QualityOutcome.Busy);
+
+		var scan = qualityScanner.Current;
+		var hits = (scan.Results ?? []).ToDictionary(r => r.Asin, StringComparer.OrdinalIgnoreCase);
+		var books = new List<LibraryBook>();
+		var applied = new List<QualityResultDto>();
+		var missing = new List<string>();
+		foreach (var asin in asins)
+		{
+			if (hits.TryGetValue(asin, out var hit) && DbContexts.GetLibraryBook_Flat_NoTracking(hit.Asin) is { } lb)
+			{
+				books.Add(lb);
+				applied.Add(hit);
+			}
+			else
+				missing.Add(asin);
+		}
+
+		var settings = new QualityUpgradeSettings(false, false, false);
+		if (books.Count > 0)
+		{
+			await books.UpdateBookStatusAsync(LiberatedStatus.NotLiberated);
+			qualityScanner.Remove(applied.Select(r => r.Asin).ToHashSet(StringComparer.OrdinalIgnoreCase));
+			settings = QualityCheck.ApplyUpgradeSettings(scan.Widevine, applied.Select(r => (string?)r.AvailableQuality.Codec).ToArray());
+		}
+		return new(QualityOutcome.Ok, new(books.Count, missing, settings.WidevineEnabled, settings.XHeAacRequested, settings.AccountsMarkedForReRegistration));
+	}
+
+	public async Task<BookmarksResult> GetBookmarks(string asin, CancellationToken ct)
+	{
+		var fetched = await FetchRecords(asin, ct);
+		return fetched.Outcome is BookmarksOutcome.Ok
+			? new(BookmarksOutcome.Ok, fetched.Records!.Select(ToBookmarkDto).ToList())
+			: new(fetched.Outcome, Error: fetched.Error);
+	}
+
+	public async Task<BookmarksResult> ExportBookmarks(string asin, ExportFormat format, CancellationToken ct)
+	{
+		var fetched = await FetchRecords(asin, ct);
+		if (fetched.Outcome is not BookmarksOutcome.Ok)
+			return new(fetched.Outcome, Error: fetched.Error);
+		if (fetched.Records!.Count == 0)
+			return new(BookmarksOutcome.Ok);
+
+		var path = Path.Combine(Path.GetTempPath(), $"libation-records-{Guid.NewGuid():N}.{format.ToString().ToLowerInvariant()}");
+		try
+		{
+			switch (format)
+			{
+				case ExportFormat.Csv:
+					RecordExporter.ToCsv(path, fetched.Records);
+					break;
+				case ExportFormat.Xlsx:
+					RecordExporter.ToXlsx(path, fetched.Records);
+					break;
+				default:
+					RecordExporter.ToJson(path, fetched.Book!, fetched.Records);
+					break;
+			}
+		}
+		catch
+		{
+			try { File.Delete(path); } catch (IOException) { }
+			throw;
+		}
+		return new(BookmarksOutcome.Ok, FilePath: path);
+	}
+
+	private async Task<(BookmarksOutcome Outcome, LibraryBook? Book, IReadOnlyList<AudibleApi.Common.IRecord>? Records, string? Error)> FetchRecords(string asin, CancellationToken ct)
+	{
+		if (Find(asin) is not { } lb)
+			return (BookmarksOutcome.NoSuchBook, null, null, null);
+		try
+		{
+			return (BookmarksOutcome.Ok, lb, await audibleRecords.GetAsync(lb, ct), null);
+		}
+		catch (Exception ex) when (ex is not OperationCanceledException)
+		{
+			return (BookmarksOutcome.AudibleFailed, lb, null, $"Audible could not be reached: {ex.Message}");
+		}
+	}
+
+	private static BookmarkDto ToBookmarkDto(AudibleApi.Common.IRecord record)
+	{
+		var range = record as AudibleApi.Common.IRangeAnnotation;
+		return new(record.GetType().Name, record.Start.TotalSeconds, range?.End.TotalSeconds, range?.Text, (record as AudibleApi.Common.Clip)?.Title, record.Created);
+	}
 
 	private static LibraryBook? Find(string asin)
 		=> DbContexts.GetLibraryBook_Flat_NoTracking(asin)

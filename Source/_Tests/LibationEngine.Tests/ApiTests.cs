@@ -258,6 +258,62 @@ public partial class ApiTests
 
 		public LocateScanDto GetLocateScan() => new("idle", null, 0, 0, 0, null, null, null);
 
+		public bool QualityRunning, BookmarksFail, BookmarksEmpty;
+
+		public QualityScanStart StartQualityScan(IReadOnlyList<string>? asins, bool? widevine, Action<EngineEvent> publish)
+		{
+			Calls.Add($"qualityscan:{(asins is null ? "*" : string.Join(',', asins))}:{widevine}");
+			if (asins?.Contains("busy") == true)
+				return new(QualityOutcome.Busy);
+			if (asins?.Contains("none") == true)
+				return new(QualityOutcome.Invalid, Error: "No liberated, non-spatial books to scan.");
+			var scan = new QualityScanDto("running", widevine ?? false, 2, 0, 0, null, null, DateTimeOffset.UnixEpoch, null);
+			publish(new QualityScanProgress(scan));
+			QualityRunning = true;
+			return new(QualityOutcome.Ok, scan);
+		}
+
+		public QualityScanDto GetQualityScan()
+			=> new("completed", false, 2, 2, 0, [new("B000000001", "Title", new("AAC-LC", 64), new("xHE-AAC", 128))], null, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
+
+		public QualityScanStart CancelQualityScan(Action<EngineEvent> publish)
+		{
+			Calls.Add("qualitycancel");
+			return QualityRunning ? new(QualityOutcome.Ok, new("cancelling", false, 2, 1, 0, null, null, DateTimeOffset.UnixEpoch, null)) : new(QualityOutcome.NotRunning);
+		}
+
+		public Task<QualityApplyResult> ApplyQualityUpgrades(IReadOnlyList<string> asins)
+		{
+			Calls.Add($"qualityapply:{string.Join(',', asins)}");
+			return Task.FromResult(QualityRunning ? new QualityApplyResult(QualityOutcome.Busy)
+				: new(QualityOutcome.Ok, new(asins.Count(a => a == "B000000001"), asins.Where(a => a != "B000000001").ToList(), true, true, false)));
+		}
+
+		private static readonly IReadOnlyList<BookmarkDto> FakeBookmarks =
+		[
+			new("Clip", 10.5, 20, "a note", "A clip", DateTimeOffset.UnixEpoch),
+			new("Bookmark", 30, null, null, null, DateTimeOffset.UnixEpoch),
+		];
+
+		public Task<BookmarksResult> GetBookmarks(string asin, CancellationToken ct)
+		{
+			Calls.Add($"bookmarks:{asin}");
+			return Task.FromResult(GetBook(asin) is null ? new BookmarksResult(BookmarksOutcome.NoSuchBook)
+				: BookmarksFail ? new(BookmarksOutcome.AudibleFailed, Error: "Audible could not be reached: offline")
+				: new(BookmarksOutcome.Ok, BookmarksEmpty ? [] : FakeBookmarks));
+		}
+
+		public async Task<BookmarksResult> ExportBookmarks(string asin, ExportFormat format, CancellationToken ct)
+		{
+			Calls.Add($"bookmarks:{asin}:{format}");
+			var result = await GetBookmarks(asin, ct);
+			if (result.Outcome is not BookmarksOutcome.Ok || result.Records!.Count == 0)
+				return result with { Records = null };
+			var path = Path.Combine(Path.GetTempPath(), $"libation-fake-{Guid.NewGuid():N}.bin");
+			await File.WriteAllTextAsync(path, $"fake-{format}", ct);
+			return new(BookmarksOutcome.Ok, FilePath: path);
+		}
+
 		private static BookDto Book(string asin)
 			=> new(asin, "Title", null, ["Author"], ["Narrator"], [], 60, "NotLiberated", null, DateTime.UnixEpoch, "a@example.com", "us", "Product", false, "", false,
 				["Mystery"], new(4.5f, 4f, 5f), new(0, 0, 0), false, false, null, null, null, null, false, "PIC1", null, false, false, false);
@@ -1468,6 +1524,7 @@ public partial class ApiTests
 	[DataRow("QueuePaused", "pause", "PendingDecisionDto", "reason")]
 	[DataRow("QueueWaiting", "wait", "QueueWaitDto", "reason")]
 	[DataRow("LocateScanProgress", "scan", "LocateScanDto", "state")]
+	[DataRow("QualityScanProgress", "scan", "QualityScanDto", "state")]
 	public async Task OpenApi_events_reference_shared_dtos_so_their_enums_survive(string evt, string property, string dto, string enumProperty)
 	{
 		var schemas = await SchemaDocument();
