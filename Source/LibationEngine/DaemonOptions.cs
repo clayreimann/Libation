@@ -9,7 +9,8 @@ public sealed record DaemonOptions(
 	string? AccountsImportPath = null,
 	bool Once = false,
 	bool ApiEnabled = false,
-	string? ApiTokenFile = null);
+	string? ApiTokenFile = null,
+	bool ReadonlyConfig = false);
 
 /// <summary>Each delegate returns a process-style exit code; 0 is success.</summary>
 public sealed record DaemonJobs(

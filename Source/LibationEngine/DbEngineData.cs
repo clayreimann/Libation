@@ -290,6 +290,22 @@ public sealed class DbEngineData : IEngineData
 
 	public SettingsDto GetSettings() => SettingsMapper.From(LibationFileManager.Configuration.Instance);
 
+	private static readonly object SettingsGate = new();
+
+	public SettingsUpdateResult UpdateSettings(System.Text.Json.JsonElement patch)
+	{
+		lock (SettingsGate)
+			return SettingsWriter.Apply(LibationFileManager.Configuration.Instance, patch);
+	}
+
+	public TemplatePreviewResult PreviewTemplate(string kind, string template, string? asin)
+	{
+		LibraryBook? book = null;
+		if (asin is not null && (book = Find(asin)) is null)
+			return new(false, null);
+		return new(true, TemplatePreview.Render(LibationFileManager.Configuration.Instance, kind, template, book));
+	}
+
 	private readonly LocateScanner locateScanner = new();
 
 	public async Task<LocateResult> LocateFile(string asin, string path)

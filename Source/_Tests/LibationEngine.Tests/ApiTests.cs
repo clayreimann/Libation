@@ -192,6 +192,12 @@ public class ApiTests
 		public SettingsDto GetSettings()
 			=> SettingsMapper.From(Configuration.Instance);
 
+		public SettingsUpdateResult UpdateSettings(JsonElement patch)
+			=> SettingsWriter.Apply(Configuration.Instance, patch);
+
+		public TemplatePreviewResult PreviewTemplate(string kind, string template, string? asin)
+			=> asin is not (null or "B000000001") ? new(false, null) : new(true, TemplatePreview.Render(Configuration.Instance, kind, template, null));
+
 		public Task<LocateResult> LocateFile(string asin, string path)
 		{
 			Calls.Add($"locate:{asin}:{path}");
@@ -236,7 +242,7 @@ public class ApiTests
 		public readonly LiberationQueue Queue;
 		public volatile Func<LiberationJob, Task<ProcessBookResult>> Outcome = _ => Task.FromResult(ProcessBookResult.Success);
 
-		public Harness(bool api, string? tokenFile = null, bool startRun = true, DiskFullPolicy onDiskFull = DiskFullPolicy.Ask, string? accountsImport = null, LoginSessions? logins = null)
+		public Harness(bool api, string? tokenFile = null, bool startRun = true, DiskFullPolicy onDiskFull = DiskFullPolicy.Ask, string? accountsImport = null, LoginSessions? logins = null, bool readonlyConfig = false)
 		{
 			Queue = new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => 1, OnDiskFull = onDiskFull })
 			{
@@ -278,7 +284,7 @@ public class ApiTests
 			};
 
 			run = LibationDaemon.RunAsync(
-				new DaemonOptions(TimeSpan.FromMinutes(30), false, Base, dir.Path, AccountsImportPath: accountsImport, ApiEnabled: api, ApiTokenFile: tokenFile),
+				new DaemonOptions(TimeSpan.FromMinutes(30), false, Base, dir.Path, AccountsImportPath: accountsImport, ApiEnabled: api, ApiTokenFile: tokenFile, ReadonlyConfig: readonlyConfig),
 				jobs, cts.Token, data: Data, queue: Queue, logins: logins);
 		}
 
@@ -1142,6 +1148,8 @@ public class ApiTests
 		{
 			(HttpMethod.Get, "/api/library?q=x", null),
 			(HttpMethod.Get, "/api/settings", null),
+			(HttpMethod.Patch, "/api/settings", "{}"),
+			(HttpMethod.Post, "/api/settings/templates/preview", "{\"template\":\"<title>\",\"kind\":\"file\"}"),
 			(HttpMethod.Put, "/api/library/B000000001/tags", "{\"tags\":\"x\"}"),
 			(HttpMethod.Put, "/api/library/B000000001/status", "{\"status\":\"liberated\"}"),
 			(HttpMethod.Post, "/api/library/B000000001/trash", null),
@@ -1169,6 +1177,121 @@ public class ApiTests
 		Assert.IsTrue(root.GetProperty("naming").TryGetProperty("folderTemplate", out _));
 		Assert.IsTrue(root.GetProperty("download").TryGetProperty("overwriteExisting", out _));
 		Assert.IsTrue(root.GetProperty("queue").TryGetProperty("maxConcurrentDownloads", out _));
+	}
+
+	private static StringContent Json(string body) => new(body, System.Text.Encoding.UTF8, "application/json");
+
+	[TestMethod]
+	public async Task Patch_settings_changes_only_the_named_keys_and_returns_the_updated_settings()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		var books = Path.Combine(configDir, "NewBooks");
+
+		var response = await h.Http.PatchAsync(h.Base + "/api/settings", Json($$"""{"books":{{JsonSerializer.Serialize(books)}},"download":{"createCueSheet":true},"mp3":{"bitrate":96},"logLevel":"Debug"}"""));
+
+		Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+		using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+		var root = doc.RootElement;
+		Assert.AreEqual(books, root.GetProperty("books").GetString());
+		Assert.IsTrue(root.GetProperty("download").GetProperty("createCueSheet").GetBoolean());
+		Assert.IsFalse(root.GetProperty("download").GetProperty("retainAaxFile").GetBoolean());
+		Assert.AreEqual(96, root.GetProperty("mp3").GetProperty("bitrate").GetInt32());
+		Assert.AreEqual(0, root.GetProperty("restartRequired").GetArrayLength());
+		Assert.IsTrue(root.GetProperty("folders").GetProperty("books").GetProperty("exists").GetBoolean());
+		Assert.IsTrue(Directory.Exists(books));
+		Assert.AreEqual(96, Configuration.Instance.LameBitrate);
+	}
+
+	[TestMethod]
+	public async Task Patch_settings_rejects_the_whole_body_when_any_key_is_invalid()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var response = await h.Http.PatchAsync(h.Base + "/api/settings", Json("""{"download":{"createCueSheet":true},"mp3":{"bitrate":5},"naming":{"fileTemplate":""},"bogus":1,"library":{"importEpisodes":null}}"""));
+
+		Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
+		using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+		StringAssert.Contains(doc.RootElement.GetProperty("error").GetString(), "nothing was changed");
+		var fields = doc.RootElement.GetProperty("fields");
+		Assert.AreEqual("Unknown setting.", fields.GetProperty("bogus").GetString());
+		Assert.AreEqual("Must not be null.", fields.GetProperty("library.importEpisodes").GetString());
+		Assert.IsFalse(Configuration.Instance.CreateCueSheet);
+	}
+
+	[TestMethod]
+	[DataRow("not json")]
+	[DataRow("[1]")]
+	public async Task Patch_settings_rejects_a_body_that_is_not_an_object(string body)
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var response = await h.Http.PatchAsync(h.Base + "/api/settings", Json(body));
+
+		Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
+		using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+		Assert.IsTrue(doc.RootElement.TryGetProperty("fields", out _));
+	}
+
+	[TestMethod]
+	public async Task Patch_settings_is_409_when_the_config_is_read_only()
+	{
+		await using var h = new Harness(api: true, readonlyConfig: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var response = await h.Http.PatchAsync(h.Base + "/api/settings", Json("""{"download":{"createCueSheet":true}}"""));
+
+		Assert.AreEqual(HttpStatusCode.Conflict, response.StatusCode);
+		StringAssert.Contains(await response.Content.ReadAsStringAsync(), "read-only");
+		Assert.IsFalse(Configuration.Instance.CreateCueSheet);
+		Assert.AreEqual(HttpStatusCode.OK, (await h.Http.GetAsync(h.Base + "/api/settings")).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Template_preview_renders_with_the_sample_book_and_reports_errors()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		async Task<JsonElement> Preview(string body)
+		{
+			var response = await h.Http.PostAsync(h.Base + "/api/settings/templates/preview", Json(body));
+			Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+			return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+		}
+
+		var file = await Preview("""{"template":"<title> - <first author>","kind":"file"}""");
+		Assert.IsTrue(file.GetProperty("valid").GetBoolean());
+		StringAssert.Contains(file.GetProperty("preview").GetString(), "A Study in Scarlet: A Sherlock Holmes Novel - Arthur Conan Doyle.m4b");
+
+		var title = await Preview("""{"template":"<ch#> - <ch title>","kind":"chapterTitle"}""");
+		Assert.IsTrue(title.GetProperty("valid").GetBoolean());
+
+		var bad = await Preview("""{"template":"/abs/<title>","kind":"folder"}""");
+		Assert.IsFalse(bad.GetProperty("valid").GetBoolean());
+		Assert.IsGreaterThan(0, bad.GetProperty("errors").GetArrayLength());
+		Assert.AreEqual(JsonValueKind.Null, bad.GetProperty("preview").ValueKind);
+
+		var warn = await Preview("""{"template":"<title>","kind":"chapterFile"}""");
+		Assert.IsTrue(warn.GetProperty("valid").GetBoolean());
+		Assert.AreEqual(1, warn.GetProperty("warnings").GetArrayLength());
+
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.PostAsync(h.Base + "/api/settings/templates/preview", Json("""{"template":"<title>","kind":"nope"}"""))).StatusCode);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.PostAsync(h.Base + "/api/settings/templates/preview", Json("""{"kind":"file"}"""))).StatusCode);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.PostAsync(h.Base + "/api/settings/templates/preview", Json("""{"template":"<title>","kind":"file","asin":"B0NOSUCH001"}"""))).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task OpenApi_settings_patch_has_only_optional_fields()
+	{
+		var schemas = await SchemaDocument();
+		foreach (var name in new[] { "SettingsPatchRequest", "NamingPatch", "DownloadPatch", "Mp3Patch", "QueuePatch", "LibraryPatch", "ReplacementPatch" })
+			CollectionAssert.AreEqual(Array.Empty<string>(), RequiredOrNone(schemas, name), name);
+		CollectionAssert.IsSubsetOf(new[] { "naming", "mp3", "folders", "logLevel", "replacementCharacters" }, Required(schemas, "SettingsDto"));
+		CollectionAssert.DoesNotContain(Required(schemas, "SettingsDto"), "restartRequired");
+		CollectionAssert.AreEquivalent(new[] { "error", "fields" }, Required(schemas, "FieldErrorsDto"));
 	}
 
 	[TestMethod]

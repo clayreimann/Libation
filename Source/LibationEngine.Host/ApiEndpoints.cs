@@ -650,9 +650,61 @@ public static class ApiEndpoints
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
 
 		api.MapGet("/settings", () => data.GetSettings())
-			.WithSummary("Curated read-only settings: Books and working folders, naming templates, download, queue and library options. No secrets.")
+			.WithSummary("Curated settings: Books and working folders (with whether each exists and is writable), naming templates, download, MP3, queue, library and logging options, and character replacements. Secrets are never returned.")
 			.WithName("getSettings").WithTags("settings")
 			.Produces<SettingsDto>(StatusCodes.Status200OK);
+
+		api.MapPatch("/settings", async (HttpRequest request) =>
+		{
+			if (options.ReadonlyConfig)
+				return Error("Settings are read-only because the daemon runs with a read-only config directory; edit its Settings.json and restart.", StatusCodes.Status409Conflict);
+
+			JsonDocument body;
+			try
+			{
+				body = await JsonDocument.ParseAsync(request.Body);
+			}
+			catch (JsonException)
+			{
+				return FieldErrors("The body is not valid JSON.", new Dictionary<string, string>());
+			}
+
+			using (body)
+			{
+				SettingsUpdateResult result;
+				try
+				{
+					result = data.UpdateSettings(body.RootElement.Clone());
+				}
+				catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+				{
+					return Error($"Settings cannot be saved: {ex.Message}", StatusCodes.Status409Conflict);
+				}
+				return result.Ok
+					? Results.Json(result.Settings)
+					: FieldErrors("Some settings are invalid; nothing was changed.", result.Errors!);
+			}
+		}).WithSummary("Changes the settings named in the body; absent keys are untouched and every key is validated before any is applied. Body mirrors GET /api/settings, so naming.folderTemplate is {\"naming\":{\"folderTemplate\":\"...\"}}. A null inProgress resets it; other keys reject null. 200 with the updated settings (restartRequired lists keys that need a restart), 400 with fields keyed by dotted setting name, 409 when the config is read-only or Settings.json cannot be written.")
+			.WithName("patchSettings").WithTags("settings")
+			.Accepts<SettingsPatchRequest>("application/json")
+			.Produces<SettingsDto>(StatusCodes.Status200OK)
+			.Produces<FieldErrorsDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapPost("/settings/templates/preview", (TemplatePreviewRequest? body) =>
+		{
+			if (body?.Template is not { } template)
+				return Error("template is required.", StatusCodes.Status400BadRequest);
+			var kind = TemplatePreview.Kinds.FirstOrDefault(k => string.Equals(k, body.Kind, StringComparison.OrdinalIgnoreCase));
+			if (kind is null)
+				return Error($"kind must be one of: {string.Join(", ", TemplatePreview.Kinds)}.", StatusCodes.Status400BadRequest);
+			var result = data.PreviewTemplate(kind, template, string.IsNullOrWhiteSpace(body.Asin) ? null : body.Asin.Trim());
+			return result.BookFound ? Results.Json(result.Preview) : Error("No such book.", StatusCodes.Status404NotFound);
+		}).WithSummary("Checks a naming template and renders it as the app's template editor does, for the library book with the given asin or a sample book. kind is folder, file, chapterFile or chapterTitle. 200 with valid, errors, warnings and preview (null when invalid), 400 bad body, 404 unknown asin.")
+			.WithName("previewTemplate").WithTags("settings")
+			.Produces<TemplatePreviewDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
 		api.MapPost("/scan", (ScanRequest? body) =>
 		{
@@ -779,6 +831,9 @@ public static class ApiEndpoints
 	}
 
 	private static IResult Error(string message, int status) => Results.Json(new ErrorDto(message), statusCode: status);
+
+	private static IResult FieldErrors(string message, IReadOnlyDictionary<string, string> fields)
+		=> Results.Json(new FieldErrorsDto(message, fields), statusCode: StatusCodes.Status400BadRequest);
 
 	private static IResult Bulk(IReadOnlyList<BulkItemDto> results) => Results.Json(BulkResults.Summarize(results));
 

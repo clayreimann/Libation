@@ -143,7 +143,8 @@ internal class ServeOptions : OptionsBase
 			accountsImport,
 			once,
 			apiEnabled,
-			apiTokenFile is null ? null : Path.GetFullPath(apiTokenFile));
+			apiTokenFile is null ? null : Path.GetFullPath(apiTokenFile),
+			readonlyDir is not null);
 
 		var policy = new LiberationPolicy
 		{

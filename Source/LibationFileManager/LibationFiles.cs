@@ -9,6 +9,7 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("AppScaffolding")]
 [assembly: InternalsVisibleTo("LibationUiBase.Tests")]
 [assembly: InternalsVisibleTo("LibationFileManager.Tests")]
+[assembly: InternalsVisibleTo("LibationEngine.Tests")]
 
 namespace LibationFileManager;
 

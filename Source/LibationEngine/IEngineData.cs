@@ -27,6 +27,8 @@ public sealed record AccountResult(AccountOutcome Outcome, AccountDto? Account =
 
 public enum ExportFormat { Csv, Xlsx, Json }
 
+public sealed record TemplatePreviewResult(bool BookFound, TemplatePreviewDto? Preview);
+
 public enum LocateOutcome { Ok, NoSuchBook, Invalid, Busy }
 
 public sealed record LocateResult(LocateOutcome Outcome, BookDetailDto? Book = null, string? Error = null);
@@ -89,6 +91,13 @@ public interface IEngineData
 	Task<IReadOnlyList<BulkItemDto>> BulkSetTrash(IReadOnlyList<string> asins, bool inTrash);
 	Task<IReadOnlyList<BulkItemDto>> BulkPurge(IReadOnlyList<string> asins);
 	SettingsDto GetSettings();
+
+	/// <summary>Validates every key before applying any; a rejected patch changes nothing.</summary>
+	/// <exception cref="IOException">Settings.json cannot be written; earlier changes in the patch are rolled back.</exception>
+	SettingsUpdateResult UpdateSettings(System.Text.Json.JsonElement patch);
+
+	/// <summary><paramref name="kind"/> is one of <see cref="TemplatePreview.Kinds"/>; BookFound is false when <paramref name="asin"/> is given but unknown.</summary>
+	TemplatePreviewResult PreviewTemplate(string kind, string template, string? asin);
 
 	/// <summary>Records an existing audio file under Books for the book and marks it liberated, as desktop's Locate file.</summary>
 	Task<LocateResult> LocateFile(string asin, string path);

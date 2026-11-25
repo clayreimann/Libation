@@ -1,3 +1,4 @@
+using FileManager;
 using LibationEngine.Contracts;
 using LibationFileManager;
 
@@ -42,5 +43,24 @@ public static class SettingsMapper
 			c.DailyDownloadLimitUnit.ToString(),
 			c.BadBook.ToString()),
 		new(c.ImportEpisodes, c.ImportPlusTitles, c.DownloadEpisodes, c.AutoDownloadEpisodes, c.SavePodcastsToParentFolder),
-		new(c.AudiobookshelfEnabled, c.AudiobookshelfIncludePdfs, !string.IsNullOrWhiteSpace(c.AudiobookshelfServerUrl)));
+		new(c.AudiobookshelfEnabled, c.AudiobookshelfIncludePdfs, !string.IsNullOrWhiteSpace(c.AudiobookshelfServerUrl)),
+		new(
+			c.LameTargetBitrate,
+			c.LameBitrate,
+			c.LameConstantBitrate,
+			c.LameMatchSourceBR,
+			c.LameVBRQuality,
+			c.LameDownsampleMono,
+			c.LameEncoderQuality.ToString(),
+			(int)c.MaxSampleRate),
+		c.LogLevel.ToString(),
+		c.ReplacementCharacters.Replacements
+			.Select(r => new ReplacementDto(r.CharacterToReplace == default ? "" : r.CharacterToReplace.ToString(), r.ReplacementString, r.Description, r.Mandatory))
+			.ToList(),
+		new(Check(c.Books?.Path), Check(c.InProgress)));
+
+	private static FolderCheckDto Check(string? path)
+		=> string.IsNullOrWhiteSpace(path)
+			? new(path, false, false)
+			: new(path, Directory.Exists(path), FileSystemTest.CanWriteDirectory(path));
 }

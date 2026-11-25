@@ -222,7 +222,24 @@ public sealed record LibrarySettingsDto(
 
 public sealed record AudiobookshelfSettingsDto(bool Enabled, bool IncludePdfs, bool ServerConfigured);
 
-/// <summary>Curated, non-secret settings; no tokens, key files or account data.</summary>
+public sealed record Mp3SettingsDto(
+	bool TargetBitrate,
+	int Bitrate,
+	bool ConstantBitrate,
+	bool MatchSourceBitrate,
+	int VbrQuality,
+	bool DownsampleMono,
+	string EncoderQuality,
+	int MaxSampleRate);
+
+/// <summary>Character is empty for the "all other invalid characters" row; the first six rows are mandatory.</summary>
+public sealed record ReplacementDto(string Character, string Replacement, string Description, bool Mandatory);
+
+public sealed record FolderCheckDto(string? Path, bool Exists, bool Writable);
+
+public sealed record FoldersDto(FolderCheckDto Books, FolderCheckDto InProgress);
+
+/// <summary>Curated, non-secret settings; no tokens, key files or account data. RestartRequired is set only on a PATCH response.</summary>
 public sealed record SettingsDto(
 	string? Books,
 	string InProgress,
@@ -230,7 +247,76 @@ public sealed record SettingsDto(
 	DownloadSettingsDto Download,
 	QueueSettingsDto Queue,
 	LibrarySettingsDto Library,
-	AudiobookshelfSettingsDto Audiobookshelf);
+	AudiobookshelfSettingsDto Audiobookshelf,
+	Mp3SettingsDto Mp3,
+	string LogLevel,
+	IReadOnlyList<ReplacementDto> ReplacementCharacters,
+	FoldersDto Folders,
+	IReadOnlyList<string>? RestartRequired = null);
+
+public sealed record NamingPatch(string? FolderTemplate, string? FileTemplate, string? ChapterFileTemplate, string? ChapterTitleTemplate);
+
+public sealed record DownloadPatch(
+	string? Quality,
+	bool? OverwriteExisting,
+	bool? UseWidevine,
+	bool? RequestXheAac,
+	string? SpatialAudioCodec,
+	bool? DownloadCoverArt,
+	bool? DownloadClipsBookmarks,
+	string? ClipsBookmarksFileFormat,
+	bool? CreateCueSheet,
+	bool? SaveMetadataToFile,
+	bool? RetainAaxFile,
+	bool? SplitFilesByChapter,
+	bool? MergeOpeningAndEndCredits,
+	bool? StripUnabridged,
+	bool? StripAudibleBrandAudio,
+	bool? DecryptToLossy,
+	bool? MoveMoovToBeginning,
+	bool? CombineNestedChapterTitles,
+	bool? AllowLibationFixup,
+	bool? UseCoverAsFolderIcon,
+	int? MinimumFileDuration,
+	string? CreationTime,
+	string? LastWriteTime);
+
+public sealed record Mp3Patch(
+	bool? TargetBitrate,
+	int? Bitrate,
+	bool? ConstantBitrate,
+	bool? MatchSourceBitrate,
+	int? VbrQuality,
+	bool? DownsampleMono,
+	string? EncoderQuality,
+	int? MaxSampleRate);
+
+public sealed record QueuePatch(string? DailyDownloadLimit, int? DailyDownloadLimitQuantity, string? DailyDownloadLimitUnit, string? BadBook);
+
+public sealed record LibraryPatch(bool? ImportEpisodes, bool? ImportPlusTitles, bool? DownloadEpisodes, bool? AutoDownloadEpisodes, bool? SavePodcastsToParentFolder);
+
+public sealed record ReplacementPatch(string? Character, string? Replacement, string? Description);
+
+/// <summary>Body of <c>PATCH /api/settings</c>; only present keys change. A null InProgress resets it to the default; every other key rejects null.</summary>
+public sealed record SettingsPatchRequest(
+	string? Books,
+	string? InProgress,
+	NamingPatch? Naming,
+	DownloadPatch? Download,
+	Mp3Patch? Mp3,
+	QueuePatch? Queue,
+	LibraryPatch? Library,
+	string? LogLevel,
+	IReadOnlyList<ReplacementPatch>? ReplacementCharacters);
+
+/// <summary>A rejected PATCH: Fields maps the dotted key (for example <c>naming.folderTemplate</c>) to its message.</summary>
+public sealed record FieldErrorsDto(string Error, IReadOnlyDictionary<string, string> Fields);
+
+/// <summary>Body of <c>POST /api/settings/templates/preview</c>; Kind is folder, file, chapterFile or chapterTitle.</summary>
+public sealed record TemplatePreviewRequest(string? Template, string? Kind, string? Asin);
+
+/// <summary>Preview is null when the template is invalid.</summary>
+public sealed record TemplatePreviewDto(bool Valid, IReadOnlyList<string> Errors, IReadOnlyList<string> Warnings, string? Preview);
 
 public sealed record QuickFilterDto(string Filter, string? Name = null);
 
