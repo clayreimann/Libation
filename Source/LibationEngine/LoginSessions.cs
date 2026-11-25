@@ -2,13 +2,16 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
 using AudibleApi;
+using LibationEngine.Contracts;
 using Serilog;
 
 namespace LibationEngine;
 
-public sealed class LoginException(int status, string message) : Exception(message)
+public sealed class LoginException(int status, string message, string? code = null, bool? retryable = null) : Exception(message)
 {
 	public int Status { get; } = status;
+	public string? Code { get; } = code;
+	public bool? Retryable { get; } = retryable;
 }
 
 public sealed record LoginTarget(string AccountId, string LocaleName, bool Exists, string? DeviceRegistration);
@@ -120,7 +123,7 @@ public sealed class LoginSessions : IDisposable
 			return null;
 
 		if (!LooksLikeResponse(responseUrl))
-			throw new LoginException(400, "That is not the final sign-in URL; copy the full address from the browser's address bar after signing in.");
+			throw new LoginException(400, "That is not the final sign-in URL; copy the full address from the browser's address bar after signing in.", ErrorCodes.NotFinalUrl, retryable: true);
 
 		if (Interlocked.Exchange(ref entry.Claimed, 1) == 1)
 			return null;
@@ -137,7 +140,7 @@ public sealed class LoginSessions : IDisposable
 		}
 		catch (Exception) when (!ct.IsCancellationRequested)
 		{
-			throw new LoginException(400, "Audible did not accept that sign-in; start a new login and try again.");
+			throw new LoginException(400, "Audible did not accept that sign-in; start a new login and try again.", ErrorCodes.Rejected, retryable: false);
 		}
 		finally
 		{

@@ -103,7 +103,13 @@ public sealed record LibraryPageDto(int Total, int Offset, int Limit, IReadOnlyL
 /// <summary>Total counts every match; Asins is capped at 50000.</summary>
 public sealed record LibraryAsinsDto(int Total, IReadOnlyList<string> Asins);
 
-public sealed record ErrorDto(string Error);
+/// <summary>Code and Retryable are set only where a client can act on them, such as the two login-complete 400s.</summary>
+public sealed record ErrorDto(string Error, string? Code = null, bool? Retryable = null);
+
+public static class ErrorCodes
+{
+	public const string NotFinalUrl = "notFinalUrl", Rejected = "rejected";
+}
 
 public sealed record QueueJobDto(string Id, string Asin, string Title, string State);
 

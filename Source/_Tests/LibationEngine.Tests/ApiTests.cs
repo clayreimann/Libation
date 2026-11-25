@@ -1292,6 +1292,7 @@ public class ApiTests
 		CollectionAssert.IsSubsetOf(new[] { "naming", "mp3", "folders", "logLevel", "replacementCharacters" }, Required(schemas, "SettingsDto"));
 		CollectionAssert.DoesNotContain(Required(schemas, "SettingsDto"), "restartRequired");
 		CollectionAssert.AreEquivalent(new[] { "error", "fields" }, Required(schemas, "FieldErrorsDto"));
+		CollectionAssert.AreEquivalent(new[] { "error" }, Required(schemas, "ErrorDto"));
 	}
 
 	[TestMethod]
@@ -1499,6 +1500,8 @@ public class ApiTests
 		{
 			var (status, body) = await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete(bad));
 			Assert.AreEqual(HttpStatusCode.BadRequest, status, bad);
+			Assert.AreEqual("notFinalUrl", body.GetProperty("code").GetString());
+			Assert.IsTrue(body.GetProperty("retryable").GetBoolean());
 			if (bad.Length > 0)
 				StringAssert.DoesNotMatch(body.GetRawText(), new System.Text.RegularExpressions.Regex(System.Text.RegularExpressions.Regex.Escape(bad)));
 		}
@@ -1513,7 +1516,9 @@ public class ApiTests
 		var id = await rig.Start();
 		var (status, body) = await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete("https://www.amazon.com/ap/maplanding?openid.oa2.authorization_code=reject"));
 		Assert.AreEqual(HttpStatusCode.BadRequest, status);
-		StringAssert.DoesNotMatch(body.GetRawText(), new System.Text.RegularExpressions.Regex("reject"));
+		Assert.AreEqual("rejected", body.GetProperty("code").GetString());
+		Assert.IsFalse(body.GetProperty("retryable").GetBoolean());
+		StringAssert.DoesNotMatch(body.GetRawText(), new System.Text.RegularExpressions.Regex("authorization_code"));
 		Assert.AreEqual(HttpStatusCode.NotFound, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete())).Status);
 		CollectionAssert.AreEqual(new[] { "new@example.com" }, rig.Backend.Discarded);
 	}

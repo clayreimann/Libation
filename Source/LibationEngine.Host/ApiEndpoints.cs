@@ -275,7 +275,7 @@ public static class ApiEndpoints
 			}
 			catch (LoginException ex)
 			{
-				return Error(ex.Message, ex.Status);
+				return Results.Json(new ErrorDto(ex.Message, ex.Code, ex.Retryable), statusCode: ex.Status);
 			}
 			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 			{
@@ -308,7 +308,7 @@ public static class ApiEndpoints
 			return account is null
 				? Error("Signed in, but the account could not be read back.", StatusCodes.Status500InternalServerError)
 				: Results.Json(account);
-		})).WithSummary("Completes a sign-in with the final browser URL (treat it like a password; it is never logged or echoed). Single use. 200 with the account, 400 not the final URL (the login stays usable) or Audible rejected it (start again), 403 without an API token, 404 unknown, used or expired.")
+		})).WithSummary("Completes a sign-in with the final browser URL (treat it like a password; it is never logged or echoed). Single use. 200 with the account, 400 with code notFinalUrl (retryable true: the login stays usable) or rejected (retryable false: the login is consumed, start again), 403 without an API token, 404 unknown, used or expired.")
 			.WithName("completeAccountLogin").WithTags("accounts")
 			.Produces<AccountDto>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
