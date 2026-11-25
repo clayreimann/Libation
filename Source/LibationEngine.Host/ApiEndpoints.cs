@@ -35,6 +35,22 @@ public static class ApiEndpoints
 						media.Schema = new Microsoft.OpenApi.OpenApiSchema { Type = Microsoft.OpenApi.JsonSchemaType.String, Format = "binary" };
 				return Task.CompletedTask;
 			});
+			options.AddSchemaTransformer((schema, context, _) =>
+			{
+				if (context.JsonPropertyInfo is null
+					&& context.JsonTypeInfo.Kind == System.Text.Json.Serialization.Metadata.JsonTypeInfoKind.Object
+					&& context.JsonTypeInfo.Type.Assembly == typeof(StatusDto).Assembly
+					&& schema.Properties is { Count: > 0 })
+				{
+					var nullability = new System.Reflection.NullabilityInfoContext();
+					foreach (var property in context.JsonTypeInfo.Properties)
+						if (property.AttributeProvider is System.Reflection.PropertyInfo info
+							&& schema.Properties.ContainsKey(property.Name)
+							&& nullability.Create(info).ReadState != System.Reflection.NullabilityState.Nullable)
+							(schema.Required ??= new HashSet<string>()).Add(property.Name);
+				}
+				return Task.CompletedTask;
+			});
 		});
 
 	private static readonly Dictionary<string, string[]> QueryEnums = new()
@@ -120,6 +136,21 @@ public static class ApiEndpoints
 		}).WithSummary("Every ASIN matching q and trash, newest first, for select-all. total counts all matches; asins stops at 50000.")
 			.WithName("getLibraryAsins").WithTags("library")
 			.Produces<LibraryAsinsDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapGet("/library/podcasts", (string? q, bool? trash) =>
+		{
+			try
+			{
+				return Results.Json(data.GetPodcastParents(q, trash ?? false));
+			}
+			catch (SearchQueryException ex)
+			{
+				return Error(ex.Message, StatusCodes.Status400BadRequest);
+			}
+		}).WithSummary("Podcast parent rows (isPodcastParent) with at least one episode matching q and trash, by title. /library never returns parents; group its episodes under these by parentAsin. An episode whose parent is missing here is a standalone row, as in the desktop grid.")
+			.WithName("getLibraryPodcasts").WithTags("library")
+			.Produces<IReadOnlyList<BookDto>>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
 
 		api.MapGet("/library/stats", () => Results.Json(data.GetBackupCounts()))

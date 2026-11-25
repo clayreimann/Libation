@@ -316,6 +316,55 @@ public class DbEngineDataTests
 	}
 
 	[TestMethod]
+	public async Task List_pages_flag_a_partial_download_without_marking_liberated_books()
+	{
+		Configuration.Instance.InProgress = Path.Combine(directory, "InProgress");
+		using (var context = DbContexts.GetContext())
+		{
+			AddBook(context, "B0PARTIAL01", pdf: false);
+			AddBook(context, "B0LIBPART01", pdf: false);
+			context.SaveChanges();
+		}
+		var inProgress = AudibleFileStorage.DownloadsInProgressDirectory!;
+		File.WriteAllText(Path.Combine(inProgress, "B0PARTIAL01.aaxc"), "x");
+		File.WriteAllText(Path.Combine(inProgress, "B0LIBPART01.aaxc"), "x");
+		await data.SetBookStatus("B0LIBPART01", LiberatedStatus.Liberated);
+
+		var items = data.GetLibrary(0, 10).Items.ToDictionary(b => b.Asin);
+		Assert.IsTrue(items["B0PARTIAL01"].PartialDownload);
+		Assert.IsFalse(items["B0LIBPART01"].PartialDownload);
+		Assert.IsFalse(items["B0PLAIN0001"].PartialDownload);
+		Assert.IsTrue(data.GetBook("B0PARTIAL01")!.PartialDownload);
+		Assert.IsTrue(data.GetBookDetail("B0PARTIAL01")!.PartialDownload);
+	}
+
+	[TestMethod]
+	public void Podcast_parents_come_back_beside_their_episodes_and_never_in_the_library_list()
+	{
+		using (var context = DbContexts.GetContext())
+		{
+			var parent = new Book(new AudibleProductId("B0SHOW00001"), "The Show", "", "", 0, ContentType.Parent, [new Contributor("host")], [new Contributor("host")], "us");
+			parent.UpsertSeries(new Series(new AudibleSeriesId("B0SHOW00001"), "The Show"), "");
+			var episode = new Book(new AudibleProductId("B0EPISODE01"), "Episode One", "", "", 5, ContentType.Episode, [new Contributor("host")], [new Contributor("host")], "us");
+			episode.UpsertSeries(new Series(new AudibleSeriesId("B0SHOW00001"), "The Show"), "1");
+			var other = new Book(new AudibleProductId("B0OTHERSHOW"), "Other Show", "", "", 0, ContentType.Parent, [new Contributor("host")], [new Contributor("host")], "us");
+			other.UpsertSeries(new Series(new AudibleSeriesId("B0OTHERSHOW"), "Other Show"), "");
+			foreach (var b in new[] { parent, episode, other })
+				context.LibraryBooks.Add(new LibraryBook(b, new DateTime(2020, 1, 1), "acct"));
+			context.SaveChanges();
+		}
+
+		var parents = data.GetPodcastParents();
+		CollectionAssert.AreEqual(new[] { "B0SHOW00001" }, parents.Select(p => p.Asin).ToArray());
+		Assert.IsTrue(parents[0].IsPodcastParent);
+		Assert.IsNull(parents[0].ParentAsin);
+
+		var episodes = data.GetLibrary(0, 20).Items;
+		Assert.IsFalse(episodes.Any(b => b.IsPodcastParent));
+		Assert.AreEqual("B0SHOW00001", episodes.Single(b => b.Asin == "B0EPISODE01").ParentAsin);
+	}
+
+	[TestMethod]
 	public void LocateScan_rejects_folders_outside_Books()
 	{
 		var elsewhere = Path.Combine(directory, "elsewhere");

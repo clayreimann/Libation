@@ -20,7 +20,8 @@ public sealed class DbEngineData : IEngineData
 		var ordered = sort is { } key ? LibrarySorting.Order(books, key, descending) : books
 			.OrderByDescending(lb => lb.DateAdded)
 			.ThenBy(lb => lb.Book.AudibleProductId, StringComparer.Ordinal);
-		var items = ordered.Skip(offset).Take(limit).Select(ToDto).ToList();
+		var partial = AudibleFileStorage.AaxcExistsSnapshot();
+		var items = ordered.Skip(offset).Take(limit).Select(lb => ToDto(lb, partial)).ToList();
 		return new(books.Count, offset, limit, items);
 	}
 
@@ -34,6 +35,25 @@ public sealed class DbEngineData : IEngineData
 			.Select(lb => lb.Book.AudibleProductId)
 			.ToList();
 		return new(books.Count, asins);
+	}
+
+	public IReadOnlyList<BookDto> GetPodcastParents(string? query = null, bool trash = false)
+	{
+		var seriesIds = Matching(query, trash)
+			.Where(lb => lb.Book.IsEpisodeChild())
+			.SelectMany(lb => lb.Book.SeriesLink.Select(s => s.Series.AudibleSeriesId))
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		if (seriesIds.Count == 0)
+			return [];
+
+		var partial = AudibleFileStorage.AaxcExistsSnapshot();
+		var all = trash ? DbContexts.GetDeletedLibraryBooks() : DbContexts.GetLibrary_Flat_NoTracking(includeParents: true);
+		return all
+			.Where(lb => lb.Book.IsEpisodeParent() && seriesIds.Contains(lb.Book.AudibleProductId))
+			.OrderBy(lb => lb.Book.TitleWithSubtitle, StringComparer.OrdinalIgnoreCase)
+			.ThenBy(lb => lb.Book.AudibleProductId, StringComparer.Ordinal)
+			.Select(lb => ToDto(lb, partial))
+			.ToList();
 	}
 
 	private static List<LibraryBook> Matching(string? query, bool trash)
@@ -217,7 +237,7 @@ public sealed class DbEngineData : IEngineData
 	public static AccountDto ToDto(Account account)
 		=> new(account.AccountId, account.AccountName, account.Locale?.Name, account.LibraryScan);
 
-	public static BookDto ToDto(LibraryBook lb)
+	public static BookDto ToDto(LibraryBook lb, Func<string, bool>? aaxcExists = null)
 	{
 		var book = lb.Book;
 		var udi = book.UserDefinedItem;
@@ -250,7 +270,9 @@ public sealed class DbEngineData : IEngineData
 			book.IsSpatial,
 			book.PictureId ?? book.PictureLarge,
 			book.IsEpisodeChild() ? book.SeriesLink.FirstOrDefault()?.Series.AudibleSeriesId : null,
-			lb.AbsentFromLastScan);
+			lb.AbsentFromLastScan,
+			!book.AudioExists && (aaxcExists ?? AudibleFileStorage.AaxcExists)(book.AudibleProductId),
+			book.IsEpisodeParent());
 	}
 
 	public static BookDetailDto ToDetailDto(LibraryBook lb)
@@ -267,8 +289,7 @@ public sealed class DbEngineData : IEngineData
 			CategoryLadders = book.Categories
 				.Select(c => (IReadOnlyList<string>)c.CategoryLadder.Categories.Select(x => x.Name).ToList())
 				.ToList(),
-			AudioFileExists = AudibleFileStorage.Audio.GetPath(book.AudibleProductId) is not null,
-			PartialDownload = !book.AudioExists && AudibleFileStorage.AaxcExists(book.AudibleProductId)
+			AudioFileExists = AudibleFileStorage.Audio.GetPath(book.AudibleProductId) is not null
 		};
 	}
 

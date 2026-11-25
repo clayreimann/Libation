@@ -39,6 +39,10 @@ public interface IEngineData
 	/// <exception cref="SearchQueryException">The query cannot be parsed.</exception>
 	LibraryAsinsDto GetLibraryAsins(string? query = null, bool trash = false);
 
+	/// <summary>Podcast parent rows having at least one episode that matches <paramref name="query"/> and <paramref name="trash"/>, by title.</summary>
+	/// <exception cref="SearchQueryException">The query cannot be parsed.</exception>
+	IReadOnlyList<BookDto> GetPodcastParents(string? query = null, bool trash = false);
+
 	BookDto? GetBook(string asin);
 	BookDetailDto? GetBookDetail(string asin);
 	BackupCountsDto GetBackupCounts();

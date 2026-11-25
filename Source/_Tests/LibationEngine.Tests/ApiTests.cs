@@ -65,6 +65,14 @@ public class ApiTests
 			return new(1, ["B000000001"]);
 		}
 
+		public IReadOnlyList<BookDto> GetPodcastParents(string? query = null, bool trash = false)
+		{
+			LastFilter = (query, trash);
+			if (query == "bad[")
+				throw new SearchQueryException("Cannot parse the search query: bad[");
+			return [Book("B000000009") with { Title = "Show", IsPodcastParent = true, ContentType = "Parent" }];
+		}
+
 		public BookDto? GetBook(string asin) => asin == "B000000001" ? Book(asin) : null;
 
 		public BookDetailDto? GetBookDetail(string asin)
@@ -155,7 +163,7 @@ public class ApiTests
 
 		private static BookDto Book(string asin)
 			=> new(asin, "Title", null, ["Author"], ["Narrator"], [], 60, "NotLiberated", null, DateTime.UnixEpoch, "a@example.com", "us", "Product", false, "", false,
-				["Mystery"], new(4.5f, 4f, 5f), new(0, 0, 0), false, false, null, null, null, null, false, "PIC1", null, false);
+				["Mystery"], new(4.5f, 4f, 5f), new(0, 0, 0), false, false, null, null, null, null, false, "PIC1", null, false, false, false);
 	}
 
 	private sealed class Harness : IAsyncDisposable
@@ -545,6 +553,18 @@ public class ApiTests
 		Assert.AreEqual("Mystery", detail.RootElement.GetProperty("categoryLadders")[0][1].GetString());
 		Assert.IsTrue(detail.RootElement.GetProperty("audioFileExists").GetBoolean());
 		Assert.AreEqual("PIC1", detail.RootElement.GetProperty("pictureId").GetString());
+	}
+
+	[TestMethod]
+	public async Task Podcast_parents_are_served_with_the_same_filter()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		using var parents = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/library/podcasts?q=x&trash=true"));
+		Assert.AreEqual(("x", true), h.Data.LastFilter);
+		Assert.IsTrue(parents.RootElement[0].GetProperty("isPodcastParent").GetBoolean());
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync(h.Base + "/api/library/podcasts?q=bad%5B")).StatusCode);
 	}
 
 	[TestMethod]
@@ -949,6 +969,37 @@ public class ApiTests
 		Assert.AreEqual(10, sortParam.GetProperty("schema").GetProperty("enum").GetArrayLength());
 		Assert.AreEqual(operationIds.Count, operationIds.Distinct().Count());
 		await app.StopAsync();
+	}
+
+	private static async Task<JsonDocument> OpenApiDocument()
+	{
+		using var dir = new TempDir();
+		var l = new TcpListener(IPAddress.Loopback, 0);
+		l.Start();
+		var port = ((IPEndPoint)l.LocalEndpoint).Port;
+		l.Stop();
+		var options = new DaemonOptions(TimeSpan.FromMinutes(30), false, $"http://127.0.0.1:{port}", dir.Path, ApiEnabled: true);
+		var state = new CycleState();
+		var scheduler = new CycleScheduler(options, new DaemonJobs(_ => Task.FromResult(0), _ => Task.FromResult(0), _ => Task.FromResult(0)), state);
+		var queue = new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => 1 });
+		await using var app = DaemonHost.Build(options, state, scheduler, queue, new FakeData());
+		await app.StartAsync();
+		using var http = new HttpClient();
+		var doc = JsonDocument.Parse(await http.GetStringAsync($"http://127.0.0.1:{port}/api/openapi.json"));
+		await app.StopAsync();
+		return doc;
+	}
+
+	[TestMethod]
+	public async Task OpenApi_marks_non_nullable_dto_properties_required()
+	{
+		using var doc = await OpenApiDocument();
+		var schemas = doc.RootElement.GetProperty("components").GetProperty("schemas");
+		string[] Required(string name) => schemas.GetProperty(name).GetProperty("required").EnumerateArray().Select(e => e.GetString()!).ToArray();
+
+		foreach (var name in new[] { "BookDto", "BookDetailDto" })
+			CollectionAssert.IsSubsetOf(new[] { "asin", "title", "authors", "bookStatus", "dateAdded", "inTrash", "partialDownload" }, Required(name));
+		CollectionAssert.IsSubsetOf(new[] { "audioFileExists", "categoryLadders", "isAbridged" }, Required("BookDetailDto"));
 	}
 
 	[TestMethod]

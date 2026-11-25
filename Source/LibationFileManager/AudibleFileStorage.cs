@@ -93,6 +93,8 @@ public abstract class AudibleFileStorage
 	private static AaxcFileStorage AAXC { get; } = new AaxcFileStorage();
 	public static bool AaxcExists(string productId) => AAXC.Exists(productId);
 
+	public static Func<string, bool> AaxcExistsSnapshot() => AAXC.ExistsSnapshot();
+
 	public static AudioFileStorage Audio { get; } = new AudioFileStorage();
 
 	/// <summary>
@@ -167,19 +169,17 @@ internal class AaxcFileStorage : AudibleFileStorage
 	private DateTime lastDlInProgressEnumeration;
 	private static readonly TimeSpan dlInProgressCacheTime = TimeSpan.FromSeconds(10);
 	private LongPath[]? dlInProgressFilesCache;
+	private LongPath? dlInProgressCacheFolder;
 	private Lock dlInProgressLocker { get; } = new();
 
-	protected override List<LongPath> GetFilePathsCustom(string productId)
+	private LongPath[] ListInProgressFiles()
 	{
 		if (DownloadsInProgressDirectory is not LongPath dlFolder)
 			return [];
 
-		var regex = GetBookSearchRegex(productId);
-
-		LongPath[] files;
 		lock (dlInProgressLocker)
 		{
-			if (DateTime.UtcNow - lastDlInProgressEnumeration > dlInProgressCacheTime)
+			if (DateTime.UtcNow - lastDlInProgressEnumeration > dlInProgressCacheTime || dlInProgressCacheFolder != dlFolder)
 				dlInProgressFilesCache = null;
 
 			if (dlInProgressFilesCache is null)
@@ -189,13 +189,37 @@ internal class AaxcFileStorage : AudibleFileStorage
 					.SaferEnumerateFiles(dlFolder, "*.*", SearchOption.AllDirectories)
 					.ToArray();
 
+				dlInProgressCacheFolder = dlFolder;
 				lastDlInProgressEnumeration = DateTime.UtcNow;
 			}
 
-			files = dlInProgressFilesCache;
+			return dlInProgressFilesCache;
 		}
+	}
 
+	protected override List<LongPath> GetFilePathsCustom(string productId)
+	{
+		var files = ListInProgressFiles();
+		if (files.Length == 0)
+			return [];
+
+		var regex = GetBookSearchRegex(productId);
 		return files.Where(s => regex.IsMatch(s)).ToList();
+	}
+
+	/// <summary>Checks against one listing of the in-progress folder, however many books are asked about.</summary>
+	public Func<string, bool> ExistsSnapshot()
+	{
+		var files = ListInProgressFiles();
+		return productId => FilePathCache.Exists(productId, FileType.AAXC) || InAny(files, productId);
+	}
+
+	private bool InAny(LongPath[] files, string productId)
+	{
+		if (files.Length == 0)
+			return false;
+		var regex = GetBookSearchRegex(productId);
+		return files.Any(f => regex.IsMatch(f));
 	}
 
 	public bool Exists(string productId) => GetFilePath(productId) is not null;

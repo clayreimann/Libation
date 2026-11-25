@@ -45,7 +45,9 @@ public record BookDto(
 	bool IsSpatial,
 	string? PictureId,
 	string? ParentAsin,
-	bool AbsentFromLastScan);
+	bool AbsentFromLastScan,
+	bool PartialDownload,
+	bool IsPodcastParent);
 
 /// <summary>A <see cref="BookDto"/> plus the fields too heavy for list payloads.</summary>
 public sealed record BookDetailDto : BookDto
@@ -60,7 +62,6 @@ public sealed record BookDetailDto : BookDto
 	public DateTime? DatePublished { get; init; }
 	public IReadOnlyList<IReadOnlyList<string>> CategoryLadders { get; init; } = [];
 	public bool AudioFileExists { get; init; }
-	public bool PartialDownload { get; init; }
 }
 
 /// <summary>Desktop status-bar counts; Partial has a half-downloaded file, Unavailable is absent from the last scan.</summary>
