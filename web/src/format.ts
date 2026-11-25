@@ -26,3 +26,15 @@ export function humanize(camel: string): string {
   const s = camel.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+/** Rounds to whole stars out of five; empty for unrated. */
+export function stars(overall: number | null | undefined): string {
+  const n = Math.max(0, Math.min(5, Math.round(overall ?? 0)));
+  return n === 0 ? "" : "★".repeat(n) + "☆".repeat(5 - n);
+}

@@ -45,8 +45,42 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Books, newest first. offset (default 0), limit (default 100, max 1000), q (Lucene filter syntax), trash=true for the trash. total counts all matches. */
+        /** Books, newest first unless sorted. offset (default 0), limit (default 100, max 1000), q (Lucene filter syntax, also with trash), trash=true for the trash, sort (title, author, narrator, series, length, purchaseDate, added, status, rating, lastDownload) with dir=asc|desc. purchaseDate and added are the same date. total counts all matches. */
         get: operations["getLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/asins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every ASIN matching q and trash, newest first, for select-all. total counts all matches; asins stops at 50000. */
+        get: operations["getLibraryAsins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Backup counts as in the desktop status bar: books and PDFs liberated, not liberated, errored or unavailable. */
+        get: operations["getLibraryStats"];
         put?: never;
         post?: never;
         delete?: never;
@@ -62,8 +96,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One book by ASIN, trashed ones included, or 404. */
+        /** One book by ASIN with description, category ladders and file state, trashed ones included, or 404. */
         get: operations["getBook"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/{asin}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cover jpeg, size=small (80px, default) or large (500px), from the picture cache and fetched from Audible on first use. Cached immutable with an ETag; 304 on a match, 404 unknown ASIN or no cover. */
+        get: operations["getBookCover"];
         put?: never;
         post?: never;
         delete?: never;
@@ -393,6 +444,71 @@ export interface components {
             includePdfs: boolean;
             serverConfigured: boolean;
         };
+        BackupCountsDto: {
+            /** Format: int32 */
+            total: number | string;
+            /** Format: int32 */
+            liberated: number | string;
+            /** Format: int32 */
+            partial: number | string;
+            /** Format: int32 */
+            notLiberated: number | string;
+            /** Format: int32 */
+            error: number | string;
+            /** Format: int32 */
+            unavailable: number | string;
+            /** Format: int32 */
+            pdfLiberated: number | string;
+            /** Format: int32 */
+            pdfNotLiberated: number | string;
+            /** Format: int32 */
+            pdfUnavailable: number | string;
+        };
+        BookDetailDto: {
+            description?: null | string;
+            publisher?: null | string;
+            language?: null | string;
+            copyright?: null | string;
+            isAbridged?: boolean;
+            /** Format: date-time */
+            datePublished?: null | string;
+            categoryLadders?: string[][];
+            audioFileExists?: boolean;
+            partialDownload?: boolean;
+            asin?: string;
+            title?: string;
+            subtitle?: null | string;
+            authors?: string[];
+            narrators?: string[];
+            series?: components["schemas"]["SeriesDto"][];
+            /** Format: int32 */
+            lengthInMinutes?: number | string;
+            bookStatus?: string;
+            pdfStatus?: null | string;
+            /** Format: date-time */
+            dateAdded?: string;
+            account?: string;
+            locale?: string;
+            contentType?: string;
+            isPodcastEpisode?: boolean;
+            tags?: string;
+            inTrash?: boolean;
+            categories?: string[];
+            productRating?: components["schemas"]["RatingDto"];
+            myRating?: components["schemas"]["RatingDto"];
+            hasPdf?: boolean;
+            isAudiblePlus?: boolean;
+            /** Format: date-time */
+            includedUntil?: null | string;
+            /** Format: date-time */
+            lastDownloaded?: null | string;
+            lastDownloadedVersion?: null | string;
+            lastDownloadedFormat?: null | string;
+            isSpatial?: boolean;
+            pictureId?: null | string;
+            parentAsin?: null | string;
+            absentFromLastScan?: boolean;
+        };
         BookDto: {
             asin: string;
             title: string;
@@ -412,6 +528,21 @@ export interface components {
             isPodcastEpisode: boolean;
             tags: string;
             inTrash: boolean;
+            categories: string[];
+            productRating: components["schemas"]["RatingDto"];
+            myRating: components["schemas"]["RatingDto"];
+            hasPdf: boolean;
+            isAudiblePlus: boolean;
+            /** Format: date-time */
+            includedUntil: null | string;
+            /** Format: date-time */
+            lastDownloaded: null | string;
+            lastDownloadedVersion: null | string;
+            lastDownloadedFormat: null | string;
+            isSpatial: boolean;
+            pictureId: null | string;
+            parentAsin: null | string;
+            absentFromLastScan: boolean;
         };
         BulkItemDto: {
             asin: string;
@@ -472,6 +603,11 @@ export interface components {
         };
         ErrorDto: {
             error: string;
+        };
+        LibraryAsinsDto: {
+            /** Format: int32 */
+            total: number | string;
+            asins: string[];
         };
         LibraryPageDto: {
             /** Format: int32 */
@@ -537,11 +673,20 @@ export interface components {
             allowed: string[];
             volumes: null | components["schemas"]["VolumeDto"][];
         };
+        RatingDto: {
+            /** Format: float */
+            overall: number | string;
+            /** Format: float */
+            performance: number | string;
+            /** Format: float */
+            story: number | string;
+        };
         SeriesDto: {
             name: string;
             order: null | string;
             /** Format: float */
             index: number | string;
+            asin: string;
         };
         SettingsDto: {
             books: null | string;
@@ -637,6 +782,8 @@ export interface operations {
                 limit?: number | string;
                 q?: string;
                 trash?: boolean;
+                sort?: "title" | "author" | "narrator" | "series" | "length" | "purchaseDate" | "added" | "status" | "rating" | "lastDownload";
+                dir?: "asc" | "desc";
             };
             header?: never;
             path?: never;
@@ -664,6 +811,58 @@ export interface operations {
             };
         };
     };
+    getLibraryAsins: {
+        parameters: {
+            query?: {
+                q?: string;
+                trash?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryAsinsDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    getLibraryStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupCountsDto"];
+                };
+            };
+        };
+    };
     getBook: {
         parameters: {
             query?: never;
@@ -681,7 +880,56 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BookDto"];
+                    "application/json": components["schemas"]["BookDetailDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    getBookCover: {
+        parameters: {
+            query?: {
+                size?: "small" | "large";
+            };
+            header?: never;
+            path: {
+                asin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                };
+            };
+            /** @description Not Modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
                 };
             };
             /** @description Not Found */

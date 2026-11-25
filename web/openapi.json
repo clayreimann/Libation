@@ -6,7 +6,7 @@
   },
   "servers": [
     {
-      "url": "http://127.0.0.1:18765/"
+      "url": "http://localhost:18091/"
     }
   ],
   "paths": {
@@ -60,7 +60,7 @@
         "tags": [
           "library"
         ],
-        "summary": "Books, newest first. offset (default 0), limit (default 100, max 1000), q (Lucene filter syntax), trash=true for the trash. total counts all matches.",
+        "summary": "Books, newest first unless sorted. offset (default 0), limit (default 100, max 1000), q (Lucene filter syntax, also with trash), trash=true for the trash, sort (title, author, narrator, series, length, purchaseDate, added, status, rating, lastDownload) with dir=asc|desc. purchaseDate and added are the same date. total counts all matches.",
         "operationId": "getLibrary",
         "parameters": [
           {
@@ -100,6 +100,36 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "title",
+                "author",
+                "narrator",
+                "series",
+                "length",
+                "purchaseDate",
+                "added",
+                "status",
+                "rating",
+                "lastDownload"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "dir",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -126,12 +156,80 @@
         }
       }
     },
+    "/api/library/asins": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Every ASIN matching q and trash, newest first, for select-all. total counts all matches; asins stops at 50000.",
+        "operationId": "getLibraryAsins",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trash",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryAsinsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/stats": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Backup counts as in the desktop status bar: books and PDFs liberated, not liberated, errored or unavailable.",
+        "operationId": "getLibraryStats",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupCountsDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/library/{asin}": {
       "get": {
         "tags": [
           "library"
         ],
-        "summary": "One book by ASIN, trashed ones included, or 404.",
+        "summary": "One book by ASIN with description, category ladders and file state, trashed ones included, or 404.",
         "operationId": "getBook",
         "parameters": [
           {
@@ -149,7 +247,73 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BookDto"
+                  "$ref": "#/components/schemas/BookDetailDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/cover": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Cover jpeg, size=small (80px, default) or large (500px), from the picture cache and fetched from Audible on first use. Cached immutable with an ETag; 304 on a match, 404 unknown ASIN or no cover.",
+        "operationId": "getBookCover",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "small",
+                "large"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
                 }
               }
             }
@@ -1018,6 +1182,279 @@
           }
         }
       },
+      "BackupCountsDto": {
+        "required": [
+          "total",
+          "liberated",
+          "partial",
+          "notLiberated",
+          "error",
+          "unavailable",
+          "pdfLiberated",
+          "pdfNotLiberated",
+          "pdfUnavailable"
+        ],
+        "type": "object",
+        "properties": {
+          "total": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "liberated": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "partial": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "notLiberated": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "error": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "unavailable": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "pdfLiberated": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "pdfNotLiberated": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "pdfUnavailable": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "BookDetailDto": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "publisher": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "language": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "copyright": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "isAbridged": {
+            "type": "boolean"
+          },
+          "datePublished": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "categoryLadders": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "audioFileExists": {
+            "type": "boolean"
+          },
+          "partialDownload": {
+            "type": "boolean"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "narrators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesDto"
+            }
+          },
+          "lengthInMinutes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "bookStatus": {
+            "type": "string"
+          },
+          "pdfStatus": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "dateAdded": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "account": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "isPodcastEpisode": {
+            "type": "boolean"
+          },
+          "tags": {
+            "type": "string"
+          },
+          "inTrash": {
+            "type": "boolean"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "productRating": {
+            "$ref": "#/components/schemas/RatingDto"
+          },
+          "myRating": {
+            "$ref": "#/components/schemas/RatingDto"
+          },
+          "hasPdf": {
+            "type": "boolean"
+          },
+          "isAudiblePlus": {
+            "type": "boolean"
+          },
+          "includedUntil": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "lastDownloaded": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "lastDownloadedVersion": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "lastDownloadedFormat": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "isSpatial": {
+            "type": "boolean"
+          },
+          "pictureId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "parentAsin": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "absentFromLastScan": {
+            "type": "boolean"
+          }
+        }
+      },
       "BookDto": {
         "required": [
           "asin",
@@ -1035,7 +1472,20 @@
           "contentType",
           "isPodcastEpisode",
           "tags",
-          "inTrash"
+          "inTrash",
+          "categories",
+          "productRating",
+          "myRating",
+          "hasPdf",
+          "isAudiblePlus",
+          "includedUntil",
+          "lastDownloaded",
+          "lastDownloadedVersion",
+          "lastDownloadedFormat",
+          "isSpatial",
+          "pictureId",
+          "parentAsin",
+          "absentFromLastScan"
         ],
         "type": "object",
         "properties": {
@@ -1106,6 +1556,68 @@
             "type": "string"
           },
           "inTrash": {
+            "type": "boolean"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "productRating": {
+            "$ref": "#/components/schemas/RatingDto"
+          },
+          "myRating": {
+            "$ref": "#/components/schemas/RatingDto"
+          },
+          "hasPdf": {
+            "type": "boolean"
+          },
+          "isAudiblePlus": {
+            "type": "boolean"
+          },
+          "includedUntil": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "lastDownloaded": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "lastDownloadedVersion": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "lastDownloadedFormat": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "isSpatial": {
+            "type": "boolean"
+          },
+          "pictureId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "parentAsin": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "absentFromLastScan": {
             "type": "boolean"
           }
         }
@@ -1371,6 +1883,29 @@
         "properties": {
           "error": {
             "type": "string"
+          }
+        }
+      },
+      "LibraryAsinsDto": {
+        "required": [
+          "total",
+          "asins"
+        ],
+        "type": "object",
+        "properties": {
+          "total": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "asins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -1661,11 +2196,46 @@
           }
         }
       },
+      "RatingDto": {
+        "required": [
+          "overall",
+          "performance",
+          "story"
+        ],
+        "type": "object",
+        "properties": {
+          "overall": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "float"
+          },
+          "performance": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "float"
+          },
+          "story": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "float"
+          }
+        }
+      },
       "SeriesDto": {
         "required": [
           "name",
           "order",
-          "index"
+          "index",
+          "asin"
         ],
         "type": "object",
         "properties": {
@@ -1685,6 +2255,9 @@
               "string"
             ],
             "format": "float"
+          },
+          "asin": {
+            "type": "string"
           }
         }
       },

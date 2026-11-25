@@ -7,6 +7,7 @@ export const countQueries = {
   pdf: "HasPDF",
 } as const;
 
+
 export const HIDE_EPISODES = "-Episode";
 
 export function withHideEpisodes(q: string, hide: boolean): string {
@@ -32,3 +33,6 @@ const topDomain: Record<string, string> = {
 export function audibleUrl(locale: string, asin: string): string {
   return `https://www.audible.${topDomain[locale.toLowerCase()] ?? "com"}/pd/${encodeURIComponent(asin)}`;
 }
+
+/** Exact series (and podcast, since episodes link to their parent's ASIN) by Audible series id. */
+export const seriesQuery = (seriesAsin: string): string => `SeriesId:${seriesAsin}`;

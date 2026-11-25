@@ -1,5 +1,6 @@
+import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, BulkResult, Book, DecisionRequest, LibraryPage, Queue, Settings, Status } from "./types";
+import type { Account, AsinList, BulkResult, Book, BookDetail, DecisionRequest, LibraryPage, Queue, Settings, Stats, Status } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -42,16 +43,28 @@ export const api = {
   accounts: () => request<Account[]>("GET", "/api/accounts"),
   settings: () => request<Settings>("GET", "/api/settings"),
   queue: (signal?: AbortSignal) => request<Queue>("GET", "/api/queue", undefined, signal),
-  library: (params: { offset: number; limit: number; q: string; trash: boolean }, signal?: AbortSignal) => {
+  library: (params: { offset: number; limit: number; q: string; trash: boolean; sort?: SortState | null }, signal?: AbortSignal) => {
     const qs = new URLSearchParams({ offset: String(params.offset), limit: String(params.limit) });
     if (params.q.trim()) qs.set("q", params.q.trim());
     if (params.trash) qs.set("trash", "true");
+    if (params.sort) {
+      qs.set("sort", params.sort.key);
+      qs.set("dir", params.sort.dir);
+    }
     return request<LibraryPage>("GET", `/api/library?${qs}`, undefined, signal);
   },
+  asins: (params: { q: string; trash: boolean }, signal?: AbortSignal) => {
+    const qs = new URLSearchParams();
+    if (params.q.trim()) qs.set("q", params.q.trim());
+    if (params.trash) qs.set("trash", "true");
+    return request<AsinList>("GET", `/api/library/asins?${qs}`, undefined, signal);
+  },
+  stats: (signal?: AbortSignal) => request<Stats>("GET", "/api/library/stats", undefined, signal),
+  coverUrl: (asin: string, size: "small" | "large") => `${book(asin)}/cover?size=${size}`,
   trash: (asin: string) => request<Book>("POST", `${book(asin)}/trash`),
   restore: (asin: string) => request<Book>("POST", `${book(asin)}/restore`),
   liberateBook: (asin: string) => request<unknown>("POST", `${book(asin)}/liberate`),
-  getBook: (asin: string) => request<Book>("GET", book(asin)),
+  getBook: (asin: string, signal?: AbortSignal) => request<BookDetail>("GET", book(asin), undefined, signal),
   setTags: (asin: string, tags: string) => request<Book>("PUT", `${book(asin)}/tags`, { tags }),
   setStatus: (asin: string, status: LiberatedChoice) => request<Book>("PUT", `${book(asin)}/status`, { status }),
   scan: () => request<Status>("POST", "/api/scan"),

@@ -2,17 +2,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { Book, LibraryPage as Page } from "../api/types";
 import { notOk, type BulkSummary } from "../bulk";
-import { withHideEpisodes } from "../filters";
-import { formatLength } from "../format";
+import { columns, loadVisible, saveVisible, toggleColumn, type ColumnId } from "../columns";
+import { seriesQuery, withHideEpisodes } from "../filters";
+import { formatDate, formatLength, stars } from "../format";
+import { loadSort, saveSort, toggleSort, type SortKey, type SortState } from "../sort";
 import { useLive } from "../live";
 import { BookDetails } from "./BookDetails";
 import { BulkMenu, type BulkOp } from "./BulkMenu";
 import { CountsBar } from "./CountsBar";
+import { Cover } from "./Cover";
+import { Popover } from "./Popover";
 import { QuickFilters } from "./QuickFilters";
 import { SyntaxHelp } from "./SyntaxHelp";
 
 const PAGE_SIZE = 50;
-const ALL_PAGE = 1000;
 
 interface BulkState {
   label: string;
@@ -22,9 +25,6 @@ interface BulkState {
   summary: BulkSummary | null;
 }
 
-function seriesText(b: Book): string {
-  return b.series.map((s) => (s.order ? `${s.name} #${s.order}` : s.name)).join(", ");
-}
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -51,14 +51,17 @@ export function LibraryPage() {
   const [gathering, setGathering] = useState(false);
   const [hideEpisodes, setHideEpisodes] = useState(false);
   const [detail, setDetail] = useState<Book | null>(null);
+  const [sort, setSort] = useState<SortState | null>(loadSort);
+  const [visible, setVisible] = useState<ColumnId[]>(loadVisible);
   const abort = useRef<AbortController | null>(null);
 
-  const effectiveQ = trash ? "" : withHideEpisodes(q, hideEpisodes);
+  const effectiveQ = withHideEpisodes(q, hideEpisodes);
+  const show = (id: ColumnId) => visible.includes(id);
 
   useEffect(() => {
     const ctl = new AbortController();
     setLoading(true);
-    api.library({ offset, limit: PAGE_SIZE, q: effectiveQ, trash }, ctl.signal).then(
+    api.library({ offset, limit: PAGE_SIZE, q: effectiveQ, trash, sort }, ctl.signal).then(
       (p) => {
         setPage(p);
         setError(null);
@@ -71,7 +74,7 @@ export function LibraryPage() {
       },
     );
     return () => ctl.abort();
-  }, [offset, effectiveQ, trash, reload]);
+  }, [offset, effectiveQ, trash, sort, reload]);
 
   const patchRow = (b: Book) => {
     setDetail((d) => (d?.asin === b.asin ? b : d));
@@ -109,13 +112,9 @@ export function LibraryPage() {
     setGathering(true);
     setNotice(null);
     try {
-      const all = new Set<string>();
-      for (let o = 0; o < total; o += ALL_PAGE) {
-        const p = await api.library({ offset: o, limit: ALL_PAGE, q: effectiveQ, trash });
-        p.items.forEach((b) => all.add(b.asin));
-        if (p.items.length === 0) break;
-      }
-      setSelected(all);
+      const res = await api.asins({ q: effectiveQ, trash });
+      if (res.asins.length < res.total) setNotice(`Selected the first ${res.asins.length} of ${res.total} matches (API limit).`);
+      setSelected(new Set(res.asins));
     } catch (e) {
       setNotice((e as Error).message);
     } finally {
@@ -163,6 +162,19 @@ export function LibraryPage() {
     resetView();
   };
 
+  const sortBy = (key: SortKey) => {
+    const next = toggleSort(sort, key);
+    setSort(next);
+    saveSort(next);
+    setOffset(0);
+  };
+
+  const toggleCol = (id: ColumnId) => {
+    const next = toggleColumn(visible, id);
+    setVisible(next);
+    saveVisible(next);
+  };
+
   const pickSyntax = (text: string) => {
     setInput((cur) => `${cur.trim()} ${text}`.trim());
     resetView();
@@ -176,6 +188,11 @@ export function LibraryPage() {
     } catch (e) {
       setNotice(`${label}: ${(e as Error).message}`);
     }
+  };
+
+  const setInputQuery = (next: string) => {
+    setInput(next);
+    resetView();
   };
 
   const busy = bulk?.running === true;
@@ -194,23 +211,21 @@ export function LibraryPage() {
         </div>
         <input
           type="search"
-          className={`search ${error && !trash ? "invalid" : ""}`}
-          placeholder={trash ? "Search is unavailable in the trash" : 'Filter, e.g. author:herbert -tags:skip title:"the hobbit"'}
+          className={`search ${error ? "invalid" : ""}`}
+          placeholder='Filter, e.g. author:herbert -tags:skip title:"the hobbit"'
           value={input}
-          disabled={trash}
           onChange={(e) => {
             setInput(e.target.value);
             resetView();
           }}
           aria-label="Search library"
         />
-        {!trash && <SyntaxHelp onPick={pickSyntax} />}
+        <SyntaxHelp onPick={pickSyntax} />
         {!trash && <QuickFilters current={input} onApply={applyQuery} />}
         <label className="check-label">
           <input
             type="checkbox"
             checked={hideEpisodes}
-            disabled={trash}
             onChange={(e) => {
               setHideEpisodes(e.target.checked);
               resetView();
@@ -218,6 +233,18 @@ export function LibraryPage() {
           />
           Hide podcast episodes
         </label>
+        <Popover label="Columns">
+          {() => (
+            <div className="menu-list">
+              {columns.map((c) => (
+                <label key={c.id} className="check-label">
+                  <input type="checkbox" checked={show(c.id)} onChange={() => toggleCol(c.id)} />
+                  {c.label}
+                </label>
+              ))}
+            </div>
+          )}
+        </Popover>
       </div>
       {!trash && <CountsBar refreshKey={reload} onApply={applyQuery} />}
       {error && <p className="error">{error}</p>}
@@ -264,20 +291,22 @@ export function LibraryPage() {
               <th className="check">
                 <input type="checkbox" checked={allOnPage} onChange={togglePage} disabled={items.length === 0 || busy} aria-label="Select page" />
               </th>
-              <th>Title</th>
-              <th className="hide-sm">Authors</th>
-              <th className="hide-sm">Series</th>
-              <th className="hide-sm">Length</th>
-              <th>Status</th>
-              <th className="hide-sm">Tags</th>
+              <th className="cover-col" />
+              <SortTh label="Title" sortKey="title" sort={sort} onSort={sortBy} />
+              {columns.filter((c) => show(c.id)).map((c) => (
+                <SortTh key={c.id} label={c.label} sortKey={c.sort} sort={sort} onSort={sortBy} className="hide-sm" />
+              ))}
               <th />
             </tr>
           </thead>
           <tbody>
             {items.map((b) => (
-              <tr key={b.asin} className={`clickable ${selected.has(b.asin) ? "selected" : ""}`} onClick={() => setDetail(b)}>
+              <tr key={b.asin} className={`clickable ${selected.has(b.asin) ? "selected" : ""} ${b.absentFromLastScan ? "absent" : ""}`} onClick={() => setDetail(b)}>
                 <td className="check" onClick={(e) => e.stopPropagation()}>
                   <input type="checkbox" checked={selected.has(b.asin)} onChange={() => toggle(b.asin)} disabled={busy} aria-label={`Select ${b.title}`} />
+                </td>
+                <td className="cover-col">
+                  <Cover asin={b.asin} pictureId={b.pictureId} size="small" />
                 </td>
                 <td>
                   <button
@@ -289,16 +318,15 @@ export function LibraryPage() {
                   >
                     {b.title}
                   </button>
+                  {b.isAudiblePlus && <span className="pill plus" title={b.includedUntil ? `Included until ${formatDate(b.includedUntil)}` : "Audible Plus"}>Plus</span>}
                   {b.subtitle && <div className="muted small">{b.subtitle}</div>}
                   <div className="show-sm muted small">{[...b.authors, formatLength(b.lengthInMinutes)].join(" \u00b7 ")}</div>
                 </td>
-                <td className="hide-sm">{b.authors.join(", ")}</td>
-                <td className="hide-sm">{seriesText(b)}</td>
-                <td className="nowrap hide-sm">{formatLength(b.lengthInMinutes)}</td>
-                <td>
-                  <span className={`pill book-${b.bookStatus}`}>{b.bookStatus}</span>
-                </td>
-                <td className="hide-sm">{b.tags}</td>
+                {visible.map((id) => (
+                  <td key={id} className={`hide-sm ${id === "length" || id === "purchased" || id === "lastDownload" || id === "myRating" || id === "rating" ? "nowrap" : ""}`}>
+                    {cell(id, b, setInputQuery)}
+                  </td>
+                ))}
                 <td className="actions" onClick={(e) => e.stopPropagation()}>
                   {!b.inTrash && (
                     <button onClick={() => rowAction("Liberate", () => api.liberateBook(b.asin))} disabled={busy}>
@@ -313,7 +341,7 @@ export function LibraryPage() {
             ))}
             {page && items.length === 0 && (
               <tr>
-                <td colSpan={8} className="muted">
+                <td colSpan={visible.length + 4} className="muted">
                   {trash ? "The trash is empty." : "No books match."}
                 </td>
               </tr>
@@ -331,7 +359,19 @@ export function LibraryPage() {
           Next
         </button>
       </div>
-      {detail && <BookDetails book={detail} onChange={patchRow} onClose={() => setDetail(null)} />}
+      {detail && (
+        <BookDetails
+          book={detail}
+          onChange={patchRow}
+          onClose={() => setDetail(null)}
+          onSearch={(next) => {
+            setDetail(null);
+            setTrash(false);
+            setInput(next);
+            resetView();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -358,4 +398,57 @@ function BulkReport({ s }: { s: BulkSummary }) {
       )}
     </>
   );
+}
+
+function SortTh({ label, sortKey, sort, onSort, className }: { label: string; sortKey?: SortKey; sort: SortState | null; onSort: (k: SortKey) => void; className?: string }) {
+  if (!sortKey) return <th className={className}>{label}</th>;
+  const active = sort?.key === sortKey;
+  return (
+    <th className={className} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+      <button className="sort" onClick={() => onSort(sortKey)} title={`Sort by ${label.toLowerCase()}`}>
+        {label}
+        {active && <span aria-hidden="true">{sort.dir === "asc" ? " \u25b2" : " \u25bc"}</span>}
+      </button>
+    </th>
+  );
+}
+
+function cell(id: ColumnId, b: Book, search: (q: string) => void) {
+  switch (id) {
+    case "authors":
+      return b.authors.join(", ");
+    case "narrators":
+      return b.narrators.join(", ");
+    case "series":
+      return b.series.map((s, i) => (
+        <span key={s.asin}>
+          {i > 0 && ", "}
+          <button className="linklike" title="Search this series" onClick={(e) => { e.stopPropagation(); search(seriesQuery(s.asin)); }}>
+            {s.order ? `${s.name} #${s.order}` : s.name}
+          </button>
+        </span>
+      ));
+    case "length":
+      return formatLength(b.lengthInMinutes);
+    case "status":
+      return (
+        <>
+          <span className={`pill book-${b.bookStatus}`}>{b.bookStatus}</span>
+          {b.absentFromLastScan && <span className="pill warn" title="Absent from the last scan">Unavailable</span>}
+          {b.pdfStatus && <span className={`pill book-${b.pdfStatus}`} title="PDF status">PDF</span>}
+        </>
+      );
+    case "myRating":
+      return <span title={b.myRating.overall ? String(b.myRating.overall) : "not rated"}>{stars(b.myRating.overall)}</span>;
+    case "rating":
+      return <span title={b.productRating.overall ? String(b.productRating.overall) : "not rated"}>{stars(b.productRating.overall)}</span>;
+    case "category":
+      return b.categories.join(", ");
+    case "purchased":
+      return formatDate(b.dateAdded);
+    case "lastDownload":
+      return formatDate(b.lastDownloaded);
+    case "tags":
+      return b.tags;
+  }
 }

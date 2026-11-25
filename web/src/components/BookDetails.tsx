@@ -1,19 +1,29 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type LiberatedChoice } from "../api/client";
-import type { Book } from "../api/types";
-import { audibleUrl } from "../filters";
-import { formatLength, formatTime, humanize } from "../format";
+import type { Book, BookDetail } from "../api/types";
+import { descriptionText } from "../description";
+import { audibleUrl, seriesQuery } from "../filters";
+import { formatDate, formatLength, formatTime, humanize, stars } from "../format";
 import { normalizeTags } from "../tags";
+import { Cover } from "./Cover";
 
 interface Props {
   book: Book;
   onChange: (b: Book) => void;
   onClose: () => void;
+  onSearch: (q: string) => void;
 }
 
 const statusValue = (s: string) => (s === "Liberated" ? "liberated" : s === "NotLiberated" ? "notLiberated" : "error");
 
-export function BookDetails({ book, onChange, onClose }: Props) {
+function ratingText(r: { overall: number; performance: number; story: number }): string {
+  return r.overall > 0 ? `${stars(r.overall)} ${r.overall.toFixed(1)} (performance ${r.performance.toFixed(1)}, story ${r.story.toFixed(1)})` : "none";
+}
+
+export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
+  const [detail, setDetail] = useState<BookDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState(0);
   const [tags, setTags] = useState(book.tags);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; bad: boolean } | null>(null);
@@ -21,6 +31,17 @@ export function BookDetails({ book, onChange, onClose }: Props) {
   useEffect(() => {
     setTags(book.tags);
     setMsg(null);
+  }, [book.asin]);
+
+  useEffect(() => {
+    const ctl = new AbortController();
+    setDetailError(null);
+    api.getBook(book.asin, ctl.signal).then(setDetail, (e: Error) => !ctl.signal.aborted && setDetailError(e.message));
+    return () => ctl.abort();
+  }, [book.asin, refresh]);
+
+  useEffect(() => {
+    setDetail(null);
   }, [book.asin]);
 
   useEffect(() => {
@@ -38,6 +59,7 @@ export function BookDetails({ book, onChange, onClose }: Props) {
         const b = res as Book;
         onChange(b);
         setTags(b.tags);
+        setRefresh((n) => n + 1);
       }
       if (done) setMsg({ text: done, bad: false });
     } catch (e) {
@@ -50,20 +72,52 @@ export function BookDetails({ book, onChange, onClose }: Props) {
 
   const normalized = normalizeTags(tags).join(" ");
   const dirty = normalized !== book.tags;
-  const series = book.series.map((s) => (s.order ? `${s.name} #${s.order}` : s.name)).join(", ");
+  const d = detail?.asin === book.asin ? detail : null;
+  const description = descriptionText(d?.description);
+
+  const seriesLinks = book.series.length ? (
+    <ul className="plain">
+      {book.series.map((s) => (
+        <li key={s.asin}>
+          <button className="linklike" title="Search this series" onClick={() => onSearch(seriesQuery(s.asin))}>
+            {s.order ? `${s.name} #${s.order}` : s.name}
+          </button>
+        </li>
+      ))}
+    </ul>
+  ) : (
+    "none"
+  );
 
   const rows: [string, React.ReactNode][] = [
     ["Authors", book.authors.join(", ") || "none"],
     ["Narrators", book.narrators.join(", ") || "none"],
-    ["Series", series || "none"],
+    ["Series", seriesLinks],
     ["Length", formatLength(book.lengthInMinutes)],
+    ["Publisher", d?.publisher || "unknown"],
+    ["Language", d?.language || "unknown"],
+    ["Published", formatDate(d?.datePublished) || "unknown"],
+    ["Abridged", d ? (d.isAbridged ? "yes" : "no") : "..."],
     ["Date added", formatTime(book.dateAdded)],
     ["Account", book.account],
     ["Locale", book.locale],
     ["Content type", humanize(book.contentType)],
     ["Podcast episode", book.isPodcastEpisode ? "yes" : "no"],
+    ["Audible Plus", book.isAudiblePlus ? (book.includedUntil ? `yes, until ${formatDate(book.includedUntil)}` : "yes") : "no"],
+    ["Spatial audio", book.isSpatial ? "yes" : "no"],
+    ["Rating", ratingText(book.productRating)],
+    ["My rating", ratingText(book.myRating)],
     ["Book status", <span className={`pill book-${book.bookStatus}`}>{book.bookStatus}</span>],
+    ["Availability", book.absentFromLastScan ? <span className="pill warn">Unavailable: absent from the last scan</span> : "in library"],
     ["PDF status", book.pdfStatus ? <span className={`pill book-${book.pdfStatus}`}>{book.pdfStatus}</span> : "no PDF"],
+    [
+      "Last download",
+      book.lastDownloaded
+        ? [formatTime(book.lastDownloaded), book.lastDownloadedVersion && `version ${book.lastDownloadedVersion}`, book.lastDownloadedFormat].filter(Boolean).join(", ")
+        : "never",
+    ],
+    ["Audio file on disk", d ? (d.audioFileExists ? "yes" : "no") : "..."],
+    ["Partial download", d ? (d.partialDownload ? <span className="pill warn">partial file present</span> : "no") : "..."],
     [
       "ASIN",
       <a href={audibleUrl(book.locale, book.asin)} target="_blank" rel="noreferrer noopener">
@@ -86,6 +140,15 @@ export function BookDetails({ book, onChange, onClose }: Props) {
           </button>
         </div>
 
+        <Cover asin={book.asin} pictureId={book.pictureId} size="large" />
+        {book.parentAsin && (
+          <p>
+            <button onClick={() => onSearch(seriesQuery(book.parentAsin!))}>Show episodes of this podcast</button>
+          </p>
+        )}
+        {detailError && <p className="error">Details unavailable: {detailError}</p>}
+        {description && <p className="description">{description}</p>}
+
         <dl className="drawer-dl">
           {rows.map(([k, v]) => (
             <div key={k}>
@@ -94,6 +157,17 @@ export function BookDetails({ book, onChange, onClose }: Props) {
             </div>
           ))}
         </dl>
+
+        {(d?.categoryLadders.length ?? 0) > 0 && (
+          <>
+            <h3>Categories</h3>
+            <ul className="plain">
+              {d!.categoryLadders.map((l) => (
+                <li key={l.join(">")}>{l.join(" \u203a ")}</li>
+              ))}
+            </ul>
+          </>
+        )}
 
         <h3>Tags</h3>
         <form
