@@ -12,3 +12,11 @@ public sealed record LiberateStarted : EngineEvent;
 public sealed record LiberateFinished(int ExitCode) : EngineEvent;
 public sealed record CycleFinished(int ExitCode) : EngineEvent;
 public sealed record NextRunScheduled(DateTimeOffset? NextRun) : EngineEvent;
+
+public sealed record BookStarted(string JobId, string Asin, string Title) : EngineEvent;
+public sealed record BookProgress(string JobId, string Asin, int Percent) : EngineEvent;
+public sealed record BookFinished(string JobId, string Asin, string Title, string Result, string Status) : EngineEvent;
+public sealed record QueuePaused(PendingDecisionDto Pause) : EngineEvent;
+public sealed record QueueResumed(long PauseId, string Decision) : EngineEvent;
+public sealed record QueueWaiting(QueueWaitDto Wait) : EngineEvent;
+public sealed record QueueWaitEnded(long PauseId, string Reason) : EngineEvent;

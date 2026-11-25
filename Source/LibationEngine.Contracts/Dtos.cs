@@ -33,3 +33,27 @@ public sealed record BookDto(
 public sealed record LibraryPageDto(int Total, int Offset, int Limit, IReadOnlyList<BookDto> Items);
 
 public sealed record ErrorDto(string Error);
+
+public sealed record QueueJobDto(string Id, string Asin, string Title, string State);
+
+public sealed record PendingDecisionDto(long Id, string Reason, string? JobId, IReadOnlyList<string> Allowed);
+
+public sealed record VolumeDto(string Root, long? FreeBytes, long RequiredBytes);
+
+public sealed record QueueWaitDto(
+	long Id,
+	string Reason,
+	DateTimeOffset Since,
+	DateTimeOffset? NextCheck,
+	string? JobId,
+	IReadOnlyList<string> Allowed,
+	IReadOnlyList<VolumeDto>? Volumes);
+
+public sealed record QueueDto(
+	bool Running,
+	IReadOnlyList<QueueJobDto> Jobs,
+	IReadOnlyList<PendingDecisionDto> Pending,
+	QueueWaitDto? Waiting);
+
+/// <summary>Body of a decision POST; <see cref="Action"/>, <see cref="ApplyToAll"/> and <see cref="Remember"/> apply to badBook only.</summary>
+public sealed record DecisionRequest(string? Decision, string? Action = null, bool ApplyToAll = false, bool Remember = false);

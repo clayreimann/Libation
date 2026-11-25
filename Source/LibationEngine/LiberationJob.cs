@@ -44,6 +44,7 @@ public sealed class LiberationJob
 	public event EventHandler<string>? AuthorChanged;
 	public event EventHandler<string>? NarratorChanged;
 	public event EventHandler<int>? ProgressChanged;
+	internal void ReportProgress(int percent) => ProgressChanged?.Invoke(this, percent);
 	public event EventHandler<TimeSpan>? TimeRemainingChanged;
 	public event EventHandler<byte[]>? CoverDiscovered;
 
