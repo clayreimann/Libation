@@ -74,6 +74,29 @@ public class ApiTests
 			return Task.FromResult(GetBook(asin) is { } b ? b with { InTrash = inTrash } : null);
 		}
 
+		private Task<IReadOnlyList<BulkItemDto>> Bulk(string call, IReadOnlyList<string> asins)
+		{
+			Calls.Add($"{call}:{string.Join(',', asins)}");
+			return Task.FromResult<IReadOnlyList<BulkItemDto>>(asins
+				.Select(a => new BulkItemDto(a, a == "B000000001" ? BulkResults.Ok : a == "B000000002" ? BulkResults.Conflict : BulkResults.NotFound))
+				.ToList());
+		}
+
+		public Task<IReadOnlyList<BulkItemDto>> BulkSetTags(IReadOnlyList<string> asins, TagEdit edit)
+			=> Bulk($"bulktags:{edit.Set}|{edit.Add}|{edit.Remove}", asins);
+
+		public Task<IReadOnlyList<BulkItemDto>> BulkSetBookStatus(IReadOnlyList<string> asins, LiberatedStatus status)
+			=> Bulk($"bulkstatus:{status}", asins);
+
+		public Task<IReadOnlyList<BulkItemDto>> BulkSetPdfStatus(IReadOnlyList<string> asins, LiberatedStatus status)
+			=> Bulk($"bulkpdf:{status}", asins);
+
+		public Task<IReadOnlyList<BulkItemDto>> BulkSetTrash(IReadOnlyList<string> asins, bool inTrash)
+			=> Bulk($"bulktrash:{inTrash}", asins);
+
+		public Task<IReadOnlyList<BulkItemDto>> BulkPurge(IReadOnlyList<string> asins)
+			=> Bulk("bulkpurge", asins);
+
 		public SettingsDto GetSettings()
 			=> SettingsMapper.From(Configuration.Instance);
 
@@ -543,6 +566,82 @@ public class ApiTests
 	}
 
 	[TestMethod]
+	public async Task Bulk_actions_answer_per_asin_and_dedupe()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var calls = new (HttpMethod Method, string Path, string Extra, string Call)[]
+		{
+			(HttpMethod.Put, "/api/library/tags", ",\"tags\":\"a b\"", "bulktags:a b||"),
+			(HttpMethod.Put, "/api/library/tags", ",\"add\":\"a\",\"remove\":\"b\"", "bulktags:|a|b"),
+			(HttpMethod.Put, "/api/library/status", ",\"status\":\"liberated\"", "bulkstatus:Liberated"),
+			(HttpMethod.Put, "/api/library/pdf-status", ",\"status\":\"notLiberated\"", "bulkpdf:NotLiberated"),
+			(HttpMethod.Post, "/api/library/trash", "", "bulktrash:True"),
+			(HttpMethod.Post, "/api/library/restore", "", "bulktrash:False"),
+			(HttpMethod.Post, "/api/library/purge", "", "bulkpurge")
+		};
+		foreach (var (method, path, extra, call) in calls)
+		{
+			var response = await h.Http.SendAsync(Send(method, h.Base + path, $"{{\"asins\":[\"B000000001\",\"B000000002\",\"nope\",\"B000000001\"]{extra}}}"));
+			Assert.AreEqual(HttpStatusCode.OK, response.StatusCode, path);
+			using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+			Assert.AreEqual(1, doc.RootElement.GetProperty("updated").GetInt32(), path);
+			CollectionAssert.AreEqual(new[] { "nope" }, doc.RootElement.GetProperty("missing").EnumerateArray().Select(e => e.GetString()).ToArray());
+			CollectionAssert.AreEqual(new[] { "ok", "conflict", "notFound" }, doc.RootElement.GetProperty("results").EnumerateArray().Select(e => e.GetProperty("result").GetString()).ToArray());
+			Assert.AreEqual($"{call}:B000000001,B000000002,nope", h.Data.Calls.Last(), path);
+		}
+	}
+
+	[TestMethod]
+	public async Task Bulk_actions_validate_the_body_and_cap_the_size()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var tooMany = string.Join(',', Enumerable.Range(0, ApiEndpoints.MaxBulk + 1).Select(i => $"\"A{i}\""));
+		var atCap = string.Join(',', Enumerable.Range(0, ApiEndpoints.MaxBulk).Select(i => $"\"A{i}\""));
+		foreach (var (method, path) in new[] { (HttpMethod.Put, "/api/library/tags"), (HttpMethod.Put, "/api/library/status"), (HttpMethod.Put, "/api/library/pdf-status"), (HttpMethod.Post, "/api/library/trash"), (HttpMethod.Post, "/api/library/restore"), (HttpMethod.Post, "/api/library/purge"), (HttpMethod.Post, "/api/library/liberate") })
+		{
+			foreach (var body in new[] { null, "{}", "{\"asins\":[]}", $"{{\"asins\":[{tooMany}],\"tags\":\"x\",\"status\":\"liberated\"}}" })
+				Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(method, h.Base + path, body))).StatusCode, $"{path} {body?.Length}");
+		}
+
+		foreach (var body in new[] { "{\"asins\":[\"B000000001\"]}", "{\"asins\":[\"B000000001\"],\"tags\":\"x\",\"add\":\"y\"}", "{\"asins\":[\"B000000001\"],\"tags\":null}" })
+			Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Put, h.Base + "/api/library/tags", body))).StatusCode, body);
+		foreach (var path in new[] { "/api/library/status", "/api/library/pdf-status" })
+			Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Put, h.Base + path, "{\"asins\":[\"B000000001\"],\"status\":\"error\"}"))).StatusCode, path);
+
+		Assert.AreEqual(0, h.Data.Calls.Count);
+		Assert.AreEqual(HttpStatusCode.OK, (await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/library/trash", $"{{\"asins\":[{atCap}]}}"))).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Bulk_liberate_queues_each_book_and_reports_conflicts_and_unknowns()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		var release = new TaskCompletionSource();
+		h.Outcome = async _ => { await release.Task; return ProcessBookResult.Success; };
+
+		var response = await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/library/liberate", "{\"asins\":[\"B000000001\",\"nope\"]}"));
+		Assert.AreEqual(HttpStatusCode.Accepted, response.StatusCode);
+		using (var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync()))
+		{
+			Assert.AreEqual(1, doc.RootElement.GetProperty("updated").GetInt32());
+			CollectionAssert.AreEqual(new[] { "nope" }, doc.RootElement.GetProperty("missing").EnumerateArray().Select(e => e.GetString()).ToArray());
+		}
+		await Eventually(async () => (await h.QueueJson()).RootElement.GetProperty("jobs").GetArrayLength() == 1);
+
+		using var again = JsonDocument.Parse(await (await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/library/liberate", "{\"asins\":[\"B000000001\"]}"))).Content.ReadAsStringAsync());
+		Assert.AreEqual("conflict", again.RootElement.GetProperty("results")[0].GetProperty("result").GetString());
+		Assert.AreEqual(1, h.Queue.Jobs.GetAllItems().Count());
+
+		release.SetResult();
+		await h.Queue.Runner!;
+	}
+
+	[TestMethod]
 	public async Task Book_actions_and_settings_are_404_when_the_api_is_off_and_401_without_the_token()
 	{
 		await using (var off = new Harness(api: false))
@@ -561,7 +660,9 @@ public class ApiTests
 			(HttpMethod.Put, "/api/library/B000000001/status", "{\"status\":\"liberated\"}"),
 			(HttpMethod.Post, "/api/library/B000000001/trash", null),
 			(HttpMethod.Post, "/api/library/B000000001/restore", null),
-			(HttpMethod.Post, "/api/library/B000000001/liberate", null)
+			(HttpMethod.Post, "/api/library/B000000001/liberate", null),
+			(HttpMethod.Post, "/api/library/purge", "{\"asins\":[\"B000000001\"]}"),
+			(HttpMethod.Post, "/api/library/liberate", "{\"asins\":[\"B000000001\"]}")
 		};
 		foreach (var (method, path, body) in calls)
 		{

@@ -11,6 +11,8 @@ namespace LibationEngine.Host;
 
 public static class ApiEndpoints
 {
+	public const int MaxBulk = 5000;
+
 	public static readonly TimeSpan Heartbeat = TimeSpan.FromSeconds(15);
 
 	private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -141,6 +143,92 @@ public static class ApiEndpoints
 			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
 			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
+		api.MapPut("/library/tags", async (BulkTagsRequest? body) =>
+		{
+			if (Validate(body?.Asins) is { } invalid)
+				return invalid;
+			var edit = new TagEdit(body!.Tags, body.Add, body.Remove);
+			if (edit.Set is null == (edit.Add is null && edit.Remove is null))
+				return Error("Send tags, or add and/or remove, but not both.", StatusCodes.Status400BadRequest);
+			return Bulk(await data.BulkSetTags(Distinct(body.Asins!), edit));
+		}).WithSummary("Sets tags on many books: tags replaces, add and remove edit. 200 with a result per ASIN, 400 bad body or over 5000 ASINs.")
+			.WithName("bulkSetTags").WithTags("library")
+			.Produces<BulkResultDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapPut("/library/status", async (BulkStatusRequest? body) =>
+			Validate(body?.Asins) is { } invalid ? invalid
+			: !TryParseStatus(body!.Status, out var status) ? Error("status must be liberated or notLiberated.", StatusCodes.Status400BadRequest)
+			: Bulk(await data.BulkSetBookStatus(Distinct(body.Asins!), status)))
+			.WithSummary("Sets the liberated status of many books. 200 with a result per ASIN, 400 bad body or over 5000 ASINs.")
+			.WithName("bulkSetBookStatus").WithTags("library")
+			.Produces<BulkResultDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapPut("/library/pdf-status", async (BulkStatusRequest? body) =>
+			Validate(body?.Asins) is { } invalid ? invalid
+			: !TryParseStatus(body!.Status, out var status) ? Error("status must be liberated or notLiberated.", StatusCodes.Status400BadRequest)
+			: Bulk(await data.BulkSetPdfStatus(Distinct(body.Asins!), status)))
+			.WithSummary("Sets the PDF status of many books; books without a PDF are conflict. 200 with a result per ASIN, 400 bad body or over 5000 ASINs.")
+			.WithName("bulkSetPdfStatus").WithTags("library")
+			.Produces<BulkResultDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapPost("/library/trash", async (BulkRequest? body) =>
+			Validate(body?.Asins) is { } invalid ? invalid : Bulk(await data.BulkSetTrash(Distinct(body!.Asins!), true)))
+			.WithSummary("Moves many books to the trash; ones already there are ok. 200 with a result per ASIN, 400 bad body or over 5000 ASINs.")
+			.WithName("bulkTrashBooks").WithTags("library")
+			.Produces<BulkResultDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapPost("/library/restore", async (BulkRequest? body) =>
+			Validate(body?.Asins) is { } invalid ? invalid : Bulk(await data.BulkSetTrash(Distinct(body!.Asins!), false)))
+			.WithSummary("Restores many books from the trash; ones not in it are ok. 200 with a result per ASIN, 400 bad body or over 5000 ASINs.")
+			.WithName("bulkRestoreBooks").WithTags("library")
+			.Produces<BulkResultDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapPost("/library/purge", async (BulkRequest? body) =>
+			Validate(body?.Asins) is { } invalid ? invalid : Bulk(await data.BulkPurge(Distinct(body!.Asins!))))
+			.WithSummary("Permanently deletes books that are in the trash, irreversibly; others are conflict. 200 with a result per ASIN, 400 bad body or over 5000 ASINs.")
+			.WithName("bulkPurgeBooks").WithTags("library")
+			.Produces<BulkResultDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapPost("/library/liberate", (BulkRequest? body) =>
+		{
+			if (Validate(body?.Asins) is { } invalid)
+				return invalid;
+			var results = new List<BulkItemDto>();
+			lock (enqueueLock)
+			{
+				var active = queue.Jobs.GetAllItems().Except(queue.Jobs.Completed)
+					.Select(j => j.LibraryBook.Book.AudibleProductId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+				var jobs = new List<LiberationJob>();
+				foreach (var asin in Distinct(body!.Asins!))
+				{
+					if (active.Contains(asin))
+						results.Add(new(asin, BulkResults.Conflict));
+					else if (createBookJob?.Invoke(asin) is not { } job)
+						results.Add(new(asin, BulkResults.NotFound));
+					else
+					{
+						jobs.Add(job);
+						results.Add(new(asin, BulkResults.Ok));
+					}
+				}
+				if (jobs.Count > 0)
+				{
+					queue.Jobs.Enqueue(jobs);
+					queue.StartOrWake();
+				}
+			}
+			return Results.Json(BulkResults.Summarize(results), statusCode: StatusCodes.Status202Accepted);
+		}).WithSummary("Queues many books for liberation; ones already queued are conflict. 202 with a result per ASIN, 400 bad body or over 5000 ASINs.")
+			.WithName("bulkLiberateBooks").WithTags("library")
+			.Produces<BulkResultDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
 		api.MapGet("/settings", () => data.GetSettings())
 			.WithSummary("Curated read-only settings: Books and working folders, naming templates, download, queue and library options. No secrets.")
 			.WithName("getSettings").WithTags("settings")
@@ -182,6 +270,15 @@ public static class ApiEndpoints
 	}
 
 	private static IResult Error(string message, int status) => Results.Json(new ErrorDto(message), statusCode: status);
+
+	private static IResult Bulk(IReadOnlyList<BulkItemDto> results) => Results.Json(BulkResults.Summarize(results));
+
+	private static IReadOnlyList<string> Distinct(IReadOnlyList<string> asins) => asins.Select(a => a?.Trim() ?? "").Distinct(StringComparer.Ordinal).ToList();
+
+	private static IResult? Validate(IReadOnlyList<string>? asins)
+		=> asins is null || asins.Count == 0 ? Error("asins is required and must not be empty.", StatusCodes.Status400BadRequest)
+		: asins.Count > MaxBulk ? Error($"At most {MaxBulk} asins per request.", StatusCodes.Status400BadRequest)
+		: null;
 
 	private static IResult NoSuchBook() => Error("No such book.", StatusCodes.Status404NotFound);
 

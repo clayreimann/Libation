@@ -66,6 +66,21 @@ public sealed record TagsRequest(string? Tags);
 /// <summary>Body of <c>PUT /api/library/{asin}/status</c>; Status is liberated or notLiberated.</summary>
 public sealed record StatusRequest(string? Status);
 
+/// <summary>Body of bulk library actions; at most 5000 ASINs.</summary>
+public sealed record BulkRequest(IReadOnlyList<string>? Asins);
+
+/// <summary>Body of <c>PUT /api/library/tags</c>; Tags replaces, Add and Remove edit, and Tags excludes the other two.</summary>
+public sealed record BulkTagsRequest(IReadOnlyList<string>? Asins, string? Tags = null, string? Add = null, string? Remove = null);
+
+/// <summary>Body of <c>PUT /api/library/status</c> and <c>/pdf-status</c>; Status is liberated or notLiberated.</summary>
+public sealed record BulkStatusRequest(IReadOnlyList<string>? Asins, string? Status);
+
+/// <summary>Result is ok, notFound or conflict.</summary>
+public sealed record BulkItemDto(string Asin, string Result);
+
+/// <summary>Updated counts ok items; Missing lists the notFound ASINs; Results has every ASIN in request order.</summary>
+public sealed record BulkResultDto(int Updated, IReadOnlyList<string> Missing, IReadOnlyList<BulkItemDto> Results);
+
 public sealed record NamingSettingsDto(string FolderTemplate, string FileTemplate, string ChapterFileTemplate, string ChapterTitleTemplate);
 
 public sealed record DownloadSettingsDto(

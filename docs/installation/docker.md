@@ -116,6 +116,22 @@ Per-book actions return the updated book, `404` for an unknown ASIN and `400` fo
 | `POST /api/library/{asin}/restore` | none | Restores it. |
 | `POST /api/library/{asin}/liberate` | none | Queues the book through the shared queue, re-downloading it if already liberated. `202` with `{"id":"…","asin":"…","title":"…","state":"queued"}`, or `409` if it is already queued. Follow it on `/api/queue` and `/api/events`. |
 
+Bulk actions take `{"asins":[…]}` (at most 5000, duplicates are collapsed) and never fail the whole request over one book. They return `200` (`202` for liberate) with `updated` (the count of `ok`), `missing` (the unknown ASINs) and a `result` per ASIN, in request order: `ok`, `notFound` or `conflict`. An empty, missing or oversized list, or a bad `status`, returns `400`.
+
+| Request | Body | Effect |
+| --- | --- | --- |
+| `PUT /api/library/tags` | `{"asins":[…],"tags":"one two"}` or `{"asins":[…],"add":"x","remove":"y"}` | Replaces the tags, or adds and removes individual tags. `tags` cannot be combined with `add` or `remove`. |
+| `PUT /api/library/status` | `{"asins":[…],"status":"liberated"}` | Sets the liberated status. |
+| `PUT /api/library/pdf-status` | `{"asins":[…],"status":"notLiberated"}` | Sets the PDF status; books without a PDF are `conflict`. |
+| `POST /api/library/trash` | `{"asins":[…]}` | Moves books to the trash; books already there are `ok`. |
+| `POST /api/library/restore` | `{"asins":[…]}` | Restores books; books not in the trash are `ok`. |
+| `POST /api/library/purge` | `{"asins":[…]}` | Permanently deletes books that are in the trash, which cannot be undone; any other book is `conflict`. |
+| `POST /api/library/liberate` | `{"asins":[…]}` | Queues each book; one already queued is `conflict`. |
+
+```json
+{"updated":1,"missing":["nope"],"results":[{"asin":"B017V4IM1G","result":"ok"},{"asin":"B000000002","result":"conflict"},{"asin":"nope","result":"notFound"}]}
+```
+
 `GET /api/settings` is read-only: the Books and working folders, file naming templates, download, queue and library options, and whether Audiobookshelf is enabled. It never includes tokens, key files, account data or server URLs. Settings are changed in `Settings.json`.
 
 The download queue is part of the API. `GET /api/queue` returns the running state, the jobs (`working` first, then `queued`), any pending decision and any wait:
