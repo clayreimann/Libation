@@ -15,7 +15,7 @@ internal class ServeOptions : OptionsBase
 	[Option("interval", HelpText = "Time between cycles: 1h, 30m, 90s, 3600 (seconds) or hh:mm:ss. Default: SLEEP_TIME environment variable, else 1h.")]
 	public string? Interval { get; set; }
 
-	[Option("reconcile-on-start", HelpText = "Run 'scan' then 'set-status --downloaded' before the first cycle. A failure exits with code 3.")]
+	[Option("reconcile-on-start", HelpText = "Run 'scan' then 'set-status --downloaded' before the first cycle; books whose file is found are marked downloaded, none are demoted. A failure exits with code 3.")]
 	public bool ReconcileOnStart { get; set; }
 
 	[Option("once", HelpText = "Run reconcile (if asked) and one cycle, then exit with its result. SLEEP_TIME=-1 does the same.")]

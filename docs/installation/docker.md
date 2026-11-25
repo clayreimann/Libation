@@ -88,7 +88,18 @@ sudo docker run --rm \
   rmcrackan/libation:latest serve --once
 ```
 
-`serve` also accepts `--interval`, `--reconcile-on-start` (mark existing books as downloaded before the first cycle), `--listen`, `--metrics-file`, `--accounts-import` and `--readonly-config`; run `LibationCli serve --help` for details.
+`serve` also accepts `--interval`, `--reconcile-on-start` (mark books whose file is found as downloaded before the first cycle; see [Books outside the Books folder](#books-outside-the-books-folder)), `--listen`, `--metrics-file`, `--accounts-import` and `--readonly-config`; run `LibationCli serve --help` for details.
+
+### Books outside the Books folder
+
+Like the desktop app, the daemon trusts each book's stored status: a book marked downloaded is never downloaded again because its file is missing, and only an explicit action (`PUT .../status`, `set-status`, `liberate`) moves it back to pending. A book that is still pending is downloaded unless Libation can find its file, and it looks in two places: the Books folder (matching the ASIN in the file name) and the file locations recorded in `FileLocationsV2.json` in the Libation files folder.
+
+`--reconcile-on-start` runs a scan and then `set-status --downloaded`. It only ever promotes: a pending book whose file is found becomes downloaded, and nothing is demoted. A file that is neither in the Books folder nor recorded is not found, so that book is downloaded again, exactly as on the desktop until you use Locate file or Locate audiobooks. Copying `FileLocationsV2.json` from a desktop install carries those locations over.
+
+The HTTP API has the same two tools. Both only accept paths under the Books folder (mount or symlink other folders beneath it), reject `..`, and for a file only audio files:
+
+- `POST /api/library/{asin}/locate` with `{"path":"/data/Author/Book/book.m4b"}` records the file for the book, as Locate file does, and marks it downloaded. `200` with the book detail, `400` for a path outside Books, with `..`, missing, or not audio, `404` for an unknown ASIN.
+- `POST /api/library/locate-scan` with `{"folder":"/data/Imported"}` reads the tags of every `.mp3` and `.m4b` in the folder and records and marks each book whose ASIN is embedded, as Locate audiobooks does. It runs in the background: `202` with `{"state":"running","folder":"…","found":0,"matched":0,"updated":0,…}`, `400` for a bad folder, `409` if a scan is already running. `/api/events` carries `LocateScanProgress` with the same fields under `scan` as each file is found and when it ends (`state` is `completed` or `failed`), and `GET /api/library/locate-scan` returns the latest state.
 
 ### Health and metrics
 
@@ -98,7 +109,7 @@ Set `--metrics-file` (or `LIBATION_METRICS_FILE`) to write a Prometheus textfile
 
 ### HTTP API
 
-Off by default. `--api` (or `LIBATION_API=1`) serves a JSON API under `/api` on the same `--listen` address: `GET /api/status`, `/api/accounts`, `/api/library`, `/api/library/asins`, `/api/library/stats`, `/api/library/{asin}`, `/api/library/{asin}/cover`, `/api/settings`, `/api/events` (Server-Sent Events), and `POST /api/scan` and `/api/liberate` (run now; `202`, or `409` if a job is running). Account responses never include tokens. `GET /api/openapi.json` is the OpenAPI document for all of it, for generating a client; it follows the same opt-in and token rules.
+Off by default. `--api` (or `LIBATION_API=1`) serves a JSON API under `/api` on the same `--listen` address: `GET /api/status`, `/api/accounts`, `/api/library`, `/api/library/asins`, `/api/library/stats`, `/api/library/{asin}`, `/api/library/{asin}/cover`, `/api/library/{asin}/locate`, `/api/library/locate-scan`, `/api/settings`, `/api/events` (Server-Sent Events), and `POST /api/scan` and `/api/liberate` (run now; `202`, or `409` if a job is running). Account responses never include tokens. `GET /api/openapi.json` is the OpenAPI document for all of it, for generating a client; it follows the same opt-in and token rules.
 
 `GET /api/library` takes `offset` (default 0), `limit` (default 100, at most 1000), `q`, `trash`, `sort` and `dir`. `q` uses the same Lucene syntax as the filter box in the app (`author:herbert`, `-tags:skip`, `title:"the hobbit"`); the search index is built or repaired on demand. `trash=true` lists the trash instead, and `q` filters it too. Results stay newest first unless `sort` is one of `title`, `author`, `narrator`, `series`, `length`, `purchaseDate`, `added`, `status`, `rating` or `lastDownload`, with `dir=asc` (default) or `desc`; missing values sort last and ties break by title. `total` counts every match, not just the page. A query that cannot be parsed, or a bad `sort`, `dir` or `size`, returns `400`.
 
