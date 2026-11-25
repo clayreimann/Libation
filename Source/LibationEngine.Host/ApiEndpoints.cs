@@ -432,6 +432,25 @@ public static class ApiEndpoints
 			.Produces<IReadOnlyList<BookDto>>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
 
+		api.MapGet("/library/podcasts/{asin}/episodes", (string asin, bool? trash) =>
+			data.GetPodcastEpisodes(asin, trash ?? false) is { } episodes ? Results.Json(episodes) : Error("No such podcast.", StatusCodes.Status404NotFound))
+			.WithSummary("A podcast parent's episodes in the desktop grid's child order: highest series index first, those without an index before them. trash=true lists the trash instead. 404 when the ASIN is not a podcast parent.")
+			.WithName("getPodcastEpisodes").WithTags("library")
+			.Produces<IReadOnlyList<BookDto>>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
+
+		api.MapGet("/library/series", (string? q) => Results.Json(data.GetSeries(q)))
+			.WithSummary("Every series in the library, by name, with its books in series order (lowest index first, unnumbered last). q keeps series whose name contains it, ignoring case. A book in several series appears in each.")
+			.WithName("getLibrarySeries").WithTags("library")
+			.Produces<IReadOnlyList<SeriesGroupDto>>(StatusCodes.Status200OK);
+
+		api.MapGet("/library/series/{seriesId}", (string seriesId) =>
+			data.GetSeriesById(seriesId) is { } series ? Results.Json(series) : Error("No such series.", StatusCodes.Status404NotFound))
+			.WithSummary("One series by its Audible series id, or 404.")
+			.WithName("getSeries").WithTags("library")
+			.Produces<SeriesGroupDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
+
 		api.MapGet("/library/stats", () => Results.Json(data.GetBackupCounts()))
 			.WithSummary("Backup counts as in the desktop status bar: books and PDFs liberated, not liberated, errored or unavailable.")
 			.WithName("getLibraryStats").WithTags("library")

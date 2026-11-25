@@ -62,6 +62,14 @@ public interface IEngineData
 	/// <exception cref="SearchQueryException">The query cannot be parsed.</exception>
 	IReadOnlyList<BookDto> GetPodcastParents(string? query = null, bool trash = false);
 
+	/// <summary>Every series in the library whose name contains <paramref name="name"/>, by name.</summary>
+	IReadOnlyList<SeriesGroupDto> GetSeries(string? name = null);
+
+	SeriesGroupDto? GetSeriesById(string seriesId);
+
+	/// <summary>A podcast's episodes in the desktop grid's child order; null when <paramref name="parentAsin"/> is not a podcast parent.</summary>
+	IReadOnlyList<BookDto>? GetPodcastEpisodes(string parentAsin, bool trash = false);
+
 	/// <summary>Writes the matching books to a new temp file as desktop's export does; the caller deletes it.</summary>
 	/// <exception cref="SearchQueryException">The query cannot be parsed.</exception>
 	string ExportLibrary(ExportFormat format, string? query = null, bool trash = false);

@@ -127,6 +127,24 @@ public partial class ApiTests
 			return [Book("B000000009") with { Title = "Show", IsPodcastParent = true, ContentType = "Parent" }];
 		}
 
+		private static readonly SeriesGroupDto Series = new("B0SERIES01", "Saga", 2, 1, [new("B000000001", "One", "1"), new("B000000002", "Two", "2")]);
+
+		public IReadOnlyList<SeriesGroupDto> GetSeries(string? name = null)
+		{
+			LastSeriesQuery = name;
+			return name is null || Series.Name.Contains(name, StringComparison.OrdinalIgnoreCase) ? [Series] : [];
+		}
+
+		public string? LastSeriesQuery;
+
+		public SeriesGroupDto? GetSeriesById(string seriesId) => seriesId == Series.SeriesId ? Series : null;
+
+		public IReadOnlyList<BookDto>? GetPodcastEpisodes(string parentAsin, bool trash = false)
+		{
+			LastFilter = (null, trash);
+			return parentAsin == "B000000009" ? [Book("B000000010") with { ParentAsin = parentAsin, IsPodcastEpisode = true, ContentType = "Episode" }] : null;
+		}
+
 		public BookDto? GetBook(string asin) => asin == "B000000001" ? Book(asin) : null;
 
 		public BookDetailDto? GetBookDetail(string asin)

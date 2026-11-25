@@ -40,6 +40,11 @@ public sealed record SeriesDto(string Name, string? Order, float Index, string A
 
 public sealed record RatingDto(float Overall, float Performance, float Story);
 
+public sealed record SeriesBookDto(string Asin, string Title, string? Order);
+
+/// <summary>Books are in series order, as the desktop grid sorts them; LiberatedCount is those with a liberated audiobook.</summary>
+public sealed record SeriesGroupDto(string SeriesId, string Name, int BookCount, int LiberatedCount, IReadOnlyList<SeriesBookDto> Books);
+
 public record BookDto(
 	string Asin,
 	string Title,

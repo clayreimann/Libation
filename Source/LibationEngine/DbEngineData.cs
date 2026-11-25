@@ -126,6 +126,25 @@ public sealed class DbEngineData : IEngineData
 			.ToList();
 	}
 
+	public IReadOnlyList<SeriesGroupDto> GetSeries(string? name = null)
+		=> SeriesView.Group(DbContexts.GetLibrary_Flat_NoTracking())
+			.Where(g => string.IsNullOrWhiteSpace(name) || g.Name.Contains(name.Trim(), StringComparison.OrdinalIgnoreCase))
+			.ToList();
+
+	public SeriesGroupDto? GetSeriesById(string seriesId)
+		=> SeriesView.Group(DbContexts.GetLibrary_Flat_NoTracking())
+			.FirstOrDefault(g => string.Equals(g.SeriesId, seriesId, StringComparison.OrdinalIgnoreCase));
+
+	public IReadOnlyList<BookDto>? GetPodcastEpisodes(string parentAsin, bool trash = false)
+	{
+		var all = trash ? DbContexts.GetDeletedLibraryBooks() : DbContexts.GetLibrary_Flat_NoTracking(includeParents: true);
+		if (all.FirstOrDefault(lb => lb.Book.IsEpisodeParent() && string.Equals(lb.Book.AudibleProductId, parentAsin, StringComparison.OrdinalIgnoreCase)) is not { } parent)
+			return null;
+
+		var partial = AudibleFileStorage.AaxcExistsSnapshot();
+		return SeriesView.EpisodeOrder(all.FindChildren(parent).ToList(), parent.Book.AudibleProductId).Select(lb => ToDto(lb, partial)).ToList();
+	}
+
 	private static List<LibraryBook> Matching(string? query, bool trash)
 	{
 		var hasQuery = !string.IsNullOrWhiteSpace(query);
