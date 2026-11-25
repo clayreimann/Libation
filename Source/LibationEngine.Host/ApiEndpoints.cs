@@ -20,10 +20,28 @@ public static class ApiEndpoints
 	public static void AddServices(IServiceCollection services)
 		=> services.AddOpenApi(options =>
 		{
-			options.AddDocumentTransformer((document, _, _) =>
+			options.AddDocumentTransformer(async (document, context, ct) =>
 			{
 				document.Info = new() { Title = "Libation daemon API", Version = LibationScaffolding.BuildVersion?.ToString() ?? "0" };
-				return Task.CompletedTask;
+
+				var schemas = document.Components ??= new();
+				schemas.Schemas ??= new Dictionary<string, Microsoft.OpenApi.IOpenApiSchema>();
+				var refs = new List<Microsoft.OpenApi.IOpenApiSchema>();
+				foreach (var type in EventTypes)
+				{
+					var schema = await context.GetOrCreateSchemaAsync(type, null, ct);
+					schemas.Schemas[type.Name] = schema;
+					refs.Add(new Microsoft.OpenApi.OpenApiSchemaReference(type.Name, document));
+				}
+				schemas.Schemas[nameof(EngineEvent)] = new Microsoft.OpenApi.OpenApiSchema
+				{
+					Description = "One server-sent event on /api/events; the SSE event name is the name of the matching schema.",
+					OneOf = refs
+				};
+
+				var stream = document.Paths?["/api/events"].Operations?[System.Net.Http.HttpMethod.Get];
+				if (stream?.Responses?["200"].Content?.TryGetValue("text/event-stream", out var media) == true)
+					media.Schema = new Microsoft.OpenApi.OpenApiSchemaReference(nameof(EngineEvent), document);
 			});
 			options.AddOperationTransformer((operation, _, _) =>
 			{
@@ -45,14 +63,54 @@ public static class ApiEndpoints
 				{
 					var nullability = new System.Reflection.NullabilityInfoContext();
 					foreach (var property in context.JsonTypeInfo.Properties)
+					{
+						if (StringEnums.TryGetValue($"{context.JsonTypeInfo.Type.Name}.{property.Name}", out var enumValues)
+							&& schema.Properties.TryGetValue(property.Name, out var member)
+							&& member is Microsoft.OpenApi.OpenApiSchema text)
+						{
+							var nullable = text.Type is { } type && type.HasFlag(Microsoft.OpenApi.JsonSchemaType.Null);
+							text.Enum = enumValues.Select(v => (System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(v))
+								.Concat(nullable ? [null] : []).ToList()!;
+						}
 						if (property.AttributeProvider is System.Reflection.PropertyInfo info
 							&& schema.Properties.ContainsKey(property.Name)
 							&& nullability.Create(info).ReadState != System.Reflection.NullabilityState.Nullable)
 							(schema.Required ??= new HashSet<string>()).Add(property.Name);
+					}
 				}
 				return Task.CompletedTask;
 			});
 		});
+
+	public static IReadOnlyList<Type> EventTypes { get; } = typeof(EngineEvent).Assembly.GetTypes()
+		.Where(t => t.IsSubclassOf(typeof(EngineEvent)) && !t.IsAbstract)
+		.OrderBy(t => t.Name, StringComparer.Ordinal)
+		.ToList();
+
+	private static string[] Names<TEnum>() where TEnum : struct, Enum
+		=> Enum.GetValues<TEnum>().Select(QueueMapper.Name).ToArray();
+
+	private static readonly string[] BookStatuses = [nameof(LiberatedStatus.NotLiberated), nameof(LiberatedStatus.Liberated), nameof(LiberatedStatus.Error)];
+
+	private static readonly Dictionary<string, string[]> StringEnums = new(StringComparer.OrdinalIgnoreCase)
+	{
+		["QueueJobDto.State"] = ["working", "queued"],
+		["FinishedJobDto.Result"] = Names<ProcessBookResult>(),
+		["FinishedJobDto.Status"] = Names<ProcessBookStatus>(),
+		["BookFinished.Result"] = Names<ProcessBookResult>(),
+		["BookFinished.Status"] = Names<ProcessBookStatus>(),
+		["BookDto.BookStatus"] = BookStatuses,
+		["BookDto.PdfStatus"] = BookStatuses,
+		["BookDetailDto.BookStatus"] = BookStatuses,
+		["BookDetailDto.PdfStatus"] = BookStatuses,
+		["JobLogLineDto.Level"] = Names<JobLogLevel>(),
+		["BookLog.Level"] = Names<JobLogLevel>(),
+		["PendingDecisionDto.Reason"] = Names<PauseReason>(),
+		["QueueWaitDto.Reason"] = Names<WaitReason>(),
+		["BulkItemDto.Result"] = [BulkResults.Ok, BulkResults.NotFound, BulkResults.Conflict],
+		["LocateScanDto.State"] = ["idle", "running", "completed", "failed"],
+		["CancelJobDto.Outcome"] = ["removed", "cancelling"]
+	};
 
 	private const string ExportOperation = "exportLibrary";
 

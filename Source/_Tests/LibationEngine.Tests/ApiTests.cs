@@ -583,6 +583,47 @@ public class ApiTests
 	}
 
 	[TestMethod]
+	public async Task OpenApi_types_result_and_status_as_string_enums_with_the_wire_values()
+	{
+		using var doc = await OpenApiDocument();
+		var schemas = doc.RootElement.GetProperty("components").GetProperty("schemas");
+		string[] Values(string schema, string property)
+		{
+			var node = schemas.GetProperty(schema).GetProperty("properties").GetProperty(property);
+			return node.GetProperty("enum").EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToArray();
+		}
+
+		foreach (var schema in new[] { "FinishedJobDto", "BookFinished" })
+		{
+			CollectionAssert.Contains(Values(schema, "result"), "failedRetry");
+			CollectionAssert.Contains(Values(schema, "result"), "success");
+			CollectionAssert.AreEquivalent(new[] { "queued", "cancelled", "working", "completed", "failed" }, Values(schema, "status"));
+		}
+		CollectionAssert.AreEquivalent(new[] { "working", "queued" }, Values("QueueJobDto", "state"));
+		CollectionAssert.AreEquivalent(new[] { "NotLiberated", "Liberated", "Error" }, Values("BookDto", "bookStatus"));
+		CollectionAssert.AreEquivalent(new[] { "NotLiberated", "Liberated", "Error" }, Values("BookDto", "pdfStatus"));
+	}
+
+	[TestMethod]
+	public async Task OpenApi_describes_every_engine_event()
+	{
+		using var doc = await OpenApiDocument();
+		var schemas = doc.RootElement.GetProperty("components").GetProperty("schemas");
+		var events = typeof(EngineEvent).Assembly.GetTypes().Where(t => t.IsSubclassOf(typeof(EngineEvent)) && !t.IsAbstract).ToList();
+		Assert.IsTrue(events.Count > 10);
+		foreach (var type in events)
+			Assert.IsTrue(schemas.TryGetProperty(type.Name, out _), $"no schema for {type.Name}");
+
+		var oneOf = schemas.GetProperty("EngineEvent").GetProperty("oneOf").EnumerateArray().Select(e => e.GetProperty("$ref").GetString()!).ToList();
+		Assert.AreEqual(events.Count, oneOf.Count);
+		Assert.IsTrue(oneOf.Contains("#/components/schemas/QueueChanged"));
+
+		var stream = doc.RootElement.GetProperty("paths").GetProperty("/api/events").GetProperty("get").GetProperty("responses").GetProperty("200").GetProperty("content").GetProperty("text/event-stream");
+		Assert.AreEqual("#/components/schemas/EngineEvent", stream.GetProperty("schema").GetProperty("$ref").GetString());
+		Assert.AreEqual("string", schemas.GetProperty("BookStarted").GetProperty("properties").GetProperty("jobId").GetProperty("type").GetString());
+	}
+
+	[TestMethod]
 	public async Task Podcast_parents_are_served_with_the_same_filter()
 	{
 		await using var h = new Harness(api: true);
