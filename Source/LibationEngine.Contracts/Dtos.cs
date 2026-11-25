@@ -358,3 +358,9 @@ public sealed record AudiobookshelfTestDto(bool Ok, string? ServerVersion = null
 public sealed record AudiobookshelfFolderDto(string Id, string Path);
 
 public sealed record AudiobookshelfLibraryDto(string Id, string Name, string MediaType, IReadOnlyList<AudiobookshelfFolderDto> Folders);
+
+/// <summary>One playable file of a book, as <c>GET /api/library/{asin}/audio/files</c> lists them in play order; <c>?file=</c> on the audio route takes Index. DurationSec is null when the format cannot be read.</summary>
+public sealed record AudioFileDto(int Index, string Name, string ContentType, long SizeBytes, double? DurationSec);
+
+/// <summary>StartSec runs across all files; FileStartSec is within the file at FileIndex. DurationSec is null when the file's length is unknown.</summary>
+public sealed record ChapterDto(int Index, string Title, double StartSec, double? DurationSec, int FileIndex, double FileStartSec);

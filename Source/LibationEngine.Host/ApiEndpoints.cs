@@ -58,7 +58,7 @@ public static class ApiEndpoints
 						schema.Enum = values.Select(v => (System.Text.Json.Nodes.JsonNode)System.Text.Json.Nodes.JsonValue.Create(v)!).ToList();
 				foreach (var (status, response) in operation.Responses?.ToList() ?? [])
 					foreach (var (contentType, media) in response.Content ?? new Dictionary<string, Microsoft.OpenApi.OpenApiMediaType>())
-						if (contentType == "image/jpeg" || operation.OperationId == ExportOperation && status == "200")
+						if (contentType == "image/jpeg" || contentType.StartsWith("audio/", StringComparison.Ordinal) || operation.OperationId == ExportOperation && status == "200")
 							media.Schema = new Microsoft.OpenApi.OpenApiSchema { Type = Microsoft.OpenApi.JsonSchemaType.String, Format = "binary" };
 				return Task.CompletedTask;
 			});
@@ -480,6 +480,70 @@ public static class ApiEndpoints
 			.Produces<byte[]>(StatusCodes.Status200OK, "image/jpeg")
 			.Produces(StatusCodes.Status304NotModified)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
+
+		api.MapGet("/library/{asin}/audio/files", async (string asin) =>
+		{
+			var audio = data.FindAudio(asin);
+			if (NoAudio(audio) is { } missing)
+				return missing;
+			try
+			{
+				var files = await Task.Run(() => AudioFiles.Describe(audio.Paths!));
+				return Results.Json(files.Select(f => new AudioFileDto(f.Index, f.Name, f.ContentType, f.SizeBytes, f.DurationSec)).ToList());
+			}
+			catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+			{
+				return Error(AudioMissing, StatusCodes.Status404NotFound);
+			}
+		}).WithSummary("A liberated book's playable audio files in play order: a single m4b or mp3 is one entry, a book split by chapter has one per part. durationSec is read from the file and null for formats without a reader. 404 unknown ASIN, not liberated, or files missing.")
+			.WithName("getBookAudioFiles").WithTags("library")
+			.Produces<List<AudioFileDto>>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
+
+		api.MapGet("/library/{asin}/audio", (HttpContext context, string asin, int? file) =>
+		{
+			var audio = data.FindAudio(asin);
+			if (NoAudio(audio) is { } missing)
+				return missing;
+			var index = file ?? 0;
+			if (index < 0 || index >= audio.Paths!.Count)
+				return Error("No such audio file.", StatusCodes.Status404NotFound);
+
+			var path = audio.Paths[index];
+			var info = new FileInfo(path);
+			if (!info.Exists)
+				return Error(AudioMissing, StatusCodes.Status404NotFound);
+
+			context.Response.Headers.CacheControl = "private";
+			var modified = new DateTimeOffset(info.LastWriteTimeUtc);
+			return Results.File(path, AudioFiles.ContentType(path), lastModified: modified,
+				entityTag: new Microsoft.Net.Http.Headers.EntityTagHeaderValue($"\"{info.Length:x}-{modified.UtcTicks:x}\""), enableRangeProcessing: true);
+		}).WithSummary("Streams one audio file of a liberated book, chosen by file (default 0, an index from audio/files), with Range support: 206 with Content-Range for a range, 200 for the whole file, 416 for an unsatisfiable one. Sends Accept-Ranges, ETag, Last-Modified and Cache-Control: private. The file is found server-side; no path is accepted. 404 unknown ASIN, not liberated, files missing or bad index.")
+			.WithName("streamBookAudio").WithTags("library")
+			.Produces<byte[]>(StatusCodes.Status200OK, "audio/mp4", "audio/mpeg")
+			.Produces<byte[]>(StatusCodes.Status206PartialContent, "audio/mp4", "audio/mpeg")
+			.Produces(StatusCodes.Status304NotModified)
+			.Produces(StatusCodes.Status416RangeNotSatisfiable)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
+
+		api.MapGet("/library/{asin}/chapters", async (string asin) =>
+		{
+			var audio = data.FindAudio(asin);
+			if (NoAudio(audio) is { } missing)
+				return missing;
+			try
+			{
+				var chapters = await Task.Run(() => AudioChapters.Build(AudioFiles.Describe(audio.Paths!), audio.CuePath));
+				return Results.Json(chapters.Select(c => new ChapterDto(c.Index, c.Title, c.StartSec, c.DurationSec, c.FileIndex, c.FileStartSec)).ToList());
+			}
+			catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+			{
+				return Error(AudioMissing, StatusCodes.Status404NotFound);
+			}
+		}).WithSummary("A liberated book's chapters across all its files: those embedded in the file (m4b chapters, mp3 CHAP frames or a CUESHEET tag), else the .cue beside a single-file book, else one chapter per file titled by file name. startSec is cumulative over the files, fileStartSec within fileIndex. 404 unknown ASIN, not liberated, or files missing.")
+			.WithName("getBookChapters").WithTags("library")
+			.Produces<List<ChapterDto>>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
 		api.MapPut("/library/{asin}/tags", async (string asin, TagsRequest? body) =>
@@ -929,6 +993,16 @@ public static class ApiEndpoints
 		=> asins is null || asins.Count == 0 ? Error("asins is required and must not be empty.", StatusCodes.Status400BadRequest)
 		: asins.Count > MaxBulk ? Error($"At most {MaxBulk} asins per request.", StatusCodes.Status400BadRequest)
 		: null;
+
+	private const string AudioMissing = "The book's audio files are missing.";
+
+	private static IResult? NoAudio(AudioLookup audio) => audio.Outcome switch
+	{
+		AudioOutcome.NoSuchBook => NoSuchBook(),
+		AudioOutcome.NotLiberated => Error("That book is not liberated.", StatusCodes.Status404NotFound),
+		AudioOutcome.FilesMissing => Error(AudioMissing, StatusCodes.Status404NotFound),
+		_ => null
+	};
 
 	private static IResult NoSuchBook() => Error("No such book.", StatusCodes.Status404NotFound);
 
