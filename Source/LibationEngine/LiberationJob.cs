@@ -307,7 +307,18 @@ public sealed class LiberationJob
 		return AddProcessable(create);
 	}
 	public LiberationJob AddConvertToMp3() => AddProcessable<ConvertToMp3>();
-	public LiberationJob AddUploadToAudiobookshelf() => AddProcessable<UploadToAudiobookshelf>();
+	public LiberationJob AddUploadToAudiobookshelf() => AddProcessable(config =>
+	{
+		var upload = UploadToAudiobookshelf.Create(config);
+		upload.OutcomeDetermined += (_, e) =>
+		{
+			if (e.Outcome is UploadToAudiobookshelf.UploadOutcome.Failed)
+				Emit(JobLogLevel.Error, e.Message);
+			else if (e.Outcome is UploadToAudiobookshelf.UploadOutcome.NoFilesFound)
+				Emit(JobLogLevel.Warning, e.Message);
+		};
+		return upload;
+	});
 	public LiberationJob AddSimulateBadBookFailure() => AddProcessable<SimulateBadBookFailure>();
 
 	private LiberationJob AddProcessable<T>() where T : Processable, IProcessable<T>

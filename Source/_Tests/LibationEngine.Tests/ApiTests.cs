@@ -16,7 +16,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 namespace LibationEngine.Tests;
 
 [TestClass]
-public class ApiTests
+public partial class ApiTests
 {
 	private string configDir = "";
 
@@ -189,6 +189,12 @@ public class ApiTests
 		public Task<IReadOnlyList<BulkItemDto>> BulkPurge(IReadOnlyList<string> asins)
 			=> Bulk("bulkpurge", asins);
 
+		public Task<AudiobookshelfTestDto> TestAudiobookshelf(string? url, string? token, CancellationToken ct)
+			=> new DbEngineData().TestAudiobookshelf(url, token, ct);
+
+		public Task<AudiobookshelfLibrariesResult> GetAudiobookshelfLibraries(CancellationToken ct)
+			=> new DbEngineData().GetAudiobookshelfLibraries(ct);
+
 		public SettingsDto GetSettings()
 			=> SettingsMapper.From(Configuration.Instance);
 
@@ -277,6 +283,12 @@ public class ApiTests
 				_ => Task.FromResult(0))
 			{
 				CreateBookJob = asin => asin == "B000000001" ? Job(asin) : null,
+				CreateUploadJob = asin => asin switch
+				{
+					"B000000001" => Liberated(Job(asin)),
+					"B000000002" => Job(asin),
+					_ => null
+				},
 				ScanAccounts = (selection, _) =>
 				{
 					ScanSubsets.Add(string.Join(',', selection.Accounts ?? []));
@@ -297,6 +309,12 @@ public class ApiTests
 			var contributor = Contributor.GetEmpty();
 			var book = new Book(new AudibleProductId(asin), $"Title {asin}", null, null, 1, ContentType.Product, [contributor], [contributor], "us");
 			return new LiberationJob(new LibraryBook(book, new DateTime(2026, 8, 10), "account"), Configuration.Instance, Queue.BadBookSession);
+		}
+
+		private static LiberationJob Liberated(LiberationJob job)
+		{
+			job.LibraryBook.Book.UserDefinedItem.BookStatus = LiberatedStatus.Liberated;
+			return job;
 		}
 
 		public void Enqueue(params LiberationJob[] jobs)
@@ -1332,7 +1350,7 @@ public class ApiTests
 	public async Task OpenApi_settings_patch_has_only_optional_fields()
 	{
 		var schemas = await SchemaDocument();
-		foreach (var name in new[] { "SettingsPatchRequest", "NamingPatch", "DownloadPatch", "Mp3Patch", "QueuePatch", "LibraryPatch", "ReplacementPatch" })
+		foreach (var name in new[] { "SettingsPatchRequest", "NamingPatch", "DownloadPatch", "Mp3Patch", "QueuePatch", "LibraryPatch", "AudiobookshelfPatch", "ReplacementPatch" })
 			CollectionAssert.AreEqual(Array.Empty<string>(), RequiredOrNone(schemas, name), name);
 		CollectionAssert.IsSubsetOf(new[] { "naming", "mp3", "folders", "logLevel", "replacementCharacters" }, Required(schemas, "SettingsDto"));
 		CollectionAssert.DoesNotContain(Required(schemas, "SettingsDto"), "restartRequired");
@@ -1351,11 +1369,11 @@ public class ApiTests
 
 		var json = JsonSerializer.Serialize(SettingsMapper.From(c), new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
-		foreach (var secret in new[] { "abs-token-VALUE", "abs.example.com", "lib-id-VALUE", "folder-id-VALUE" })
-			Assert.DoesNotContain(secret, json);
+		Assert.DoesNotContain("abs-token-VALUE", json);
 		StringAssert.Contains(json, "\"serverConfigured\":true");
+		StringAssert.Contains(json, "\"tokenSet\":true");
 		foreach (var name in typeof(SettingsDto).Assembly.GetTypes().Where(t => t.Name.EndsWith("SettingsDto")).SelectMany(t => t.GetProperties()).Select(p => p.Name))
-			Assert.IsFalse(name.Contains("Token") || name.Contains("Key") || name.Contains("Secret") || name.Contains("Password"), name);
+			Assert.IsFalse((name.Contains("Token") && name != "TokenSet") || name.Contains("Key") || name.Contains("Secret") || name.Contains("Password"), name);
 	}
 
 	[TestMethod]

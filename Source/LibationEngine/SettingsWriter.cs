@@ -3,6 +3,7 @@ using System.Text.Json;
 using AAXClean;
 using FileManager;
 using LibationEngine.Contracts;
+using ApplicationServices;
 using LibationFileManager;
 using LibationFileManager.Templates;
 using Serilog.Events;
@@ -24,7 +25,7 @@ public static class SettingsWriter
 	/// <summary>Keys whose change needs a daemon restart; none of the covered settings does.</summary>
 	public static readonly IReadOnlySet<string> RestartRequiredKeys = new HashSet<string>();
 
-	private static readonly HashSet<string> NullClears = ["inProgress"];
+	private static readonly HashSet<string> NullClears = ["inProgress", "audiobookshelf.serverUrl", "audiobookshelf.apiToken", "audiobookshelf.libraryId", "audiobookshelf.folderId"];
 
 	private static readonly NAudio.Lame.EncoderQuality[] EncoderQualities =
 		[NAudio.Lame.EncoderQuality.High, NAudio.Lame.EncoderQuality.Standard, NAudio.Lame.EncoderQuality.Fast];
@@ -297,10 +298,96 @@ public static class SettingsWriter
 			SetBool("library.savePodcastsToParentFolder", l.SavePodcastsToParentFolder, () => c.SavePodcastsToParentFolder, v => c.SavePodcastsToParentFolder = v);
 		}
 
+		if (r.Audiobookshelf is { } abs)
+			PlanAudiobookshelf(c, body.GetProperty("audiobookshelf"), abs, errors, Set<string?>, SetBool);
+
 		SetEnum("logLevel", r.LogLevel, () => c.LogLevel, v => c.LogLevel = v);
 
 		if (r.ReplacementCharacters is { } rows && ReplacementsFrom(rows, errors) is { } replacements)
 			Set("replacementCharacters", replacements, () => c.ReplacementCharacters, v => c.ReplacementCharacters = v);
+	}
+
+	private static void PlanAudiobookshelf(
+		Configuration c,
+		JsonElement body,
+		AudiobookshelfPatch a,
+		Dictionary<string, string> errors,
+		Action<string, string?, Func<string?>, Action<string?>> set,
+		Action<string, bool?, Func<bool>, Action<bool>> setBool)
+	{
+		setBool("audiobookshelf.enabled", a.Enabled, () => c.AudiobookshelfEnabled, v => c.AudiobookshelfEnabled = v);
+		setBool("audiobookshelf.includePdfs", a.IncludePdfs, () => c.AudiobookshelfIncludePdfs, v => c.AudiobookshelfIncludePdfs = v);
+
+		bool Present(string name, out bool isNull)
+		{
+			isNull = body.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Null;
+			return body.TryGetProperty(name, out _);
+		}
+
+		string? Text(string key, string? value)
+		{
+			if (!string.IsNullOrWhiteSpace(value))
+				return value.Trim();
+			errors[key] = "Must not be blank; send null to clear it.";
+			return null;
+		}
+
+		if (Present("serverUrl", out var urlNull))
+		{
+			if (urlNull)
+				set("audiobookshelf.serverUrl", null, () => c.AudiobookshelfServerUrl, v => c.AudiobookshelfServerUrl = v);
+			else if (Text("audiobookshelf.serverUrl", a.ServerUrl) is { } url)
+			{
+				if (AudiobookshelfApiService.TryValidateServerUrl(url, out var normalized, out var problem))
+					set("audiobookshelf.serverUrl", normalized, () => c.AudiobookshelfServerUrl, v => c.AudiobookshelfServerUrl = v);
+				else
+					errors["audiobookshelf.serverUrl"] = problem;
+			}
+		}
+
+		if (Present("apiToken", out var tokenNull))
+		{
+			if (tokenNull)
+				set("audiobookshelf.apiToken", null, () => c.AudiobookshelfApiToken, v => c.AudiobookshelfApiToken = v);
+			else if (Text("audiobookshelf.apiToken", a.ApiToken) is { } token)
+				set("audiobookshelf.apiToken", AudiobookshelfTokenStorage.EncryptToken(token), () => c.AudiobookshelfApiToken, v => c.AudiobookshelfApiToken = v);
+		}
+
+		var libraryId = c.AudiobookshelfLibraryId;
+		var libraryChanged = false;
+		var libraryOk = true;
+		if (Present("libraryId", out var libraryNull))
+		{
+			if (libraryNull)
+			{
+				libraryId = null;
+				libraryChanged = true;
+				set("audiobookshelf.libraryId", null, () => c.AudiobookshelfLibraryId, v => c.AudiobookshelfLibraryId = v);
+			}
+			else if (Text("audiobookshelf.libraryId", a.LibraryId) is { } id)
+			{
+				libraryChanged = id != libraryId;
+				libraryId = id;
+				set("audiobookshelf.libraryId", id, () => c.AudiobookshelfLibraryId, v => c.AudiobookshelfLibraryId = v);
+			}
+			else
+				libraryOk = false;
+		}
+
+		if (Present("folderId", out var folderNull))
+		{
+			if (folderNull)
+				set("audiobookshelf.folderId", null, () => c.AudiobookshelfFolderId, v => c.AudiobookshelfFolderId = v);
+			else if (Text("audiobookshelf.folderId", a.FolderId) is { } folder)
+			{
+				if (string.IsNullOrWhiteSpace(libraryId))
+					errors["audiobookshelf.folderId"] = "Requires libraryId.";
+				else
+					set("audiobookshelf.folderId", folder, () => c.AudiobookshelfFolderId, v => c.AudiobookshelfFolderId = v);
+			}
+		}
+		else if (libraryOk && libraryChanged && !string.IsNullOrWhiteSpace(c.AudiobookshelfFolderId))
+			set("audiobookshelf.folderId", null, () => c.AudiobookshelfFolderId, v => c.AudiobookshelfFolderId = v);
 	}
 
 	private static string? CheckFolder(string key, string path, Dictionary<string, string> errors)

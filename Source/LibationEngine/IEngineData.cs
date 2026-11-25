@@ -21,6 +21,9 @@ public static class BulkResults
 		=> new(results.Count(r => r.Result == Ok), results.Where(r => r.Result == NotFound).Select(r => r.Asin).ToList(), results);
 }
 
+/// <summary>Libraries is null when the call failed; Code is an <c>AudiobookshelfApiService.TestCodes</c> value.</summary>
+public sealed record AudiobookshelfLibrariesResult(IReadOnlyList<AudiobookshelfLibraryDto>? Libraries, string? Error = null, string? Code = null);
+
 public enum AccountOutcome { Ok, NotFound, Ambiguous }
 
 public sealed record AccountResult(AccountOutcome Outcome, AccountDto? Account = null);
@@ -95,6 +98,12 @@ public interface IEngineData
 	/// <summary>Validates every key before applying any; a rejected patch changes nothing.</summary>
 	/// <exception cref="IOException">Settings.json cannot be written; earlier changes in the patch are rolled back.</exception>
 	SettingsUpdateResult UpdateSettings(System.Text.Json.JsonElement patch);
+
+	/// <summary>Omitted <paramref name="url"/> and <paramref name="token"/> fall back to the saved ones; failures are reported in the result, not thrown.</summary>
+	Task<AudiobookshelfTestDto> TestAudiobookshelf(string? url, string? token, CancellationToken ct);
+
+	/// <summary>Book libraries on the saved Audiobookshelf server.</summary>
+	Task<AudiobookshelfLibrariesResult> GetAudiobookshelfLibraries(CancellationToken ct);
 
 	/// <summary><paramref name="kind"/> is one of <see cref="TemplatePreview.Kinds"/>; BookFound is false when <paramref name="asin"/> is given but unknown.</summary>
 	TemplatePreviewResult PreviewTemplate(string kind, string template, string? asin);

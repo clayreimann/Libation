@@ -43,7 +43,14 @@ public static class SettingsMapper
 			c.DailyDownloadLimitUnit.ToString(),
 			c.BadBook.ToString()),
 		new(c.ImportEpisodes, c.ImportPlusTitles, c.DownloadEpisodes, c.AutoDownloadEpisodes, c.SavePodcastsToParentFolder),
-		new(c.AudiobookshelfEnabled, c.AudiobookshelfIncludePdfs, !string.IsNullOrWhiteSpace(c.AudiobookshelfServerUrl)),
+		new(
+			c.AudiobookshelfEnabled,
+			c.AudiobookshelfIncludePdfs,
+			!string.IsNullOrWhiteSpace(c.AudiobookshelfServerUrl),
+			string.IsNullOrWhiteSpace(c.AudiobookshelfServerUrl) ? null : c.AudiobookshelfServerUrl,
+			!string.IsNullOrWhiteSpace(c.AudiobookshelfApiToken),
+			string.IsNullOrWhiteSpace(c.AudiobookshelfLibraryId) ? null : c.AudiobookshelfLibraryId,
+			string.IsNullOrWhiteSpace(c.AudiobookshelfFolderId) ? null : c.AudiobookshelfFolderId),
 		new(
 			c.LameTargetBitrate,
 			c.LameBitrate,

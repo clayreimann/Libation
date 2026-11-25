@@ -159,7 +159,7 @@ public static class ApiEndpoints
 			await next();
 		});
 
-	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null, LoginSessions? logins = null)
+	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null, LoginSessions? logins = null, Func<string, LiberationJob?>? createUploadJob = null)
 	{
 		logins ??= new LoginSessions(new AudibleLoginBackend());
 		IReadOnlyList<AccountDto> Accounts()
@@ -656,7 +656,7 @@ public static class ApiEndpoints
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
 
 		api.MapGet("/settings", () => data.GetSettings())
-			.WithSummary("Curated settings: Books and working folders (with whether each exists and is writable), naming templates, download, MP3, queue, library and logging options, and character replacements. Secrets are never returned.")
+			.WithSummary("Curated settings: Books and working folders (with whether each exists and is writable), naming templates, download, MP3, queue, library, Audiobookshelf (audiobookshelf.tokenSet says whether an API token is saved; the token is never returned) and logging options, and character replacements. Secrets are never returned.")
 			.WithName("getSettings").WithTags("settings")
 			.Produces<SettingsDto>(StatusCodes.Status200OK);
 
@@ -690,7 +690,7 @@ public static class ApiEndpoints
 					? Results.Json(result.Settings)
 					: FieldErrors("Some settings are invalid; nothing was changed.", result.Errors!);
 			}
-		}).WithSummary("Changes the settings named in the body; absent keys are untouched and every key is validated before any is applied. Body mirrors GET /api/settings, so naming.folderTemplate is {\"naming\":{\"folderTemplate\":\"...\"}}. A null inProgress resets it; other keys reject null. 200 with the updated settings (restartRequired lists keys that need a restart), 400 with fields keyed by dotted setting name, 409 when the config is read-only or Settings.json cannot be written.")
+		}).WithSummary("Changes the settings named in the body; absent keys are untouched and every key is validated before any is applied. Body mirrors GET /api/settings, so naming.folderTemplate is {\"naming\":{\"folderTemplate\":\"...\"}}. A null inProgress resets it; audiobookshelf.serverUrl, apiToken, libraryId and folderId accept null to clear (apiToken is write-only); other keys reject null. 200 with the updated settings (restartRequired lists keys that need a restart), 400 with fields keyed by dotted setting name, 409 when the config is read-only or Settings.json cannot be written.")
 			.WithName("patchSettings").WithTags("settings")
 			.Accepts<SettingsPatchRequest>("application/json")
 			.Produces<SettingsDto>(StatusCodes.Status200OK)
@@ -711,6 +711,81 @@ public static class ApiEndpoints
 			.Produces<TemplatePreviewDto>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
 			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
+
+		api.MapPost("/audiobookshelf/test", async (AudiobookshelfTestRequest? body, CancellationToken ct) =>
+		{
+			if (body?.Url is { } u && string.IsNullOrWhiteSpace(u))
+				return Error("url must not be blank; omit it to test the saved one.", StatusCodes.Status400BadRequest);
+			if (body?.Token is { } t && string.IsNullOrWhiteSpace(t))
+				return Error("token must not be blank; omit it to test the saved one.", StatusCodes.Status400BadRequest);
+			if (body?.Url is { } url && body.Token is null
+				&& ApplicationServices.AudiobookshelfApiService.TryValidateServerUrl(url, out var normalized, out _)
+				&& !string.Equals(normalized, data.GetSettings().Audiobookshelf.ServerUrl, StringComparison.OrdinalIgnoreCase))
+				return Error("token is required when testing a url other than the saved one.", StatusCodes.Status400BadRequest);
+			return Results.Json(await data.TestAudiobookshelf(body?.Url?.Trim(), body?.Token?.Trim(), ct));
+		}).WithSummary("Tests an Audiobookshelf connection with {\"url\":\"...\",\"token\":\"...\"}, both optional and using the saved value when omitted, so unsaved settings can be checked. 200 with ok, serverVersion and user, or ok false with error and code (badUrl, unreachable, unauthorized, serverError, notConfigured); the token is never echoed. 400 for a blank field or a url other than the saved one without a token.")
+			.WithName("testAudiobookshelf").WithTags("audiobookshelf")
+			.Accepts<AudiobookshelfTestRequest>("application/json")
+			.Produces<AudiobookshelfTestDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapGet("/audiobookshelf/libraries", async (CancellationToken ct) =>
+		{
+			var abs = data.GetSettings().Audiobookshelf;
+			if (!abs.ServerConfigured || !abs.TokenSet)
+				return Error("Audiobookshelf has no saved server URL and API token.", StatusCodes.Status409Conflict);
+			var result = await data.GetAudiobookshelfLibraries(ct);
+			return result.Libraries is { } libraries
+				? Results.Json(libraries)
+				: result.Code == ApplicationServices.AudiobookshelfApiService.TestCodes.NotConfigured
+					? Error(result.Error!, StatusCodes.Status409Conflict)
+					: Results.Json(new ErrorDto(result.Error!, result.Code), statusCode: StatusCodes.Status502BadGateway);
+		}).WithSummary("Book libraries on the saved Audiobookshelf server with their folders, for choosing audiobookshelf.libraryId and folderId. 200, 409 when no server URL and token are saved, 502 when the server cannot be reached or rejects the token (code is unreachable, unauthorized or serverError).")
+			.WithName("getAudiobookshelfLibraries").WithTags("audiobookshelf")
+			.Produces<IReadOnlyList<AudiobookshelfLibraryDto>>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict)
+			.Produces<ErrorDto>(StatusCodes.Status502BadGateway);
+
+		api.MapPost("/audiobookshelf/upload", (BulkRequest? body) =>
+		{
+			if (Validate(body?.Asins) is { } invalid)
+				return invalid;
+			var abs = data.GetSettings().Audiobookshelf;
+			if (!abs.Enabled || !abs.ServerConfigured || !abs.TokenSet || abs.LibraryId is null || abs.FolderId is null)
+				return Error("Audiobookshelf is not fully configured: it must be enabled with a server URL, API token, library and folder.", StatusCodes.Status409Conflict);
+			var results = new List<BulkItemDto>();
+			lock (enqueueLock)
+			{
+				var active = queue.Jobs.GetAllItems().Except(queue.Jobs.Completed)
+					.Select(j => j.LibraryBook.Book.AudibleProductId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+				var jobs = new List<LiberationJob>();
+				foreach (var asin in Distinct(body!.Asins!))
+				{
+					if (active.Contains(asin))
+						results.Add(new(asin, BulkResults.Conflict));
+					else if (createUploadJob?.Invoke(asin) is not { } job)
+						results.Add(new(asin, BulkResults.NotFound));
+					else if (!AudiobookshelfUploadJob.IsLiberated(job))
+						results.Add(new(asin, BulkResults.Conflict));
+					else
+					{
+						jobs.Add(job);
+						results.Add(new(asin, BulkResults.Ok));
+					}
+				}
+				if (jobs.Count > 0)
+				{
+					queue.Jobs.Enqueue(jobs);
+					queue.StartOrWake();
+				}
+			}
+			return Results.Json(BulkResults.Summarize(results), statusCode: StatusCodes.Status202Accepted);
+		}).WithSummary("Queues upload-only jobs for books that are already liberated, which run through the queue like any other job. conflict means the book is not liberated or already has a queued job; notFound is an unknown ASIN. 202 with a result per ASIN, 400 bad body or over 5000 ASINs, 409 when Audiobookshelf is not enabled and fully configured.")
+			.WithName("uploadToAudiobookshelf").WithTags("audiobookshelf")
+			.Accepts<BulkRequest>("application/json")
+			.Produces<BulkResultDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapPost("/scan", (ScanRequest? body) =>
 		{

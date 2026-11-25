@@ -228,7 +228,8 @@ public sealed record LibrarySettingsDto(
 	bool AutoDownloadEpisodes,
 	bool SavePodcastsToParentFolder);
 
-public sealed record AudiobookshelfSettingsDto(bool Enabled, bool IncludePdfs, bool ServerConfigured);
+/// <summary>Enabled is auto-upload after liberation; the API token is never returned, only whether one is set.</summary>
+public sealed record AudiobookshelfSettingsDto(bool Enabled, bool IncludePdfs, bool ServerConfigured, string? ServerUrl, bool TokenSet, string? LibraryId, string? FolderId);
 
 public sealed record Mp3SettingsDto(
 	bool TargetBitrate,
@@ -303,6 +304,9 @@ public sealed record QueuePatch(string? DailyDownloadLimit, int? DailyDownloadLi
 
 public sealed record LibraryPatch(bool? ImportEpisodes, bool? ImportPlusTitles, bool? DownloadEpisodes, bool? AutoDownloadEpisodes, bool? SavePodcastsToParentFolder);
 
+/// <summary>ApiToken is write-only. Null clears ServerUrl, ApiToken, LibraryId or FolderId; naming a new LibraryId without a FolderId clears the folder.</summary>
+public sealed record AudiobookshelfPatch(bool? Enabled, bool? IncludePdfs, string? ServerUrl, string? ApiToken, string? LibraryId, string? FolderId);
+
 public sealed record ReplacementPatch(string? Character, string? Replacement, string? Description);
 
 /// <summary>Body of <c>PATCH /api/settings</c>; only present keys change. A null InProgress resets it to the default; every other key rejects null.</summary>
@@ -314,6 +318,7 @@ public sealed record SettingsPatchRequest(
 	Mp3Patch? Mp3,
 	QueuePatch? Queue,
 	LibraryPatch? Library,
+	AudiobookshelfPatch? Audiobookshelf,
 	string? LogLevel,
 	IReadOnlyList<ReplacementPatch>? ReplacementCharacters);
 
@@ -343,3 +348,13 @@ public sealed record LoginCancelDto(string LoginId);
 
 /// <summary>One open sign-in as <c>GET /api/accounts/login</c> lists it; Url is the sign-in address, never a response URL.</summary>
 public sealed record PendingLoginDto(string LoginId, string AccountId, string Locale, string Url, DateTimeOffset ExpiresAt);
+
+/// <summary>Body of <c>POST /api/audiobookshelf/test</c>; omitted fields use the saved ones.</summary>
+public sealed record AudiobookshelfTestRequest(string? Url, string? Token);
+
+/// <summary>Code is unreachable, unauthorized, badUrl, notConfigured or serverError when Ok is false.</summary>
+public sealed record AudiobookshelfTestDto(bool Ok, string? ServerVersion = null, string? User = null, string? Error = null, string? Code = null);
+
+public sealed record AudiobookshelfFolderDto(string Id, string Path);
+
+public sealed record AudiobookshelfLibraryDto(string Id, string Name, string MediaType, IReadOnlyList<AudiobookshelfFolderDto> Folders);

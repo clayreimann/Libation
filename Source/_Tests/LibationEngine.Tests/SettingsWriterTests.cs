@@ -235,7 +235,7 @@ public class SettingsWriterTests
 	[TestMethod]
 	public void The_response_never_carries_secrets()
 	{
-		var json = JsonSerializer.Serialize(Apply("""{"download":{"createCueSheet":true}}""").Settings);
+		var json = JsonSerializer.Serialize(Apply("""{"download":{"createCueSheet":true}}""").Settings).Replace("TokenSet", "");
 
 		foreach (var word in new[] { "token", "password", "secret", "apikey" })
 			Assert.IsFalse(json.Contains(word, StringComparison.OrdinalIgnoreCase), word);

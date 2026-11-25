@@ -290,6 +290,33 @@ public sealed class DbEngineData : IEngineData
 
 	public SettingsDto GetSettings() => SettingsMapper.From(LibationFileManager.Configuration.Instance);
 
+	public async Task<AudiobookshelfTestDto> TestAudiobookshelf(string? url, string? token, CancellationToken ct)
+	{
+		var config = LibationFileManager.Configuration.Instance;
+		url ??= config.AudiobookshelfServerUrl;
+		token ??= config.AudiobookshelfApiToken;
+		if (string.IsNullOrWhiteSpace(url))
+			return new(false, Error: "No server URL is saved.", Code: AudiobookshelfApiService.TestCodes.NotConfigured);
+		var result = await AudiobookshelfApiService.TestConnectionAsync(url, token, ct);
+		return new(result.Ok, result.ServerVersion, result.User, result.Error, result.Code);
+	}
+
+	public async Task<AudiobookshelfLibrariesResult> GetAudiobookshelfLibraries(CancellationToken ct)
+	{
+		var config = LibationFileManager.Configuration.Instance;
+		if (string.IsNullOrWhiteSpace(config.AudiobookshelfServerUrl) || string.IsNullOrWhiteSpace(config.AudiobookshelfApiToken))
+			return new(null, "Audiobookshelf has no saved server URL and API token.", AudiobookshelfApiService.TestCodes.NotConfigured);
+		try
+		{
+			var libraries = await AudiobookshelfApiService.GetLibrariesAsync(config.AudiobookshelfServerUrl, config.AudiobookshelfApiToken).WaitAsync(ct);
+			return new(libraries.Select(l => new AudiobookshelfLibraryDto(l.Id, l.Name, l.MediaType, l.Folders.Select(f => new AudiobookshelfFolderDto(f.Id, f.FullPath)).ToList())).ToList());
+		}
+		catch (Exception ex) when (ex is ArgumentException or HttpRequestException or Newtonsoft.Json.JsonException)
+		{
+			return new(null, ex.Message, AudiobookshelfApiService.ClassifyFailure(ex));
+		}
+	}
+
 	private static readonly object SettingsGate = new();
 
 	public SettingsUpdateResult UpdateSettings(System.Text.Json.JsonElement patch)

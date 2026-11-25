@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ApplicationServices;
@@ -67,6 +68,28 @@ public static class AudiobookshelfApiService
 			return authority;
 
 		return authority + path.TrimEnd('/');
+	}
+
+	/// <summary>Stricter than <see cref="NormalizeServerUrl"/>: needs an explicit http(s) scheme and no embedded credentials.</summary>
+	public static bool TryValidateServerUrl(string? serverUrl, out string normalized, out string problem)
+	{
+		normalized = "";
+		problem = "Must be an absolute http or https URL, for example https://abs.example.com.";
+		var trimmed = serverUrl?.Trim();
+		if (string.IsNullOrEmpty(trimmed)
+			|| !Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
+			|| (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+			|| string.IsNullOrWhiteSpace(uri.Host))
+			return false;
+
+		if (!string.IsNullOrEmpty(uri.UserInfo))
+		{
+			problem = "Must not contain a user name or password.";
+			return false;
+		}
+
+		normalized = NormalizeServerUrl(trimmed);
+		return true;
 	}
 
 	private static string StripClientRoutesAndApi(string absolutePath)
@@ -166,7 +189,9 @@ public static class AudiobookshelfApiService
 		{
 			return new HttpRequestException(
 				$"Audiobookshelf rejected the API token ({code} {statusCode}). " +
-				$"Check that the token is correct and not expired. Server: {normalizedUrl}");
+				$"Check that the token is correct and not expired. Server: {normalizedUrl}",
+				null,
+				statusCode);
 		}
 
 		if (statusCode == HttpStatusCode.NotFound)
@@ -177,11 +202,15 @@ public static class AudiobookshelfApiService
 				"(for example http://localhost:13378 or https://abs.example.com), " +
 				"not a library or book page from the browser. " +
 				"If Audiobookshelf is served under a subpath, include that subpath " +
-				$"(for example http://host/audiobookshelf). Response: {bodyPreview}");
+				$"(for example http://host/audiobookshelf). Response: {bodyPreview}",
+				null,
+				statusCode);
 		}
 
 		return new HttpRequestException(
-			$"Audiobookshelf API returned {code} ({statusCode}) when fetching libraries from {normalizedUrl}. Response: {bodyPreview}");
+			$"Audiobookshelf API returned {code} ({statusCode}) when fetching libraries from {normalizedUrl}. Response: {bodyPreview}",
+			null,
+			statusCode);
 	}
 
 	private static string SummarizeErrorBody(string errorBody)
@@ -195,6 +224,64 @@ public static class AudiobookshelfApiService
 			return trimmed;
 
 		return trimmed[..maxLen] + "...";
+	}
+
+	public static class TestCodes
+	{
+		public const string BadUrl = "badUrl", Unreachable = "unreachable", Unauthorized = "unauthorized", ServerError = "serverError", NotConfigured = "notConfigured";
+	}
+
+	public sealed record TestResult(bool Ok, string? ServerVersion = null, string? User = null, string? Error = null, string? Code = null);
+
+	/// <summary>Maps a failed library fetch to a <see cref="TestCodes"/> value.</summary>
+	public static string ClassifyFailure(Exception ex) => ex switch
+	{
+		ArgumentException => TestCodes.BadUrl,
+		HttpRequestException { StatusCode: HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden } => TestCodes.Unauthorized,
+		HttpRequestException { StatusCode: not null } => TestCodes.ServerError,
+		HttpRequestException => TestCodes.Unreachable,
+		_ => TestCodes.ServerError
+	};
+
+	/// <summary>Probes <c>POST api/authorize</c>; messages never include the token.</summary>
+	public static async Task<TestResult> TestConnectionAsync(string? serverUrl, string? apiToken, CancellationToken ct = default)
+	{
+		if (!TryValidateServerUrl(serverUrl, out var url, out var problem))
+			return new(false, Error: problem, Code: TestCodes.BadUrl);
+		apiToken = AudiobookshelfTokenStorage.DecryptToken(apiToken)?.Trim();
+		if (string.IsNullOrEmpty(apiToken))
+			return new(false, Error: "An API token is required.", Code: TestCodes.Unauthorized);
+
+		using var client = CreateClient(url);
+		client.Timeout = TimeSpan.FromSeconds(15);
+		client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiToken);
+
+		try
+		{
+			using var response = await client.PostAsync("api/authorize", null, ct);
+			if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+				return new(false, Error: "Audiobookshelf rejected the API token.", Code: TestCodes.Unauthorized);
+			if (!response.IsSuccessStatusCode)
+				return new(false, Error: $"Audiobookshelf answered {(int)response.StatusCode}; check that the URL is the server's base address.", Code: TestCodes.ServerError);
+
+			try
+			{
+				var body = JObject.Parse(await response.Content.ReadAsStringAsync(ct));
+				return new(true, body["serverSettings"]?["version"]?.Value<string>(), body["user"]?["username"]?.Value<string>());
+			}
+			catch (JsonException)
+			{
+				return new(false, Error: "That address answered, but not like an Audiobookshelf server.", Code: TestCodes.ServerError);
+			}
+		}
+		catch (HttpRequestException)
+		{
+			return new(false, Error: $"Could not reach Audiobookshelf at {url}.", Code: TestCodes.Unreachable);
+		}
+		catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+		{
+			return new(false, Error: $"Timed out reaching Audiobookshelf at {url}.", Code: TestCodes.Unreachable);
+		}
 	}
 
 	public sealed record ConnectResult(

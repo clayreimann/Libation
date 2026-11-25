@@ -67,4 +67,18 @@ public class AudiobookshelfServerUrlTests
 	{
 		Assert.ThrowsExactly<ArgumentException>(() => AudiobookshelfApiService.NormalizeServerUrl(input));
 	}
+
+	[TestMethod]
+	[DataRow("https://abs.example.com/library/x", true, "https://abs.example.com")]
+	[DataRow("http://localhost:13378", true, "http://localhost:13378")]
+	[DataRow("abs.example.com", false, "")]
+	[DataRow("ftp://abs.example.com", false, "")]
+	[DataRow("https://user:pw@abs.example.com", false, "")]
+	[DataRow("/relative", false, "")]
+	public void TryValidateServerUrl_needs_an_explicit_http_scheme_and_no_credentials(string input, bool valid, string expected)
+	{
+		AudiobookshelfApiService.TryValidateServerUrl(input, out var normalized, out var problem).Should().Be(valid);
+		normalized.Should().Be(expected);
+		(problem.Length > 0).Should().BeTrue();
+	}
 }
