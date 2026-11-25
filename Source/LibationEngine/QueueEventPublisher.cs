@@ -8,10 +8,14 @@ public sealed class QueueEventPublisher
 {
 	public static readonly TimeSpan ProgressInterval = TimeSpan.FromSeconds(1);
 
+	public static readonly TimeSpan QueueChangeInterval = TimeSpan.FromMilliseconds(100);
+
 	/// <summary>Info lines per book per second; warnings and errors are never held back.</summary>
 	public const int InfoLinesPerSecond = 20;
 
 	private readonly EventBroadcaster _events;
+	private readonly LiberationQueue _queue;
+	private int _queueChangePending;
 	private readonly TimeProvider _time;
 	private readonly ConcurrentDictionary<JobId, long> _lastProgress = new();
 	private readonly Dictionary<JobId, (long Start, int Count)> _logWindows = [];
@@ -19,8 +23,12 @@ public sealed class QueueEventPublisher
 	public QueueEventPublisher(LiberationQueue queue, EventBroadcaster events, TimeProvider? time = null)
 	{
 		_events = events;
+		_queue = queue;
 		_time = time ?? TimeProvider.System;
 
+		queue.Jobs.CollectionChanged += (_, _) => QueueChanged();
+		queue.RunStarted += (_, _) => QueueChanged();
+		queue.RunEnded += (_, _) => QueueChanged();
 		queue.JobStarted += (_, job) => Started(job);
 		queue.JobEnded += (_, job) => Ended(job);
 		queue.DispatchPauseChanged += (_, _) => events.Publish(queue.DispatchPaused ? new QueueDispatchPaused() : new QueueDispatchResumed());
@@ -28,6 +36,18 @@ public sealed class QueueEventPublisher
 		queue.QueueResumed += (_, resolved) => events.Publish(new QueueResumed(resolved.Id.Value, QueueMapper.Name(resolved.Decision.Kind)));
 		queue.QueueWaiting += (_, wait) => events.Publish(new QueueWaiting(QueueMapper.ToDto(wait)));
 		queue.QueueWaitEnded += (_, wait) => events.Publish(new QueueWaitEnded(wait.Id.Value, QueueMapper.Name(wait.Reason)));
+	}
+
+	private void QueueChanged()
+	{
+		if (Interlocked.Exchange(ref _queueChangePending, 1) == 1)
+			return;
+
+		_ = Task.Delay(QueueChangeInterval, _time).ContinueWith(_ =>
+		{
+			Volatile.Write(ref _queueChangePending, 0);
+			_events.Publish(new QueueChanged(QueueMapper.Snapshot(_queue)));
+		}, TaskScheduler.Default);
 	}
 
 	private void Started(LiberationJob job)

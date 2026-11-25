@@ -107,6 +107,35 @@ public class QueueEventPublisherTests
 	}
 
 	[TestMethod]
+	public async Task queue_changes_from_any_source_publish_one_coalesced_snapshot()
+	{
+		var h = new Harness();
+		var (a, b, c) = (h.Job("B000000001"), h.Job("B000000002"), h.Job("B000000003"));
+		h.Queue.SetDispatchPaused(true);
+		h.Queue.Jobs.Enqueue([a, b]);
+		h.Queue.Jobs.Enqueue([c]);
+
+		await Task.Delay(50);
+		Assert.AreEqual(0, h.Drain().OfType<QueueChanged>().Count(), "held back until the interval passes");
+
+		h.Clock.Advance(QueueEventPublisher.QueueChangeInterval);
+		await Eventually(() => h.Subscription.Reader.TryPeek(out _));
+		var changed = h.Drain().OfType<QueueChanged>().ToList();
+		Assert.AreEqual(1, changed.Count, "two enqueues, one event");
+		CollectionAssert.AreEqual(new[] { "B000000001", "B000000002", "B000000003" }, changed[0].Queue.Jobs.Select(j => j.Asin).ToArray());
+
+		h.Queue.MoveJob(c.Id, QueuePosition.First);
+		h.Clock.Advance(QueueEventPublisher.QueueChangeInterval);
+		await Eventually(() => h.Subscription.Reader.TryPeek(out _));
+		Assert.AreEqual("B000000003", h.Drain().OfType<QueueChanged>().Single().Queue.Jobs[0].Asin);
+
+		await h.Queue.CancelJobAsync(b.Id);
+		h.Clock.Advance(QueueEventPublisher.QueueChangeInterval);
+		await Eventually(() => h.Subscription.Reader.TryPeek(out _));
+		CollectionAssert.AreEqual(new[] { "B000000003", "B000000001" }, h.Drain().OfType<QueueChanged>().Single().Queue.Jobs.Select(j => j.Asin).ToArray());
+	}
+
+	[TestMethod]
 	public async Task progress_is_published_at_most_once_a_second_per_book()
 	{
 		var h = new Harness();
