@@ -1,4 +1,5 @@
 using ApplicationServices;
+using AudibleApi;
 using AudibleUtilities;
 using DataLayer;
 using LibationEngine.Contracts;
@@ -12,6 +13,43 @@ public sealed class DbEngineData : IEngineData
 	{
 		using var persister = AudibleApiStorage.GetAccountsSettingsPersister();
 		return persister.AccountsSettings.Accounts.Select(ToDto).ToList();
+	}
+
+	public AccountResult UpdateAccount(string accountId, string? locale, string? accountName, bool? libraryScan)
+		=> Edit(accountId, locale, (persister, account) =>
+		{
+			if (accountName is not null)
+				account.AccountName = accountName;
+			if (libraryScan is { } scan)
+				account.LibraryScan = scan;
+			return ToDto(account);
+		});
+
+	public AccountResult DeleteAccount(string accountId, string? locale)
+		=> Edit(accountId, locale, (persister, account) =>
+		{
+			var dto = ToDto(account);
+			persister.AccountsSettings.Delete(account);
+			return dto;
+		});
+
+	private static AccountResult Edit(string accountId, string? locale, Func<AccountsSettingsPersister, Account, AccountDto> change)
+	{
+		using var persister = AudibleApiStorage.GetAccountsSettingsPersister();
+		var wanted = string.IsNullOrWhiteSpace(locale) ? null : Localization.Get(locale.Trim()).Name;
+		var matches = persister.AccountsSettings.Accounts
+			.Where(a => string.Equals(a.AccountId, accountId.Trim(), StringComparison.OrdinalIgnoreCase)
+				&& (string.IsNullOrWhiteSpace(locale) || (wanted is { Length: > 0 } && a.Locale?.Name == wanted)))
+			.ToList();
+		if (matches.Count == 0)
+			return new(AccountOutcome.NotFound);
+		if (matches.Count > 1)
+			return new(AccountOutcome.Ambiguous);
+
+		persister.BeginTransation();
+		var dto = change(persister, matches[0]);
+		persister.CommitTransation();
+		return new(AccountOutcome.Ok, dto);
 	}
 
 	public LibraryPageDto GetLibrary(int offset, int limit, string? query = null, bool trash = false, LibrarySortKey? sort = null, bool descending = false)
@@ -289,7 +327,16 @@ public sealed class DbEngineData : IEngineData
 	}
 
 	public static AccountDto ToDto(Account account)
-		=> new(account.AccountId, account.AccountName, account.Locale?.Name, account.LibraryScan);
+		=> new(account.AccountId, account.AccountName, account.Locale?.Name, account.LibraryScan,
+			AccountCredentialStatus.GetSignInStatus(account) == AccountSignInStatus.NotSignedIn || AccountCredentialStatus.LooksLikeMissingCredentials(account)
+				? AuthStates.NeedsLogin : AuthStates.SignedIn,
+			AccountCredentialStatus.GetSignInStatus(account) switch
+			{
+				AccountSignInStatus.Modern => CredentialKinds.Modern,
+				AccountSignInStatus.Legacy => CredentialKinds.Legacy,
+				_ => CredentialKinds.None
+			},
+			account.AdditionalLocales.Select(l => l.Name).ToList());
 
 	public static BookDto ToDto(LibraryBook lb, Func<string, bool>? aaxcExists = null)
 	{

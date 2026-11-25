@@ -45,7 +45,34 @@ public class ApiTests
 		public (CoverSize Size, string PictureId)? LastCover;
 		public readonly List<string> Calls = [];
 
-		public IReadOnlyList<AccountDto> GetAccounts() => [new("a@example.com", "Main", "us", true)];
+		public List<AccountDto> Accounts = [new("a@example.com", "Main", "us", true, AuthStates.SignedIn, CredentialKinds.Modern, [])];
+		public bool AccountsReadOnly;
+
+		public IReadOnlyList<AccountDto> GetAccounts() => Accounts.ToList();
+
+		private AccountResult Find(string id, string? locale, Func<AccountDto, AccountDto?> change)
+		{
+			Calls.Add($"account:{id}:{locale}");
+			if (AccountsReadOnly)
+				throw new UnauthorizedAccessException("denied");
+			var matches = Accounts.Where(a => a.AccountId == id && (locale is null || a.Locale == locale)).ToList();
+			if (matches.Count == 0)
+				return new(AccountOutcome.NotFound);
+			if (matches.Count > 1)
+				return new(AccountOutcome.Ambiguous);
+			var index = Accounts.IndexOf(matches[0]);
+			var updated = change(matches[0]);
+			if (updated is null)
+				Accounts.RemoveAt(index);
+			else
+				Accounts[index] = updated;
+			return new(AccountOutcome.Ok, updated ?? matches[0]);
+		}
+
+		public AccountResult UpdateAccount(string accountId, string? locale, string? accountName, bool? libraryScan)
+			=> Find(accountId, locale, a => a with { AccountName = accountName ?? a.AccountName, LibraryScan = libraryScan ?? a.LibraryScan });
+
+		public AccountResult DeleteAccount(string accountId, string? locale) => Find(accountId, locale, _ => null);
 
 		public LibraryPageDto GetLibrary(int offset, int limit, string? query = null, bool trash = false, LibrarySortKey? sort = null, bool descending = false)
 		{
@@ -202,13 +229,14 @@ public class ApiTests
 		public readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
 		public readonly string Base;
 		public int ScanCalls, LiberateCalls;
+		public readonly List<string> ScanSubsets = [];
 		public volatile TaskCompletionSource? Gate;
 		public readonly SemaphoreSlim ScanEntered = new(0);
 
 		public readonly LiberationQueue Queue;
 		public volatile Func<LiberationJob, Task<ProcessBookResult>> Outcome = _ => Task.FromResult(ProcessBookResult.Success);
 
-		public Harness(bool api, string? tokenFile = null, bool startRun = true, DiskFullPolicy onDiskFull = DiskFullPolicy.Ask)
+		public Harness(bool api, string? tokenFile = null, bool startRun = true, DiskFullPolicy onDiskFull = DiskFullPolicy.Ask, string? accountsImport = null)
 		{
 			Queue = new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => 1, OnDiskFull = onDiskFull })
 			{
@@ -241,11 +269,16 @@ public class ApiTests
 				_ => { Interlocked.Increment(ref LiberateCalls); return Task.FromResult(0); },
 				_ => Task.FromResult(0))
 			{
-				CreateBookJob = asin => asin == "B000000001" ? Job(asin) : null
+				CreateBookJob = asin => asin == "B000000001" ? Job(asin) : null,
+				ScanAccounts = (accounts, _) =>
+				{
+					ScanSubsets.Add(string.Join(',', accounts));
+					return Task.FromResult(0);
+				}
 			};
 
 			run = LibationDaemon.RunAsync(
-				new DaemonOptions(TimeSpan.FromMinutes(30), false, Base, dir.Path, ApiEnabled: api, ApiTokenFile: tokenFile),
+				new DaemonOptions(TimeSpan.FromMinutes(30), false, Base, dir.Path, AccountsImportPath: accountsImport, ApiEnabled: api, ApiTokenFile: tokenFile),
 				jobs, cts.Token, data: Data, queue: Queue);
 		}
 
@@ -474,7 +507,126 @@ public class ApiTests
 
 		using var doc = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/accounts"));
 		var names = doc.RootElement[0].EnumerateObject().Select(p => p.Name).Order().ToArray();
-		CollectionAssert.AreEqual(new[] { "accountId", "accountName", "libraryScan", "locale" }, names);
+		CollectionAssert.AreEqual(new[] { "accountId", "accountName", "additionalLocales", "authState", "credentials", "libraryScan", "locale" }, names);
+	}
+
+	[TestMethod]
+	public async Task Status_lists_accounts_needing_login_from_stored_state()
+	{
+		await using var h = new Harness(api: true);
+		h.Data.Accounts.Add(new("b@example.com", "Second", "uk", true, AuthStates.NeedsLogin, CredentialKinds.None, []));
+		await h.WaitIdleAfterFirstCycle();
+
+		using var doc = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/status"));
+		CollectionAssert.AreEqual(new[] { "b@example.com" }, doc.RootElement.GetProperty("accountsNeedingLogin").EnumerateArray().Select(e => e.GetString()).ToArray());
+		using var accounts = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/accounts"));
+		Assert.AreEqual("needsLogin", accounts.RootElement[1].GetProperty("authState").GetString());
+	}
+
+	[TestMethod]
+	public async Task Patch_account_renames_and_toggles_scan_then_validates()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var ok = await h.Http.SendAsync(Send(HttpMethod.Patch, h.Base + "/api/accounts/a@example.com", """{"accountName":"Renamed","libraryScan":false}"""));
+		Assert.AreEqual(HttpStatusCode.OK, ok.StatusCode);
+		using var body = JsonDocument.Parse(await ok.Content.ReadAsStringAsync());
+		Assert.AreEqual("Renamed", body.RootElement.GetProperty("accountName").GetString());
+		Assert.IsFalse(body.RootElement.GetProperty("libraryScan").GetBoolean());
+
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Patch, h.Base + "/api/accounts/a@example.com", "{}"))).StatusCode);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Patch, h.Base + "/api/accounts/a@example.com", """{"accountName":"  "}"""))).StatusCode);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.SendAsync(Send(HttpMethod.Patch, h.Base + "/api/accounts/nobody", """{"libraryScan":true}"""))).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Account_edits_need_a_locale_when_the_id_is_shared()
+	{
+		await using var h = new Harness(api: true);
+		h.Data.Accounts.Add(new("a@example.com", "UK", "uk", true, AuthStates.SignedIn, CredentialKinds.Modern, []));
+		await h.WaitIdleAfterFirstCycle();
+
+		var ambiguous = await h.Http.SendAsync(Send(HttpMethod.Delete, h.Base + "/api/accounts/a@example.com"));
+		Assert.AreEqual(HttpStatusCode.Conflict, ambiguous.StatusCode);
+		Assert.HasCount(2, h.Data.Accounts);
+
+		var ok = await h.Http.SendAsync(Send(HttpMethod.Delete, h.Base + "/api/accounts/a@example.com?locale=uk"));
+		Assert.AreEqual(HttpStatusCode.OK, ok.StatusCode);
+		Assert.AreEqual("us", h.Data.Accounts.Single().Locale);
+	}
+
+	[TestMethod]
+	public async Task Delete_account_removes_it_and_404s_the_second_time()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		Assert.AreEqual(HttpStatusCode.OK, (await h.Http.SendAsync(Send(HttpMethod.Delete, h.Base + "/api/accounts/a@example.com"))).StatusCode);
+		Assert.IsEmpty(h.Data.Accounts);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.SendAsync(Send(HttpMethod.Delete, h.Base + "/api/accounts/a@example.com"))).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Account_edits_are_409_when_the_accounts_file_is_not_writable()
+	{
+		await using var h = new Harness(api: true);
+		h.Data.AccountsReadOnly = true;
+		await h.WaitIdleAfterFirstCycle();
+
+		var patch = await h.Http.SendAsync(Send(HttpMethod.Patch, h.Base + "/api/accounts/a@example.com", """{"libraryScan":false}"""));
+		Assert.AreEqual(HttpStatusCode.Conflict, patch.StatusCode);
+		Assert.Contains("cannot be saved", await patch.Content.ReadAsStringAsync());
+		Assert.AreEqual(HttpStatusCode.Conflict, (await h.Http.SendAsync(Send(HttpMethod.Delete, h.Base + "/api/accounts/a@example.com"))).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Account_edits_are_409_without_touching_data_when_accounts_come_from_an_import_file()
+	{
+		await using var h = new Harness(api: true, accountsImport: Path.Combine(Path.GetTempPath(), "missing-accounts.json"));
+		await h.WaitIdleAfterFirstCycle();
+
+		var patch = await h.Http.SendAsync(Send(HttpMethod.Patch, h.Base + "/api/accounts/a@example.com", """{"libraryScan":false}"""));
+		Assert.AreEqual(HttpStatusCode.Conflict, patch.StatusCode);
+		Assert.Contains("imported accounts file", await patch.Content.ReadAsStringAsync());
+		Assert.AreEqual(HttpStatusCode.Conflict, (await h.Http.SendAsync(Send(HttpMethod.Delete, h.Base + "/api/accounts/a@example.com"))).StatusCode);
+		Assert.IsFalse(h.Data.Calls.Any(c => c.StartsWith("account:")));
+		Assert.HasCount(1, h.Data.Accounts);
+	}
+
+	[TestMethod]
+	public async Task Scan_with_accounts_scans_only_those_and_validates_the_body()
+	{
+		await using var h = new Harness(api: true);
+		h.Data.Accounts.Add(new("b@example.com", "Second", "uk", true, AuthStates.SignedIn, CredentialKinds.Modern, []));
+		await h.WaitIdleAfterFirstCycle();
+		var scansBefore = h.ScanCalls;
+
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/scan", """{"accounts":[]}"""))).StatusCode);
+		var unknown = await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/scan", """{"accounts":["nobody@example.com"]}"""));
+		Assert.AreEqual(HttpStatusCode.BadRequest, unknown.StatusCode);
+		Assert.Contains("nobody@example.com", await unknown.Content.ReadAsStringAsync());
+		Assert.IsEmpty(h.ScanSubsets);
+
+		Assert.AreEqual(HttpStatusCode.Accepted, (await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/scan", """{"accounts":["B@example.com","Main"]}"""))).StatusCode);
+		await Eventually(() => Task.FromResult(h.ScanSubsets.Count == 1));
+		Assert.AreEqual("B@example.com,Main", h.ScanSubsets[0]);
+		Assert.AreEqual(scansBefore, h.ScanCalls);
+	}
+
+	[TestMethod]
+	public async Task Scan_without_a_body_or_with_null_accounts_scans_everything()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		var before = h.ScanCalls;
+
+		Assert.AreEqual(HttpStatusCode.Accepted, (await h.Http.PostAsync(h.Base + "/api/scan", null)).StatusCode);
+		await Eventually(() => Task.FromResult(h.ScanCalls == before + 1));
+		await h.WaitIdleAfterFirstCycle();
+		Assert.AreEqual(HttpStatusCode.Accepted, (await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/scan", """{"accounts":null}"""))).StatusCode);
+		await Eventually(() => Task.FromResult(h.ScanCalls == before + 2));
+		Assert.IsEmpty(h.ScanSubsets);
 	}
 
 	[TestMethod]

@@ -8,9 +8,31 @@ public sealed record StatusDto(
 	int? LiberateExitCode,
 	DateTimeOffset? NextRun,
 	int IntervalSeconds,
-	string? Version);
+	string? Version,
+	IReadOnlyList<string> AccountsNeedingLogin);
 
-public sealed record AccountDto(string AccountId, string? AccountName, string? Locale, bool LibraryScan);
+public static class AuthStates
+{
+	public const string SignedIn = "signedIn", NeedsLogin = "needsLogin";
+}
+
+public static class CredentialKinds
+{
+	public const string Modern = "modern", Legacy = "legacy", None = "none";
+}
+
+public sealed record AccountDto(
+	string AccountId,
+	string? AccountName,
+	string? Locale,
+	bool LibraryScan,
+	string AuthState,
+	string Credentials,
+	IReadOnlyList<string> AdditionalLocales);
+
+public sealed record AccountPatchRequest(string? AccountName, bool? LibraryScan);
+
+public sealed record ScanRequest(IReadOnlyList<string>? Accounts);
 
 public sealed record SeriesDto(string Name, string? Order, float Index, string Asin);
 

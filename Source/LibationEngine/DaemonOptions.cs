@@ -19,4 +19,7 @@ public sealed record DaemonJobs(
 {
 	/// <summary>Builds the job for one book by ASIN, or null when the book is not in the library.</summary>
 	public Func<string, LiberationJob?>? CreateBookJob { get; init; }
+
+	/// <summary>Scans only the named accounts (login id or name); when null a subset request scans everything.</summary>
+	public Func<IReadOnlyList<string>, CancellationToken, Task<int>>? ScanAccounts { get; init; }
 }

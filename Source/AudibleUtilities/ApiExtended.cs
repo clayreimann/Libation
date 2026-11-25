@@ -19,6 +19,14 @@ public class ApiExtended
 	/// <summary>Raised after an account completes a forced re-registration or credential upgrade.</summary>
 	public static event Action<Account>? AccountReRegistered;
 	internal static void OnAccountReRegistered(Account account) => AccountReRegistered?.Invoke(account);
+
+	/// <summary>Raised where desktop would prompt for a login: stored credentials are unusable and none can be obtained here.</summary>
+	public static event Action<AccountSummary>? AuthenticationRequired;
+	private static void OnAuthenticationRequired(Account account)
+	{
+		if (AccountSummary.From(account) is { } summary)
+			AuthenticationRequired?.Invoke(summary);
+	}
 	public Api Api { get; private set; }
 	public Account Account { get; private set; }
 
@@ -100,6 +108,8 @@ public class ApiExtended
 						LoginChoiceFactorySet = LoginChoiceFactory is not null,
 						LooksLikeMissingCredentials = missingCredentials
 					});
+
+				OnAuthenticationRequired(account);
 
 				// masked: this message is logged verbatim, both as {Exception} and as ExceptionDetail.Message
 				throw new AuthenticationRequiredException(
@@ -253,6 +263,7 @@ public class ApiExtended
 						matching.RequiresReRegistration = true;
 				}
 
+				OnAuthenticationRequired(Account);
 				throw new AuthenticationRequiredException(
 					Account,
 					$"Stored legacy credentials for {Account.MaskedLogEntry} were rejected by Audible. A fresh sign-in is required to upgrade to modern credentials.",

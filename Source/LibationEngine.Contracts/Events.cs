@@ -25,4 +25,6 @@ public sealed record QueueDispatchPaused : EngineEvent;
 public sealed record QueueDispatchResumed : EngineEvent;
 public sealed record BookLog(string JobId, string Level, string Message) : EngineEvent;
 
+public sealed record AccountNeedsLogin(string AccountId) : EngineEvent;
+
 public sealed record LocateScanProgress(LocateScanDto Scan) : EngineEvent;

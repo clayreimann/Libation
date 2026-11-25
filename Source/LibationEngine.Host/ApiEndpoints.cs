@@ -121,7 +121,9 @@ public static class ApiEndpoints
 		["QueueWaitDto.Reason"] = Names<WaitReason>(),
 		["BulkItemDto.Result"] = [BulkResults.Ok, BulkResults.NotFound, BulkResults.Conflict],
 		["LocateScanDto.State"] = ["idle", "running", "completed", "failed"],
-		["CancelJobDto.Outcome"] = ["removed", "cancelling"]
+		["CancelJobDto.Outcome"] = ["removed", "cancelling"],
+		["AccountDto.AuthState"] = [AuthStates.SignedIn, AuthStates.NeedsLogin],
+		["AccountDto.Credentials"] = [CredentialKinds.Modern, CredentialKinds.Legacy, CredentialKinds.None]
 	};
 
 	private const string ExportOperation = "exportLibrary";
@@ -157,17 +159,34 @@ public static class ApiEndpoints
 			await next();
 		});
 
-	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null)
+	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null)
 	{
+		IReadOnlyList<AccountDto> Accounts()
+			=> data.GetAccounts()
+				.Select(a => authMonitor?.IsFlagged(a.AccountId) == true ? a with { AuthState = AuthStates.NeedsLogin } : a)
+				.ToList();
+
+		IReadOnlyList<string> NeedingLogin()
+		{
+			try
+			{
+				return Accounts().Where(a => a.AuthState == AuthStates.NeedsLogin).Select(a => a.AccountId).ToList();
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+			{
+				return [];
+			}
+		}
+
 		StatusDto Status()
 		{
 			var s = state.Snapshot();
 			return new(s.State, s.LastRun, s.LastSuccess, s.ScanExitCode, s.LiberateExitCode, s.NextRun,
-				(int)options.Interval.TotalSeconds, LibationScaffolding.BuildVersion?.ToString());
+				(int)options.Interval.TotalSeconds, LibationScaffolding.BuildVersion?.ToString(), NeedingLogin());
 		}
 
-		IResult Run(RunKind kind)
-			=> scheduler.TryRequestRun(kind)
+		IResult Run(RunKind kind, IReadOnlyList<string>? accounts = null)
+			=> scheduler.TryRequestRun(kind, accounts)
 				? Results.Json(Status(), statusCode: StatusCodes.Status202Accepted)
 				: Results.Json(new ErrorDto("A job is already running or queued."), statusCode: StatusCodes.Status409Conflict);
 
@@ -180,10 +199,56 @@ public static class ApiEndpoints
 			.WithName("getStatus").WithTags("daemon")
 			.Produces<StatusDto>(StatusCodes.Status200OK);
 
-		api.MapGet("/accounts", () => data.GetAccounts())
-			.WithSummary("Accounts: id, name, locale and library-scan flag. Never tokens.")
-			.WithName("getAccounts").WithTags("daemon")
+		api.MapGet("/accounts", () => Accounts())
+			.WithSummary("Accounts: id, name, locale, library-scan flag, authState (signedIn or needsLogin), credentials (modern, legacy or none) and extra marketplaces. Never tokens.")
+			.WithName("getAccounts").WithTags("accounts")
 			.Produces<IReadOnlyList<AccountDto>>(StatusCodes.Status200OK);
+
+		IResult? AccountsLocked()
+			=> string.IsNullOrWhiteSpace(options.AccountsImportPath)
+				? null
+				: Error("Accounts are managed by the imported accounts file; edit it and restart, because a changed file replaces the accounts here.", StatusCodes.Status409Conflict);
+
+		IResult EditAccount(Func<AccountResult> edit)
+		{
+			AccountResult result;
+			try
+			{
+				result = edit();
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				return Error($"Accounts cannot be saved: {ex.Message}", StatusCodes.Status409Conflict);
+			}
+			return result.Outcome switch
+			{
+				AccountOutcome.NotFound => Error("No such account.", StatusCodes.Status404NotFound),
+				AccountOutcome.Ambiguous => Error("Several accounts share that id; add ?locale= to pick one.", StatusCodes.Status409Conflict),
+				_ => Results.Json(result.Account)
+			};
+		}
+
+		api.MapPatch("/accounts/{id}", (string id, string? locale, AccountPatchRequest? body) =>
+		{
+			if (body is null || (body.AccountName is null && body.LibraryScan is null))
+				return Error("Send accountName and/or libraryScan.", StatusCodes.Status400BadRequest);
+			if (body.AccountName is not null && string.IsNullOrWhiteSpace(body.AccountName))
+				return Error("accountName must not be blank.", StatusCodes.Status400BadRequest);
+			return AccountsLocked() ?? EditAccount(() => data.UpdateAccount(id, locale, body.AccountName, body.LibraryScan));
+		}).WithSummary("Renames an account and/or sets whether it is scanned. The marketplace cannot change; add the account again for another. 200 with the account, 400 bad body, 404 unknown, 409 ambiguous id (add ?locale=), accounts managed by an import file, or not writable.")
+			.WithName("patchAccount").WithTags("accounts")
+			.Produces<AccountDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapDelete("/accounts/{id}", (string id, string? locale) =>
+			AccountsLocked() ?? EditAccount(() => data.DeleteAccount(id, locale)))
+			.WithSummary("Removes an account. Its books stay in the library, as in the app. 200 with the removed account, 404 unknown, 409 ambiguous id (add ?locale=), accounts managed by an import file, or not writable.")
+			.WithName("deleteAccount").WithTags("accounts")
+			.Produces<AccountDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapGet("/library", (int? offset, int? limit, string? q, bool? trash, string? sort, string? dir) =>
 		{
@@ -515,10 +580,23 @@ public static class ApiEndpoints
 			.WithName("getSettings").WithTags("settings")
 			.Produces<SettingsDto>(StatusCodes.Status200OK);
 
-		api.MapPost("/scan", () => Run(RunKind.Scan))
-			.WithSummary("Runs a library scan now, without liberating. 202, or 409 if busy.")
+		api.MapPost("/scan", (ScanRequest? body) =>
+		{
+			if (body?.Accounts is not { } names)
+				return Run(RunKind.Scan);
+			if (names.Count == 0 || names.Any(string.IsNullOrWhiteSpace))
+				return Error("accounts must name at least one account; omit it to scan all.", StatusCodes.Status400BadRequest);
+
+			var known = data.GetAccounts();
+			var unknown = names.Where(n => !known.Any(a => string.Equals(a.AccountId, n.Trim(), StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(a.AccountName, n.Trim(), StringComparison.OrdinalIgnoreCase))).ToList();
+			return unknown.Count > 0
+				? Error($"No such account: {string.Join(", ", unknown)}.", StatusCodes.Status400BadRequest)
+				: Run(RunKind.Scan, names.Select(n => n.Trim()).ToList());
+		}).WithSummary("Runs a library scan now, without liberating. An optional body {\"accounts\":[\"id or name\"]} scans only those accounts, as the CLI's scan does; no body scans all. 202, 400 bad body or unknown account, or 409 if busy.")
 			.WithName("scan").WithTags("daemon")
 			.Produces<StatusDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
 			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapPost("/liberate", () => Run(RunKind.Cycle))

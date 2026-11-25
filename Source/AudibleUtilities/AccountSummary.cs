@@ -27,6 +27,7 @@ public sealed class AccountSummary
 	public bool RequiresReRegistration { get; }
 
 	private readonly string ownerFacingLabel;
+	private readonly string accountId;
 
 	private AccountSummary(Account account)
 	{
@@ -34,7 +35,11 @@ public sealed class AccountSummary
 		LooksLikeMissingCredentials = AccountCredentialStatus.LooksLikeMissingCredentials(account);
 		RequiresReRegistration = account.RequiresReRegistration;
 		ownerFacingLabel = AccountCredentialStatus.FormatAccountLabel(account);
+		accountId = account.AccountId;
 	}
+
+	/// <summary>The login id, for the account's owner and authenticated clients; a method so reflection cannot reach it.</summary>
+	public string RevealAccountId() => accountId;
 
 	/// <summary>
 	/// The name and address to show the person who owns the account, on their own screen. Never log this: use

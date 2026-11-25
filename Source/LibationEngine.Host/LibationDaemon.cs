@@ -53,8 +53,10 @@ public static class LibationDaemon
 
 		var state = new CycleState();
 		var scheduler = new CycleScheduler(options, jobs, state, time);
+		using var authMonitor = new AccountAuthMonitor(scheduler.Events);
+		scheduler.OnScanSucceeded = authMonitor.ClearAll;
 		_ = new QueueEventPublisher(queue, scheduler.Events, time);
-		await using var host = options.Once ? null : DaemonHost.Build(options, state, scheduler, queue, data, apiToken, jobs.CreateBookJob);
+		await using var host = options.Once ? null : DaemonHost.Build(options, state, scheduler, queue, data, apiToken, jobs.CreateBookJob, authMonitor);
 		if (host is not null)
 			await host.StartAsync(cts.Token);
 

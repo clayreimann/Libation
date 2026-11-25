@@ -21,6 +21,10 @@ public static class BulkResults
 		=> new(results.Count(r => r.Result == Ok), results.Where(r => r.Result == NotFound).Select(r => r.Asin).ToList(), results);
 }
 
+public enum AccountOutcome { Ok, NotFound, Ambiguous }
+
+public sealed record AccountResult(AccountOutcome Outcome, AccountDto? Account = null);
+
 public enum ExportFormat { Csv, Xlsx, Json }
 
 public enum LocateOutcome { Ok, NoSuchBook, Invalid, Busy }
@@ -32,6 +36,14 @@ public sealed record LocateScanStart(LocateOutcome Outcome, LocateScanDto? Scan 
 public interface IEngineData
 {
 	IReadOnlyList<AccountDto> GetAccounts();
+
+	/// <summary>Sets the display name and/or library-scan flag. <paramref name="locale"/> picks among accounts sharing one login id.</summary>
+	/// <exception cref="IOException">The accounts file cannot be written.</exception>
+	AccountResult UpdateAccount(string accountId, string? locale, string? accountName, bool? libraryScan);
+
+	/// <summary>Removes the account only; its books stay in the library, as in the desktop Accounts dialog.</summary>
+	/// <exception cref="IOException">The accounts file cannot be written.</exception>
+	AccountResult DeleteAccount(string accountId, string? locale);
 
 	/// <summary>Newest first unless <paramref name="sort"/> is set. <paramref name="query"/> is Lucene filter syntax; <paramref name="trash"/> lists the trash instead.</summary>
 	/// <exception cref="SearchQueryException">The query cannot be parsed.</exception>
