@@ -20,7 +20,7 @@ internal class ServeOptions : OptionsBase
 	[Option("once", HelpText = "Run reconcile (if asked) and one cycle, then exit with its result. SLEEP_TIME=-1 does the same.")]
 	public bool Once { get; set; }
 
-	[Option("listen", HelpText = "URL for the /health endpoint. Default: http://127.0.0.1:8080")]
+	[Option("listen", HelpText = "URL to listen on for /health and the API. 0.0.0.0 or * means all interfaces. Default: http://127.0.0.1:8080")]
 	public string? Listen { get; set; }
 
 	[Option("metrics-file", HelpText = "Prometheus textfile to write after each cycle. Default: LIBATION_METRICS_FILE environment variable.")]
@@ -31,6 +31,12 @@ internal class ServeOptions : OptionsBase
 
 	[Option("readonly-config", HelpText = "Read-only directory whose Settings.json is copied into LibationFiles at start and whose AccountsSettings.json is imported. Settings are then never written back. Default: LIBATION_READONLY_CONFIG_DIR environment variable.")]
 	public string? ReadonlyConfigDir { get; set; }
+
+	[Option("api", HelpText = "Enable the HTTP API under /api. Default: on when LIBATION_API is 1 or true.")]
+	public bool Api { get; set; }
+
+	[Option("api-token-file", HelpText = "File holding the bearer token every /api request must present. Default: LIBATION_API_TOKEN_FILE environment variable.")]
+	public string? ApiTokenFile { get; set; }
 
 	protected override bool RunsSetup => false;
 
@@ -122,6 +128,11 @@ internal class ServeOptions : OptionsBase
 		if (SettingOverrides is not null)
 			ProcessSettingsOverrides();
 
+		var apiEnabled = Api || Environment.GetEnvironmentVariable("LIBATION_API")?.Trim() is "1" or "true";
+		var apiTokenFile = ApiTokenFile ?? Environment.GetEnvironmentVariable("LIBATION_API_TOKEN_FILE");
+		if (string.IsNullOrWhiteSpace(apiTokenFile))
+			apiTokenFile = null;
+
 		var options = new DaemonOptions(
 			interval,
 			ReconcileOnStart,
@@ -129,7 +140,9 @@ internal class ServeOptions : OptionsBase
 			filesDir,
 			MetricsFile ?? Environment.GetEnvironmentVariable("LIBATION_METRICS_FILE"),
 			accountsImport,
-			once);
+			once,
+			apiEnabled,
+			apiTokenFile is null ? null : Path.GetFullPath(apiTokenFile));
 
 		var jobs = new DaemonJobs(
 			_ => new ScanOptions().ExecuteAsync(),

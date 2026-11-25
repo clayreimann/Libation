@@ -8,13 +8,13 @@ using Serilog;
 
 namespace LibationEngine;
 
-/// <summary>Kestrel host for <c>/health</c> (and, when enabled, the API).</summary>
+/// <summary>Kestrel host for <c>/health</c> and, when enabled, <c>/api</c>.</summary>
 public static class DaemonHost
 {
-	public static WebApplication Build(string listenUrl, CycleState state)
+	public static WebApplication Build(DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData? data = null, string? apiToken = null)
 	{
 		var builder = WebApplication.CreateSlimBuilder();
-		builder.WebHost.UseUrls(ListenUrl.Normalize(listenUrl));
+		builder.WebHost.UseUrls(ListenUrl.Normalize(options.ListenUrl));
 		builder.WebHost.ConfigureKestrel(o => o.AddServerHeader = false);
 		builder.Logging.ClearProviders();
 		builder.Logging.AddSerilog(Log.Logger, dispose: false);
@@ -23,6 +23,13 @@ public static class DaemonHost
 
 		var app = builder.Build();
 		app.MapMethods("/health", ["GET", "HEAD"], () => Results.Json(state.Snapshot()));
+
+		if (options.ApiEnabled)
+		{
+			if (apiToken is not null)
+				ApiEndpoints.RequireToken(app, apiToken);
+			ApiEndpoints.Map(app, options, state, scheduler, data ?? new DbEngineData());
+		}
 		return app;
 	}
 }

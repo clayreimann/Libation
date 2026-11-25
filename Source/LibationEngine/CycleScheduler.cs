@@ -1,6 +1,9 @@
+using LibationEngine.Contracts;
 using Serilog;
 
 namespace LibationEngine;
+
+public enum RunKind { Scan, Cycle }
 
 public sealed class CycleScheduler
 {
@@ -12,11 +15,15 @@ public sealed class CycleScheduler
 	private readonly TimeProvider time;
 	private readonly AccountsImporter importer;
 	private readonly MetricsWriter? metrics;
+	private readonly object runGate = new();
+	private TaskCompletionSource? wake;
+	private RunKind? requested;
 	private long successTs;
 	private int liberateRc;
 
-	public CycleScheduler(DaemonOptions options, DaemonJobs jobs, CycleState state, TimeProvider? time = null)
+	public CycleScheduler(DaemonOptions options, DaemonJobs jobs, CycleState state, TimeProvider? time = null, EventBroadcaster? events = null)
 	{
+		Events = events ?? new EventBroadcaster();
 		this.options = options;
 		this.jobs = jobs;
 		this.state = state;
@@ -29,6 +36,21 @@ public sealed class CycleScheduler
 		state.Seed(successTs > 0 ? DateTimeOffset.FromUnixTimeSeconds(successTs) : null, liberateRc);
 	}
 
+	public EventBroadcaster Events { get; }
+
+	/// <summary>Queues an immediate run; false if a job is running or one is already queued.</summary>
+	public bool TryRequestRun(RunKind kind)
+	{
+		lock (runGate)
+		{
+			if (wake is null || requested is not null)
+				return false;
+			requested = kind;
+			wake.TrySetResult();
+			return true;
+		}
+	}
+
 	/// <summary>Runs until cancelled; returns the process exit code.</summary>
 	public async Task<int> RunAsync(CancellationToken ct)
 	{
@@ -36,9 +58,9 @@ public sealed class CycleScheduler
 		{
 			if (options.ReconcileOnStart)
 			{
-				state.Set(DaemonState.Reconciling);
+				SetState(DaemonState.Reconciling);
 				var rc = await RunJob("reconcile", jobs.Reconcile, ct);
-				state.Set(DaemonState.Idle);
+				SetState(DaemonState.Idle);
 				if (rc != 0)
 				{
 					Log.Logger.Error("Reconcile failed with exit code {ExitCode}; stopping", rc);
@@ -52,8 +74,22 @@ public sealed class CycleScheduler
 			while (!ct.IsCancellationRequested)
 			{
 				await RunCycleAsync(ct);
-				state.SetNextRun(time.GetUtcNow() + options.Interval);
-				await Task.Delay(options.Interval, time, ct);
+				var next = time.GetUtcNow() + options.Interval;
+				while (!ct.IsCancellationRequested)
+				{
+					SetNextRun(next);
+					var kind = await WaitAsync(next, ct);
+					if (kind is null)
+						break;
+					state.SetNextRun(null);
+					if (kind == RunKind.Scan)
+						await RunScanOnlyAsync(ct);
+					else
+					{
+						await RunCycleAsync(ct);
+						next = time.GetUtcNow() + options.Interval;
+					}
+				}
 			}
 		}
 		catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -62,10 +98,51 @@ public sealed class CycleScheduler
 		return 0;
 	}
 
-	/// <summary>Returns the scan exit code if the scan failed, else the liberate exit code.</summary>
-	public async Task<int> RunCycleAsync(CancellationToken ct)
+	private async Task<RunKind?> WaitAsync(DateTimeOffset until, CancellationToken ct)
 	{
-		state.SetNextRun(null);
+		TaskCompletionSource signal;
+		lock (runGate)
+		{
+			signal = wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		}
+
+		using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+		try
+		{
+			var delay = Task.Delay(Max(until - time.GetUtcNow(), TimeSpan.Zero), time, delayCts.Token);
+			await Task.WhenAny(delay, signal.Task);
+		}
+		finally
+		{
+			delayCts.Cancel();
+			lock (runGate)
+				wake = null;
+		}
+
+		lock (runGate)
+		{
+			var kind = requested;
+			requested = null;
+			return kind;
+		}
+	}
+
+	private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;
+
+	private void SetNextRun(DateTimeOffset? value)
+	{
+		state.SetNextRun(value);
+		Events.Publish(new NextRunScheduled(value));
+	}
+
+	private void SetState(DaemonState value)
+	{
+		state.Set(value);
+		Events.Publish(new StateChanged(value.ToString().ToLowerInvariant()));
+	}
+
+	private void ImportAccounts()
+	{
 		try
 		{
 			importer.Import();
@@ -74,25 +151,52 @@ public sealed class CycleScheduler
 		{
 			Log.Logger.Error("{Message}; keeping the current accounts", ex.Message);
 		}
+	}
 
-		state.Set(DaemonState.Scanning);
+	private async Task<int> ScanAsync(CancellationToken ct)
+	{
+		SetState(DaemonState.Scanning);
+		Events.Publish(new ScanStarted());
 		var scanRc = await RunJob("scan", jobs.Scan, ct);
 		var now = time.GetUtcNow();
 		state.RecordScan(now, scanRc);
+		if (scanRc == 0)
+			successTs = now.ToUnixTimeSeconds();
+		Events.Publish(new ScanFinished(scanRc));
+		return scanRc;
+	}
 
+	private async Task RunScanOnlyAsync(CancellationToken ct)
+	{
+		ImportAccounts();
+		var scanRc = await ScanAsync(ct);
+		SetState(DaemonState.Idle);
+		WriteMetrics(time.GetUtcNow().ToUnixTimeSeconds(), scanRc);
+	}
+
+	/// <summary>Returns the scan exit code if the scan failed, else the liberate exit code.</summary>
+	public async Task<int> RunCycleAsync(CancellationToken ct)
+	{
+		SetNextRun(null);
+		ImportAccounts();
+
+		var scanRc = await ScanAsync(ct);
 		if (scanRc == 0)
 		{
-			successTs = now.ToUnixTimeSeconds();
-			state.Set(DaemonState.Liberating);
+			SetState(DaemonState.Liberating);
+			Events.Publish(new LiberateStarted());
 			liberateRc = await RunJob("liberate", jobs.Liberate, ct);
 			state.RecordLiberate(liberateRc);
+			Events.Publish(new LiberateFinished(liberateRc));
 		}
 		else
 			Log.Logger.Warning("Scan failed with exit code {ExitCode}; skipping liberate", scanRc);
 
-		state.Set(DaemonState.Idle);
+		SetState(DaemonState.Idle);
 		WriteMetrics(time.GetUtcNow().ToUnixTimeSeconds(), scanRc);
-		return scanRc != 0 ? scanRc : liberateRc;
+		var rc = scanRc != 0 ? scanRc : liberateRc;
+		Events.Publish(new CycleFinished(rc));
+		return rc;
 	}
 
 	private void WriteMetrics(long runTs, int scanRc)

@@ -7,7 +7,9 @@ public sealed record DaemonOptions(
 	string LibationFilesDir,
 	string? MetricsFile = null,
 	string? AccountsImportPath = null,
-	bool Once = false);
+	bool Once = false,
+	bool ApiEnabled = false,
+	string? ApiTokenFile = null);
 
 /// <summary>Each delegate returns a process-style exit code; 0 is success.</summary>
 public sealed record DaemonJobs(
