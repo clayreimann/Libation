@@ -11,6 +11,7 @@ namespace LibationEngine.Tests;
 public class DbEngineDataTests
 {
 	private string directory = "";
+	private string booksDirectory = "";
 	private string? previousDirectory;
 	private readonly DbEngineData data = new();
 
@@ -22,6 +23,9 @@ public class DbEngineDataTests
 		previousDirectory = Environment.GetEnvironmentVariable(LibationFiles.LIBATION_FILES_DIR);
 		Environment.SetEnvironmentVariable(LibationFiles.LIBATION_FILES_DIR, directory);
 		Configuration.CreateMockInstance();
+		booksDirectory = Path.Combine(directory, "Books");
+		Directory.CreateDirectory(booksDirectory);
+		Configuration.Instance.Books = booksDirectory;
 
 		using var context = DbContexts.GetContext();
 		AddBook(context, "B0PLAIN0001", pdf: false);
@@ -172,5 +176,22 @@ public class DbEngineDataTests
 		var counts = data.GetBackupCounts();
 		Assert.AreEqual(2, counts.Total);
 		Assert.AreEqual(1, counts.PdfNotLiberated);
+	}
+
+	[TestMethod]
+	public async Task Reconcile_finds_nothing_outside_Books_and_never_downgrades()
+	{
+		var outside = Path.Combine(directory, "elsewhere");
+		Directory.CreateDirectory(outside);
+		File.WriteAllText(Path.Combine(outside, "B0PLAIN0001.m4b"), "x");
+		await data.SetBookStatus("B0PDF000001", LiberatedStatus.Liberated);
+
+		var books = DbContexts.GetLibrary_Flat_NoTracking();
+		var reconcile = new BulkSetDownloadStatus(books, setDownloaded: true, setNotDownloaded: false);
+
+		Assert.AreEqual(0, reconcile.Discover());
+		await reconcile.ExecuteAsync();
+		Assert.AreEqual("NotLiberated", data.GetBook("B0PLAIN0001")!.BookStatus);
+		Assert.AreEqual("Liberated", data.GetBook("B0PDF000001")!.BookStatus);
 	}
 }
