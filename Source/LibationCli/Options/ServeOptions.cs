@@ -25,6 +25,9 @@ internal class ServeOptions : OptionsBase
 	[Option("accounts-import", HelpText = "AccountsSettings.json to copy into LibationFiles when its sha256 changes. Default: LIBATION_ACCOUNTS_IMPORT environment variable.")]
 	public string? AccountsImport { get; set; }
 
+	[Option("readonly-config", HelpText = "Read-only directory whose Settings.json is copied into LibationFiles at start and whose AccountsSettings.json is imported. Settings are then never written back. Default: LIBATION_READONLY_CONFIG_DIR environment variable.")]
+	public string? ReadonlyConfigDir { get; set; }
+
 	protected override bool RunsSetup => false;
 
 	protected override async Task ProcessAsync()
@@ -51,8 +54,28 @@ internal class ServeOptions : OptionsBase
 		Directory.CreateDirectory(filesDir);
 		Environment.SetEnvironmentVariable(LibationFileManager.LibationFiles.LIBATION_FILES_DIR, filesDir);
 
+		var readonlyDir = ReadonlyConfigDir ?? Environment.GetEnvironmentVariable("LIBATION_READONLY_CONFIG_DIR");
+		if (string.IsNullOrWhiteSpace(readonlyDir))
+			readonlyDir = null;
+
+		var copiedSettings = false;
+		if (readonlyDir is not null)
+		{
+			try
+			{
+				readonlyDir = Path.GetFullPath(readonlyDir);
+				copiedSettings = ReadonlyConfig.Apply(readonlyDir, filesDir);
+			}
+			catch (DaemonConfigException ex)
+			{
+				Console.Error.WriteLine(ex.Message);
+				Environment.ExitCode = (int)ExitCode.RunTimeError;
+				return;
+			}
+		}
+
 		var settingsFile = Path.Combine(filesDir, LibationFileManager.LibationFiles.SETTINGS_JSON);
-		if (!File.Exists(settingsFile))
+		if (!copiedSettings && !File.Exists(settingsFile))
 		{
 			var books = Environment.GetEnvironmentVariable("LIBATION_BOOKS_DIR");
 			var settings = new JObject { ["Books"] = string.IsNullOrWhiteSpace(books) ? "/data" : books };
@@ -60,6 +83,8 @@ internal class ServeOptions : OptionsBase
 		}
 
 		var accountsImport = AccountsImport ?? Environment.GetEnvironmentVariable("LIBATION_ACCOUNTS_IMPORT");
+		if (string.IsNullOrWhiteSpace(accountsImport))
+			accountsImport = readonlyDir is null ? null : ReadonlyConfig.DefaultAccountsPath(readonlyDir);
 		try
 		{
 			new AccountsImporter(accountsImport, filesDir).Import();
@@ -71,8 +96,11 @@ internal class ServeOptions : OptionsBase
 			return;
 		}
 
-		if (!TryInitializeSetup(ephemeralSettings: false))
+		if (!TryInitializeSetup(ephemeralSettings: readonlyDir is not null))
 			return;
+
+		if (readonlyDir is not null)
+			Serilog.Log.Logger.Information("Read-only config from {ReadonlyDir}; writable LibationFiles at {LibationFiles}", readonlyDir, filesDir);
 
 		if (SettingOverrides is not null)
 			ProcessSettingsOverrides();

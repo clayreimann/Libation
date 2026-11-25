@@ -36,7 +36,12 @@ public class ServeHealthOptionsTests
 		Assert.AreEqual("http://0.0.0.0:9", o.Listen);
 		Assert.AreEqual("/m/x.prom", o.MetricsFile);
 		Assert.AreEqual("/s/a.json", o.AccountsImport);
+		Assert.IsNull(o.ReadonlyConfigDir);
 	}
+
+	[TestMethod]
+	public void Serve_parses_readonly_config()
+		=> Assert.AreEqual("/ro", Parse<ServeOptions>("serve", "--readonly-config", "/ro").ReadonlyConfigDir);
 
 	[TestMethod]
 	public void Health_defaults_to_loopback_8080()
