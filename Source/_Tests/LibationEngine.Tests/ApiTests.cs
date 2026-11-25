@@ -1050,6 +1050,41 @@ public class ApiTests
 		Assert.AreEqual("application/json", ok.Content.Headers.ContentType?.MediaType);
 	}
 
+	private static async Task<JsonElement> SchemaDocument()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		using var doc = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/openapi.json"));
+		return doc.RootElement.GetProperty("components").GetProperty("schemas").Clone();
+	}
+
+	private static string[] Required(JsonElement schemas, string name)
+		=> schemas.GetProperty(name).GetProperty("required").EnumerateArray().Select(e => e.GetString()!).ToArray();
+
+	private static string[] RequiredOrNone(JsonElement schemas, string name)
+		=> schemas.GetProperty(name).TryGetProperty("required", out var required) ? required.EnumerateArray().Select(e => e.GetString()!).ToArray() : [];
+
+	[TestMethod]
+	public async Task OpenApi_requires_exactly_the_non_nullable_properties_without_defaults()
+	{
+		var schemas = await SchemaDocument();
+		foreach (var name in new[] { "BookDto", "BookDetailDto" })
+		{
+			var required = Required(schemas, name);
+			CollectionAssert.Contains(required, "asin");
+			CollectionAssert.DoesNotContain(required, "subtitle", name);
+			CollectionAssert.DoesNotContain(required, "pdfStatus", name);
+			CollectionAssert.DoesNotContain(required, "parentAsin", name);
+		}
+		CollectionAssert.Contains(Required(schemas, "BookDetailDto"), "isAbridged");
+		CollectionAssert.DoesNotContain(Required(schemas, "BookDetailDto"), "description");
+
+		var decision = RequiredOrNone(schemas, "DecisionRequest");
+		CollectionAssert.DoesNotContain(decision, "applyToAll");
+		CollectionAssert.DoesNotContain(decision, "remember");
+		CollectionAssert.DoesNotContain(decision, "decision");
+	}
+
 	[TestMethod]
 	public async Task OpenApi_document_lists_every_route_with_a_typed_success_response()
 	{

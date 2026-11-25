@@ -72,10 +72,15 @@ public static class ApiEndpoints
 							text.Enum = enumValues.Select(v => (System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(v))
 								.Concat(nullable ? [null] : []).ToList()!;
 						}
-						if (property.AttributeProvider is System.Reflection.PropertyInfo info
-							&& schema.Properties.ContainsKey(property.Name)
-							&& nullability.Create(info).ReadState != System.Reflection.NullabilityState.Nullable)
-							(schema.Required ??= new HashSet<string>()).Add(property.Name);
+						if (property.AttributeProvider is System.Reflection.PropertyInfo info && schema.Properties.ContainsKey(property.Name))
+						{
+							var optional = nullability.Create(info).ReadState == System.Reflection.NullabilityState.Nullable
+								|| property.AssociatedParameter?.HasDefaultValue == true;
+							if (optional)
+								schema.Required?.Remove(property.Name);
+							else
+								(schema.Required ??= new HashSet<string>()).Add(property.Name);
+						}
 					}
 				}
 				return Task.CompletedTask;
