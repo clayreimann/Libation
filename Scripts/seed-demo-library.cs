@@ -6,9 +6,10 @@ using System.Text.Json;
 // Seeds a Libation library with one book per Liberate-column state, plus a few titles that
 // subtitle removal changes, for manual UI testing.
 //
-//   dotnet run Scripts/seed-demo-library.cs [--clean] [path-to-Libation-files-folder]
+//   dotnet run Scripts/seed-demo-library.cs -- <path-to-Libation-files-folder> [--clean]
 //
-// Run Libation at least once first so the database exists, and close it before seeding.
+// The folder is required, so a forgotten argument cannot write into a real library. Run Libation at
+// least once first so the database exists, and close it before seeding.
 // Pass --clean to delete previously seeded demo books instead of adding them.
 //
 // Reproducing every icon by hand is tedious, and two of them are not database state at all:
@@ -25,11 +26,18 @@ const string AsinPrefix = "DEMO";
 var clean = args.Contains("--clean", StringComparer.OrdinalIgnoreCase);
 var pathArg = args.FirstOrDefault(a => !a.StartsWith("--"));
 
-if (FindLibationFiles(pathArg) is not string libationFiles)
+if (pathArg is null)
 {
-	Console.Error.WriteLine("Could not find a Libation database.");
-	Console.Error.WriteLine("Run Libation once to create it, then pass its folder, e.g.:");
-	Console.Error.WriteLine(@"  dotnet run Scripts/seed-demo-library.cs C:\Users\me\AppData\Local\Libation");
+	Console.Error.WriteLine("Usage: dotnet run Scripts/seed-demo-library.cs -- <libation-files-folder> [--clean]");
+	Console.Error.WriteLine("The folder must hold LibationContext.db. There is no default, so a seed never lands in a real library by accident.");
+	return 2;
+}
+
+var libationFiles = Path.GetFullPath(pathArg);
+if (!File.Exists(Path.Combine(libationFiles, "LibationContext.db")))
+{
+	Console.Error.WriteLine($"No LibationContext.db in {libationFiles}.");
+	Console.Error.WriteLine("Run Libation once with that folder as its LibationFiles to create it.");
 	return 1;
 }
 
@@ -347,43 +355,6 @@ static List<DemoBook> BuildDemoBooks()
 }
 
 /// <summary>Locate the Libation files folder the same way Libation itself does.</summary>
-static string? FindLibationFiles(string? explicitPath)
-{
-	var candidates = new List<string>();
-
-	if (explicitPath is not null)
-		candidates.Add(explicitPath);
-
-	foreach (var folder in KnownLibationFolders())
-	{
-		candidates.Add(folder);
-
-		// appsettings.json may redirect the files folder somewhere else entirely.
-		var appSettings = Path.Combine(folder, "appsettings.json");
-		if (!File.Exists(appSettings))
-			continue;
-
-		try
-		{
-			if (JsonDocument.Parse(File.ReadAllText(appSettings)).RootElement
-				.TryGetProperty("LibationFiles", out var redirect) && redirect.GetString() is string path)
-				candidates.Add(path);
-		}
-		catch (JsonException) { }
-	}
-
-	return candidates.FirstOrDefault(c => File.Exists(Path.Combine(c, "LibationContext.db")));
-}
-
-static IEnumerable<string> KnownLibationFolders()
-{
-	yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Libation");
-	yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Libation");
-	yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Libation");
-	yield return Path.Combine(Path.GetTempPath(), $"Libation-{Environment.UserName}");
-	yield return AppContext.BaseDirectory;
-}
-
 /// <summary>Where Libation looks for resumable downloads, honouring the InProgress setting.</summary>
 string DownloadsInProgress()
 {

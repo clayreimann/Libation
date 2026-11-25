@@ -61,23 +61,19 @@ Fills a Libation library with fake books covering every icon the grid's **Libera
 
 It seeds the full stoplight matrix - each lamp color, each PDF state, purchased and Audible Plus - plus both error icons, a podcast series with episodes, books missing from the last scan, and books in the trash. On success it prints a row-by-row list of what each seeded row should look like, so sort the grid by **Title** and read down.
 
-Run Libation once first so the database exists, and close it before seeding:
+Pass the Libation files folder, the one holding `LibationContext.db`. There is no default: the script prints its usage and exits non-zero without one, so it can never seed a real library by accident. Run Libation once against that folder first so the database exists, and close it before seeding:
 
 ```bash
-dotnet run Scripts/seed-demo-library.cs
+dotnet run Scripts/seed-demo-library.cs -- "$HOME/libation-scratch"
 ```
 
 Remove the seeded books and their placeholder files:
 
 ```bash
-dotnet run Scripts/seed-demo-library.cs -- --clean
+dotnet run Scripts/seed-demo-library.cs -- "$HOME/libation-scratch" --clean
 ```
 
-The script looks for your Libation folder in the usual per-platform locations, including any redirect in an `appsettings.json` it finds. If it cannot locate the database, pass the folder:
-
-```bash
-dotnet run Scripts/seed-demo-library.cs -- "C:\Users\you\AppData\Local\Libation"
-```
+Use a scratch folder (set `LIBATION_FILES_DIR` when running Libation) rather than your everyday library.
 
 Both commands are safe to re-run. Seeding skips books that are already present, and only ever touches its own rows, which are prefixed `DEMO`.
 

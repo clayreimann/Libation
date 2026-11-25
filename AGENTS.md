@@ -41,9 +41,9 @@ plus a headless CLI (`LibationCli`) that shares the same config and SQLite libra
 - CI runs `dotnet test` from `Source/` on every platform, Linux included, and it works here too: the
   restore covers the whole solution but only the test projects and their references are compiled, so
   the Windows-only projects never break the run. Naming one project is simply quicker.
-- **Manual UI testing:** `dotnet run Scripts/seed-demo-library.cs` fills the library with fake books
-  covering every Liberate-column icon and prints the expected result for each row
-  (`-- --clean` removes them). Read `docs/development/testing.md` before seeding library state by
+- **Manual UI testing:** `dotnet run Scripts/seed-demo-library.cs -- <scratch-libation-files-dir>` fills that
+  library with fake books covering every Liberate-column icon and prints the expected result for
+  each row (`--clean` removes them). The directory is required; never point it at a real library. Read `docs/development/testing.md` before seeding library state by
   hand: the yellow lamp is an `.aaxc` file on disk rather than a stored status, `AudioExists` is a
   database check so green/error need no files, and a podcast's series is keyed off the parent
   book's own ASIN or the grid silently drops the parent row.
