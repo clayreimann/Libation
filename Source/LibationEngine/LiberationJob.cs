@@ -286,17 +286,11 @@ public sealed class LiberationJob
 	}
 
 	public LiberationJob AddDownloadPdf() => AddProcessable<DownloadPdf>();
-	public LiberationJob AddDownloadDecryptBook(DownloadOptions.LicenseInfo? license = null)
+	public LiberationJob AddDownloadDecryptBook() => AddDownloadDecryptBook(DownloadDecryptBook.Create);
+	public LiberationJob AddDownloadDecryptBook(Func<Configuration, Processable> create)
 	{
 		IncludesBookDownload = true;
-		return license is null
-			? AddProcessable<DownloadDecryptBook>()
-			: AddProcessable(cfg =>
-			{
-				var step = DownloadDecryptBook.Create(cfg);
-				step.LicenseInfo = license;
-				return step;
-			});
+		return AddProcessable(create);
 	}
 	public LiberationJob AddConvertToMp3() => AddProcessable<ConvertToMp3>();
 	public LiberationJob AddUploadToAudiobookshelf() => AddProcessable<UploadToAudiobookshelf>();

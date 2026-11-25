@@ -100,7 +100,7 @@ public class BulkRunSelectionTests
 		Seed("B0ABSENT001", absentFromLastScan: true);
 		var step = NewStep();
 
-		await new BulkRun().Go(step);
+		await new StubbedLiberate(step).Go();
 
 		step.Attempted.Should().BeEquivalentTo(["B0PRESENT01"]);
 		StringAssert.Contains(Output, "Skipped 1 title absent from your last library scan");
@@ -114,7 +114,7 @@ public class BulkRunSelectionTests
 		Seed("B0ABSENTDONE", absentFromLastScan: true, bookStatus: LiberatedStatus.Liberated);
 		Seed("B0ABSENTTODO", absentFromLastScan: true);
 
-		await new BulkRun().Go(NewStep(lb => !lb.Book.AudioExists));
+		await new StubbedLiberate(NewStep(lb => !lb.Book.AudioExists)).Go();
 
 		StringAssert.Contains(Output, "Skipped 1 title absent from your last library scan");
 	}
@@ -128,7 +128,7 @@ public class BulkRunSelectionTests
 		var firstPass = NewStep(lb => !lb.Book.AudioExists);
 		var followUp = NewStep();
 
-		await new BulkRun().Go(firstPass, followUp);
+		await new StubbedLiberate(firstPass, followUp).Go();
 
 		firstPass.Attempted.Should().HaveCount(0);
 		followUp.Attempted.Should().HaveCount(0);
@@ -140,7 +140,7 @@ public class BulkRunSelectionTests
 		Seed("B0ABSENT001", absentFromLastScan: true);
 		var step = NewStep();
 
-		await new BulkRun { SkipsAbsent = false }.Go(step);
+		await new StubbedLiberate(step) { Force = true }.Go();
 
 		step.Attempted.Should().BeEquivalentTo(["B0ABSENT001"]);
 		Output.Contains("absent from your last library scan").Should().BeFalse();
@@ -156,7 +156,7 @@ public class BulkRunSelectionTests
 		var firstPass = NewStep(lb => !lb.Book.AudioExists);
 		var followUp = NewStep();
 
-		await new BulkRun { HonorsWaits = true }.Go(firstPass, followUp);
+		await new StubbedLiberate(firstPass, followUp).Go();
 
 		followUp.Attempted.Should().HaveCount(0);
 		StringAssert.Contains(Output, "Skipped 1 title that recently failed to download");
@@ -170,7 +170,7 @@ public class BulkRunSelectionTests
 		var firstPass = NewStep();
 		var followUp = NewStep();
 
-		await new BulkRun { HonorsWaits = true }.Go(firstPass, followUp);
+		await new StubbedLiberate(firstPass, followUp).Go();
 
 		firstPass.Attempted.Should().HaveCount(0);
 		followUp.Attempted.Should().HaveCount(0);
@@ -183,7 +183,7 @@ public class BulkRunSelectionTests
 		Seed("B0PRESENT01");
 		var step = NewStep();
 
-		await new BulkRun().Go(step);
+		await new StubbedLiberate(step).Go();
 
 		step.Attempted.Should().BeEquivalentTo(["B0PRESENT01"]);
 		Output.Contains("Skipped").Should().BeFalse();
@@ -211,20 +211,5 @@ public class BulkRunSelectionTests
 			Attempted.Add(libraryBook.Book.AudibleProductId);
 			return Task.FromResult(new StatusHandler());
 		}
-	}
-
-	/// <summary>Exposes the run loop, which is otherwise reachable only through a verb.</summary>
-	private sealed class BulkRun : ProcessableOptionsBase
-	{
-		public bool SkipsAbsent { get; init; } = true;
-		public bool HonorsWaits { get; init; }
-
-		internal override bool SkipsTitlesAbsentFromLastScan => SkipsAbsent;
-		internal override bool HonorsDeferredRetries => HonorsWaits;
-
-		protected override Task ProcessAsync() => Task.CompletedTask;
-
-		public Task Go(Processable processable, Processable? bulkFollowUp = null)
-			=> RunAsync(processable, bulkFollowUp: bulkFollowUp);
 	}
 }

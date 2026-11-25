@@ -39,7 +39,7 @@ public sealed partial class LiberationQueue
 	/// <summary>The single call the dispatch loop makes into a book; replaced by a fake in tests.</summary>
 	internal Func<LiberationJob, Task<ProcessBookResult>> RunJob { get; set; } = job => job.ProcessOneAsync();
 
-	/// <summary>Asked before each book starts; a message ends the run, dropping this book and every one still queued.</summary>
+	/// <summary>Asked before each book starts; a message ends the run, dropping this book and every one still queued. The owner reports it.</summary>
 	public Func<LiberationJob, string?>? StopBeforeDispatch { get; set; }
 
 	internal TimeProvider Clock { get; set; } = TimeProvider.System;
@@ -399,7 +399,6 @@ public sealed partial class LiberationQueue
 					if (StopBeforeDispatch?.Invoke(nextBook) is { } stopMessage)
 					{
 						Serilog.Log.Logger.Information("{StopMessage}", stopMessage);
-						WriteLog(stopMessage);
 						Jobs.ClearQueue();
 						nextBook.Result = ProcessBookResult.Cancelled;
 						nextBook.Status = ProcessBookStatus.Cancelled;

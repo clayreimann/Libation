@@ -145,15 +145,24 @@ internal class ServeOptions : OptionsBase
 			apiEnabled,
 			apiTokenFile is null ? null : Path.GetFullPath(apiTokenFile));
 
+		var policy = new LiberationPolicy
+		{
+			MaxConcurrentDownloads = () => 1,
+			OnDiskFull = DiskFullPolicy.WaitForSpace,
+			OnDailyLimit = DailyLimitPolicy.Skip
+		};
+		var queue = new LiberationQueue(policy);
+		_ = new AutoResponder(queue, policy, Console.Error);
+
 		var jobs = new DaemonJobs(
 			_ => new ScanOptions().ExecuteAsync(),
-			_ => new LiberateOptions().ExecuteAsync(),
+			_ => new LiberateOptions { SharedQueue = queue }.ExecuteAsync(),
 			async _ =>
 			{
 				var rc = await new ScanOptions().ExecuteAsync();
 				return rc != 0 ? rc : await new SetDownloadStatusOptions { SetDownloaded = true }.ExecuteAsync();
 			});
 
-		Environment.ExitCode = await LibationDaemon.RunAsync(options, jobs);
+		Environment.ExitCode = await LibationDaemon.RunAsync(options, jobs, queue: queue);
 	}
 }

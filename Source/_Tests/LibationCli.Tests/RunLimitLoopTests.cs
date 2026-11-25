@@ -63,7 +63,7 @@ public class RunLimitLoopTests
 		SeedLibrary(5);
 		var processable = NewProcessable();
 
-		await new LimitedRun(new(Configuration.DailyLimitUnit.Books, 2)).Go(processable);
+		await new StubbedLiberate(processable) { RunLimit = new(Configuration.DailyLimitUnit.Books, 2) }.Go();
 
 		processable.Downloaded.Should().HaveCount(2);
 		StringAssert.Contains(
@@ -79,7 +79,7 @@ public class RunLimitLoopTests
 		SeedLibrary(10);
 		var processable = NewProcessable(bytesPerBook: 300L * 1024 * 1024);
 
-		await new LimitedRun(new(Configuration.DailyLimitUnit.GB, 1)).Go(processable);
+		await new StubbedLiberate(processable) { RunLimit = new(Configuration.DailyLimitUnit.GB, 1) }.Go();
 
 		// A fourth 300 MB title would be assumed to need another 400 MB, past the 1 GB limit.
 		processable.Downloaded.Should().HaveCount(3);
@@ -95,7 +95,7 @@ public class RunLimitLoopTests
 		SeedLibrary(3);
 		var processable = NewProcessable();
 
-		await new LimitedRun(new(Configuration.DailyLimitUnit.Books, 10)).Go(processable);
+		await new StubbedLiberate(processable) { RunLimit = new(Configuration.DailyLimitUnit.Books, 10) }.Go();
 
 		processable.Downloaded.Should().HaveCount(3);
 		Output.Contains("Reached this run's limit").Should().BeFalse();
@@ -109,7 +109,7 @@ public class RunLimitLoopTests
 		SeedLibrary(2);
 		var processable = NewProcessable();
 
-		await new LimitedRun(new(Configuration.DailyLimitUnit.Books, 2)).Go(processable);
+		await new StubbedLiberate(processable) { RunLimit = new(Configuration.DailyLimitUnit.Books, 2) }.Go();
 
 		processable.Downloaded.Should().HaveCount(2);
 		Output.Contains("Reached this run's limit").Should().BeFalse();
@@ -122,7 +122,7 @@ public class RunLimitLoopTests
 		SeedLibrary(6);
 		var processable = NewProcessable();
 
-		await new LimitedRun(null).Go(processable);
+		await new StubbedLiberate(processable) { RunLimit = null }.Go();
 
 		processable.Downloaded.Should().HaveCount(6);
 		StringAssert.Contains(Output, "Done. All books have been processed");
@@ -138,7 +138,7 @@ public class RunLimitLoopTests
 		for (var i = 0; i < 4; i++)
 			DownloadHistoryStore.Record(ProductId(i), isAudiblePlus: true, bytes: 1, completedAt: DateTimeOffset.Now.AddHours(-1));
 
-		await new LimitedRun(new(Configuration.DailyLimitUnit.Books, 3)).Go(processable);
+		await new StubbedLiberate(processable) { RunLimit = new(Configuration.DailyLimitUnit.Books, 3) }.Go();
 
 		processable.Downloaded.Should().HaveCount(3);
 	}
@@ -193,15 +193,5 @@ public class RunLimitLoopTests
 			DownloadHistoryStore.Record(libraryBook.Book.AudibleProductId, libraryBook.IsAudiblePlus, BytesPerBook);
 			return Task.FromResult(new StatusHandler());
 		}
-	}
-
-	/// <summary>Exposes the run loop, which is otherwise reachable only through a verb.</summary>
-	private sealed class LimitedRun(RunDownloadLimit? limit) : ProcessableOptionsBase
-	{
-		protected override RunDownloadLimit? RunLimit => limit;
-
-		protected override Task ProcessAsync() => Task.CompletedTask;
-
-		public Task Go(Processable processable) => RunAsync(processable);
 	}
 }

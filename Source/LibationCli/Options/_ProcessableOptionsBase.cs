@@ -82,47 +82,8 @@ public abstract class ProcessableOptionsBase : OptionsBase
 		return strProc;
 	}
 
-	/// <summary>How much this run may download before it stops, or null for a verb without a per-run limit.</summary>
-	protected virtual RunDownloadLimit? RunLimit => null;
-
-	/// <summary>
-	/// Whether this run should leave alone the titles Audible recently refused. False for a run that names
-	/// its titles or passes --force: an explicit request is always attempted.
-	/// </summary>
-	internal virtual bool HonorsDeferredRetries => false;
-
-	/// <summary>
-	/// Whether a bulk run should leave alone the titles the last library scan did not find, which is what every
-	/// multi-title path in the app already does through <see cref="DataLayer.LibraryBookQueries.Downloadable"/>.
-	/// <para>
-	/// False by default: convert-to-mp3 and the Audiobookshelf upload work on the files already on disk, and a
-	/// title being absent from Audible says nothing about those. Only a verb that asks Audible for something has
-	/// anything to gain by skipping them.
-	/// </para>
-	/// </summary>
-	internal virtual bool SkipsTitlesAbsentFromLastScan => false;
-
-	/// <param name="bulkFollowUp">
-	/// A second pass over the library, run after <paramref name="Processable"/>, for the titles that pass its
-	/// own Validate but were not selected by the first. <c>liberate</c> uses this to back-fill PDFs for titles
-	/// whose audio it already has: the first pass only selects titles that need downloading, so on its own it
-	/// never reaches a title that needs nothing but its PDF.
-	/// <para>
-	/// Bulk runs only. A run that names its titles already gets every step each title needs, because the first
-	/// pass re-downloads a named title and its PDF follows from that.
-	/// </para>
-	/// </param>
-	protected async Task RunAsync(Processable Processable, Action<LibraryBook>? config = null, Action<string>? notFound = null, Processable? bulkFollowUp = null)
+	protected async Task RunAsync(Processable Processable, Action<LibraryBook>? config = null, Action<string>? notFound = null)
 	{
-		var skippedForDailyLimit = 0;
-		var skippedAsAbsent = 0;
-		var deferredThisRun = new List<DeferredDownload>();
-		var runLimitReached = false;
-
-		// Needs no guard against pdf or convert runs, unlike the daily limit below: the tracker counts only
-		// audiobook downloads this run recorded, and those verbs record none.
-		var runLimit = RunLimit is RunDownloadLimit limit ? new RunLimitTracker(limit, DateTimeOffset.Now) : null;
-
 		var productIds = GetProductIds().ToArray();
 		if (productIds.Length > 0)
 		{
@@ -130,8 +91,8 @@ public abstract class ProcessableOptionsBase : OptionsBase
 			{
 				if (DbContexts.GetLibraryBook_Flat_NoTracking(asin, caseSensative: false) is LibraryBook lb)
 				{
-					if (!await ProcessOrStopAsync(Processable, lb, true))
-						break;
+					config?.Invoke(lb);
+					await ProcessOneAsync(Processable, lb, true);
 				}
 				else
 				{
@@ -144,173 +105,16 @@ public abstract class ProcessableOptionsBase : OptionsBase
 		}
 		else
 		{
-			// Read once, before the first book: a run that spends hours downloading must not start skipping
-			// titles because of failures it recorded itself a moment ago.
-			var deferrals = HonorsDeferredRetries ? DownloadDeferrals.Load(DateTimeOffset.Now) : DownloadDeferrals.None;
-
-			var libraryBooks = DbContexts.GetLibrary_Flat_NoTracking();
-
-			// Filtered once, ahead of both passes, so the two agree about which titles this run may attempt -
-			// and by the same rule the app's own multi-title paths use.
-			if (SkipsTitlesAbsentFromLastScan)
+			foreach (var lb in Processable.GetValidLibraryBooks(DbContexts.GetLibrary_Flat_NoTracking()))
 			{
-				var absent = libraryBooks.Where(lb => !lb.Downloadable).ToList();
-				libraryBooks = libraryBooks.Where(lb => lb.Downloadable).ToList();
-
-				// Counted as the titles a pass would otherwise have attempted, not as every absent title in the
-				// library. Most of a large library's absent titles need nothing at all, and counting those would
-				// put a number in front of the user that no run was ever going to act on.
-				skippedAsAbsent = Processable.GetValidLibraryBooks(absent)
-					.Concat(bulkFollowUp?.GetValidLibraryBooks(absent) ?? [])
-					.DistinctBy(lb => lb.Book.AudibleProductId, StringComparer.OrdinalIgnoreCase)
-					.Count();
-			}
-
-			// Titles the follow-up pass must leave alone, because the first pass has already dealt with them:
-			// the ones it attempted, whose own steps followed on from the attempt, and the ones it left waiting,
-			// which are counted and explained once here rather than again below. Recorded by product id rather
-			// than re-derived, because neither question can be answered from a title's state afterwards - a step
-			// that just failed still validates, and a title being waited on looks like any other title that
-			// needs downloading.
-			var settledByFirstPass = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-			foreach (var lb in Processable.GetValidLibraryBooks(libraryBooks))
-			{
-				settledByFirstPass.Add(lb.Book.AudibleProductId);
-
-				if (IsDeferred(lb))
-					continue;
-
-				if (!await ProcessOrStopAsync(Processable, lb, false))
-					break;
-			}
-
-			// Skipped when the first pass stopped early, so a run cut short by its download limit does not
-			// carry on doing other work.
-			if (bulkFollowUp is not null && !runLimitReached)
-			{
-				foreach (var lb in bulkFollowUp.GetValidLibraryBooks(libraryBooks))
-				{
-					// The follow-up pass waits on a refused title just as the first does. It fetches a PDF,
-					// which comes from the same license request the audiobook does, so a title being waited on
-					// would be refused here for the reason the wait exists to stop asking about.
-					if (settledByFirstPass.Contains(lb.Book.AudibleProductId) || IsDeferred(lb))
-						continue;
-
-					if (!await ProcessOrStopAsync(bulkFollowUp, lb, false))
-						break;
-				}
-			}
-
-			bool IsDeferred(LibraryBook libraryBook)
-			{
-				if (deferrals.Find(libraryBook) is not DeferredDownload deferred)
-					return false;
-
-				deferredThisRun.Add(deferred);
-				Serilog.Log.Logger.Information(
-					"Not attempting {libraryBook} yet. {@DebugInfo}",
-					libraryBook.LogFriendly(),
-					new { deferred.Kind, deferred.ConsecutiveFailures, deferred.Reason, RetryAfter = deferred.RetryAfter.ToLocalTime() });
-				return true;
+				config?.Invoke(lb);
+				await ProcessOneAsync(Processable, lb, false);
 			}
 		}
 
-		if (skippedAsAbsent > 0)
-		{
-			var summary = AbsentFromLastScanUserMessage.BuildCliSkippedSummary(skippedAsAbsent);
-			Console.WriteLine(summary);
-			Serilog.Log.Logger.Information(summary);
-		}
-
-		if (deferredThisRun.Count > 0)
-		{
-			var now = DateTimeOffset.Now;
-			foreach (var line in DeferredDownloadUserMessage.BuildCliSkippedLines(deferredThisRun, now))
-				Console.WriteLine(line);
-
-			Serilog.Log.Logger.Information(
-				"Skipped {deferredCount} titles that recently failed to download. Skipped: {skipped}",
-				deferredThisRun.Count,
-				DeferredDownloadUserMessage.BuildLogBreakdown(deferredThisRun));
-		}
-
-		if (skippedForDailyLimit > 0)
-		{
-			var summary = DailyDownloadLimitUserMessage.BuildCliSkippedSummary(skippedForDailyLimit);
-			Console.WriteLine(summary);
-			Serilog.Log.Logger.Information(summary);
-		}
-
-		var done = runLimitReached
-			? "Done. Stopped early: this run's download limit was reached."
-			: "Done. All books have been processed";
+		var done = "Done. All books have been processed";
 		Console.WriteLine(done);
 		Serilog.Log.Logger.Information(done);
-
-		// False ends the run. The limit is checked here rather than at the top of the run so that a run whose
-		// books happen to end exactly at the limit says nothing: nothing was cut short.
-		async Task<bool> ProcessOrStopAsync(Processable processable, LibraryBook libraryBook, bool validate)
-		{
-			if (runLimit is not null && runLimit.TryStop(out var stopMessage))
-			{
-				runLimitReached = true;
-				Console.WriteLine(stopMessage);
-				Serilog.Log.Logger.Information(stopMessage);
-				return false;
-			}
-
-			config?.Invoke(libraryBook);
-
-			if (IsSkippedByDailyLimit(processable, libraryBook))
-			{
-				skippedForDailyLimit++;
-				return true;
-			}
-
-			runLimit?.Attempting(libraryBook.Book.AudibleProductId);
-			await ProcessOneAsync(processable, libraryBook, validate);
-			return true;
-		}
-	}
-
-	protected bool announcedDailyLimit;
-
-	/// <summary>
-	/// True when the user's daily download limit covers this title and has been reached. Unlike the GUI queue the
-	/// CLI never waits: a command-line run must not sit idle for hours, and in Docker the entrypoint has to return
-	/// so its own sleep loop keeps working. Skipped titles stay un-liberated and are retried on the next run.
-	/// </summary>
-	protected bool IsSkippedByDailyLimit(Processable processable, LibraryBook libraryBook)
-	{
-		// Only audiobook downloads are limited, and only titles the configured scope covers, so the common
-		// case of no limit (or a Plus-only limit against an owned title) costs nothing.
-		if (processable is not DownloadDecryptBook
-			|| !DailyDownloadLimit.AppliesTo(libraryBook.IsAudiblePlus, Configuration.Instance))
-			return false;
-
-		var now = DateTimeOffset.Now;
-		var allowance = DailyDownloadLimit.Evaluate(Configuration.Instance, DownloadHistoryStore.GetCurrentWindow(now), now);
-
-		if (!allowance.Blocks(libraryBook.IsAudiblePlus))
-			return false;
-
-		if (!announcedDailyLimit)
-		{
-			announcedDailyLimit = true;
-			foreach (var line in DailyDownloadLimitUserMessage.BuildCliSkippedLines(allowance))
-			{
-				Console.Error.WriteLine(line);
-				Serilog.Log.Logger.Information(line);
-			}
-		}
-
-		Serilog.Log.Logger.Information(
-			"Daily download limit reached; skipping {libraryBook}. {@DebugInfo}",
-			libraryBook.LogFriendly(),
-			new { allowance.Scope, allowance.Unit, allowance.Quantity, allowance.UsedBooks, allowance.UsedBytes, allowance.NextCapacityAt });
-
-		return true;
 	}
 
 	protected async Task ProcessOneAsync(Processable Processable, LibraryBook libraryBook, bool validate)
@@ -396,7 +200,7 @@ public abstract class ProcessableOptionsBase : OptionsBase
 	/// its own silence on the next several runs rather than appearing to have forgotten the title.
 	/// </summary>
 	/// <returns>True when the title is being waited on.</returns>
-	private static bool ReportNextAttempt(LibraryBook libraryBook)
+	protected static bool ReportNextAttempt(LibraryBook libraryBook)
 	{
 		var now = DateTimeOffset.Now;
 		if (DownloadAttemptFailureStore.Find(libraryBook, now) is not DeferredDownload deferred)

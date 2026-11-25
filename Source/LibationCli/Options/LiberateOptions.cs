@@ -3,12 +3,15 @@ using CommandLine;
 using DataLayer;
 using FileLiberator;
 using LibationCli.Options;
+using LibationEngine;
 using LibationFileManager;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace LibationCli;
@@ -44,8 +47,9 @@ public class LiberateOptions : ProcessableOptionsBase
 		HelpText = "Stop this run after downloading about this many GB. Approximate: a title's size is unknown until it is downloaded.")]
 	public int? LimitGB { get; set; }
 
-	private RunDownloadLimit? runLimit;
-	protected override RunDownloadLimit? RunLimit => runLimit;
+	internal RunDownloadLimit? RunLimit { get; set; }
+
+	internal LiberationQueue? SharedQueue { get; init; }
 
 	#endregion
 
@@ -54,22 +58,23 @@ public class LiberateOptions : ProcessableOptionsBase
 	/// held back like any other: a PDF is fetched through the same license request as the audiobook, so a title
 	/// Libation is waiting on would be refused for its PDF exactly as it was for its audio.
 	/// </summary>
-	internal override bool HonorsDeferredRetries => !Force;
+	internal bool HonorsDeferredRetries => !Force;
 
 	/// <summary>
 	/// Audible will not license a title the last scan did not find, so a bulk run has nothing to gain by asking.
 	/// --force means "attempt everything"; a run that names its titles never reaches the bulk selection at all.
 	/// </summary>
-	internal override bool SkipsTitlesAbsentFromLastScan => !Force;
+	internal bool SkipsTitlesAbsentFromLastScan => !Force;
 
 	protected override async Task ProcessAsync()
 	{
-		if (!RunDownloadLimit.TryCreate(LimitBooks, LimitMB, LimitGB, PdfOnly, out runLimit, out var limitError))
+		if (!RunDownloadLimit.TryCreate(LimitBooks, LimitMB, LimitGB, PdfOnly, out var runLimit, out var limitError))
 		{
 			PrintVerbUsage("ERROR", "=====", limitError);
 			Environment.ExitCode = (int)ExitCode.RunTimeError;
 			return;
 		}
+		RunLimit = runLimit;
 
 		if (AudibleFileStorage.BooksDirectory is null)
 		{
@@ -77,19 +82,241 @@ public class LiberateOptions : ProcessableOptionsBase
 			return;
 		}
 
+		var queue = SharedQueue ?? CreateCliQueue();
+
 		if (LicenseInput is string licenseInput)
+			await LiberateFromLicense(queue, licenseInput);
+		else
+			await RunBulkOrTargetedAsync(queue);
+	}
+
+	internal static LiberationQueue CreateCliQueue()
+	{
+		var policy = new LiberationPolicy
 		{
-			await LiberateFromLicense(licenseInput);
+			MaxConcurrentDownloads = () => 1,
+			OnDiskFull = DiskFullPolicy.Stop,
+			OnDailyLimit = DailyLimitPolicy.Skip
+		};
+		var queue = new LiberationQueue(policy);
+		_ = new AutoResponder(queue, policy, Console.Error);
+		return queue;
+	}
+
+	internal virtual Processable CreateBookStep(DownloadOptions.LicenseInfo? license)
+	{
+		var step = CreateProcessable<DownloadDecryptBook>();
+		step.LicenseInfo = license;
+		return step;
+	}
+
+	internal virtual Processable CreatePdfStep() => CreateProcessable<DownloadPdf>();
+
+	internal virtual Processable CreateUploadStep() => CreateProcessable<UploadToAudiobookshelf>();
+
+	private LiberationJob NewJob(LiberationQueue queue, LibraryBook libraryBook, bool pdfOnly, DownloadOptions.LicenseInfo? license = null)
+	{
+		var job = new LiberationJob(libraryBook, Configuration.Instance, queue.BadBookSession);
+		if (pdfOnly)
+			job.AddProcessable(_ => CreatePdfStep());
+		else
+			job.AddDownloadDecryptBook(_ => CreateBookStep(license))
+				.AddProcessable(_ => CreatePdfStep())
+				.AddProcessable(_ => CreateUploadStep());
+
+		job.AttentionWritten += (_, text) => Console.Error.WriteLine(text);
+		return job;
+	}
+
+	private sealed class RunOutcome
+	{
+		public int SkippedForDailyLimit;
+		public bool LimitReached;
+	}
+
+	/// <summary>Runs the jobs through the queue and returns once the queue has drained.</summary>
+	private async Task<RunOutcome> RunJobsAsync(LiberationQueue queue, IReadOnlyList<LiberationJob> jobs)
+	{
+		var outcome = new RunOutcome();
+		if (jobs.Count == 0)
+			return outcome;
+
+		var tracker = RunLimit is RunDownloadLimit limit ? new RunLimitTracker(limit, DateTimeOffset.Now) : null;
+		var mine = new HashSet<LiberationJob>(jobs);
+		var skipped = 0;
+		var diskFull = false;
+
+		void OnLog(object? _, string line) => Console.Error.WriteLine(line);
+		void OnEnded(object? _, LiberationJob job)
+		{
+			if (!mine.Contains(job))
+				return;
+
+			if (job.Result == ProcessBookResult.DiskFull)
+				diskFull = true;
+			else if (job.Result == ProcessBookResult.SkippedDailyLimit)
+				Interlocked.Increment(ref skipped);
+			else if (job.Result is not (ProcessBookResult.Success or ProcessBookResult.Cancelled))
+				ReportNextAttempt(job.LibraryBook);
+		}
+
+		queue.LogWritten += OnLog;
+		queue.JobEnded += OnEnded;
+		queue.StopBeforeDispatch = job =>
+		{
+			if (tracker is null)
+				return null;
+
+			if (tracker.TryStop(out var message))
+			{
+				outcome.LimitReached = true;
+				Console.WriteLine(message);
+				return message;
+			}
+
+			tracker.Attempting(job.LibraryBook.Book.AudibleProductId);
+			return null;
+		};
+
+		try
+		{
+			queue.Jobs.Enqueue(jobs.ToList());
+			queue.StartOrWake();
+			if (queue.Runner is { } runner)
+				await runner;
+		}
+		finally
+		{
+			queue.StopBeforeDispatch = null;
+			queue.JobEnded -= OnEnded;
+			queue.LogWritten -= OnLog;
+		}
+
+		outcome.SkippedForDailyLimit = skipped;
+		if (diskFull)
+			Environment.ExitCode = (int)ExitCode.RunTimeError;
+		return outcome;
+	}
+
+	internal async Task RunBulkOrTargetedAsync(LiberationQueue queue)
+	{
+		var jobs = new List<LiberationJob>();
+		var productIds = GetProductIds().ToArray();
+		var skippedAsAbsent = 0;
+		var deferredThisRun = new List<DeferredDownload>();
+
+		if (productIds.Length > 0)
+		{
+			foreach (var asin in productIds)
+			{
+				if (DbContexts.GetLibraryBook_Flat_NoTracking(asin, caseSensative: false) is LibraryBook lb)
+				{
+					PrepareBookForLiberate(lb, isTargetedRun: true);
+					jobs.Add(NewJob(queue, lb, PdfOnly));
+				}
+				else
+				{
+					var msg = $"Book with ASIN '{asin}' not found in library. Skipping.";
+					Console.Error.WriteLine(msg);
+					Serilog.Log.Logger.Error(msg);
+				}
+			}
 		}
 		else
 		{
-			var isTargetedRun = GetProductIds().Any();
+			// Read once, before the first book: a run that spends hours downloading must not start skipping
+			// titles because of failures it recorded itself a moment ago.
+			var deferrals = HonorsDeferredRetries ? DownloadDeferrals.Load(DateTimeOffset.Now) : DownloadDeferrals.None;
+			var libraryBooks = DbContexts.GetLibrary_Flat_NoTracking();
 
-			await RunAsync(
-				GetProcessable(),
-				lb => PrepareBookForLiberate(lb, isTargetedRun),
-				bulkFollowUp: BackFillsPdfs ? CreateProcessable<DownloadPdf>() : null);
+			var firstPass = PdfOnly ? CreatePdfStep() : CreateBookStep(null);
+			var followUp = BackFillsPdfs ? CreatePdfStep() : null;
+
+			if (SkipsTitlesAbsentFromLastScan)
+			{
+				var absent = libraryBooks.Where(lb => !lb.Downloadable).ToList();
+				libraryBooks = libraryBooks.Where(lb => lb.Downloadable).ToList();
+
+				// Only titles a pass would have attempted: most absent titles need nothing at all.
+				skippedAsAbsent = firstPass.GetValidLibraryBooks(absent)
+					.Concat(followUp?.GetValidLibraryBooks(absent) ?? [])
+					.DistinctBy(lb => lb.Book.AudibleProductId, StringComparer.OrdinalIgnoreCase)
+					.Count();
+			}
+
+			// Recorded by product id: a step that just failed still validates, and a title being waited on
+			// looks like any other title that needs downloading.
+			var settledByFirstPass = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+			foreach (var lb in firstPass.GetValidLibraryBooks(libraryBooks))
+			{
+				settledByFirstPass.Add(lb.Book.AudibleProductId);
+				if (IsDeferred(lb))
+					continue;
+
+				PrepareBookForLiberate(lb, isTargetedRun: false);
+				jobs.Add(NewJob(queue, lb, PdfOnly));
+			}
+
+			if (followUp is not null)
+			{
+				foreach (var lb in followUp.GetValidLibraryBooks(libraryBooks))
+				{
+					if (settledByFirstPass.Contains(lb.Book.AudibleProductId) || IsDeferred(lb))
+						continue;
+
+					PrepareBookForLiberate(lb, isTargetedRun: false);
+					jobs.Add(NewJob(queue, lb, pdfOnly: true));
+				}
+			}
+
+			bool IsDeferred(LibraryBook libraryBook)
+			{
+				if (deferrals.Find(libraryBook) is not DeferredDownload deferred)
+					return false;
+
+				deferredThisRun.Add(deferred);
+				Serilog.Log.Logger.Information(
+					"Not attempting {libraryBook} yet. {@DebugInfo}",
+					libraryBook.LogFriendly(),
+					new { deferred.Kind, deferred.ConsecutiveFailures, deferred.Reason, RetryAfter = deferred.RetryAfter.ToLocalTime() });
+				return true;
+			}
 		}
+
+		var outcome = await RunJobsAsync(queue, jobs);
+
+		if (skippedAsAbsent > 0)
+		{
+			var summary = AbsentFromLastScanUserMessage.BuildCliSkippedSummary(skippedAsAbsent);
+			Console.WriteLine(summary);
+			Serilog.Log.Logger.Information(summary);
+		}
+
+		if (deferredThisRun.Count > 0)
+		{
+			var now = DateTimeOffset.Now;
+			foreach (var line in DeferredDownloadUserMessage.BuildCliSkippedLines(deferredThisRun, now))
+				Console.WriteLine(line);
+
+			Serilog.Log.Logger.Information(
+				"Skipped {deferredCount} titles that recently failed to download. Skipped: {skipped}",
+				deferredThisRun.Count,
+				DeferredDownloadUserMessage.BuildLogBreakdown(deferredThisRun));
+		}
+
+		if (outcome.SkippedForDailyLimit > 0)
+		{
+			var summary = DailyDownloadLimitUserMessage.BuildCliSkippedSummary(outcome.SkippedForDailyLimit);
+			Console.WriteLine(summary);
+			Serilog.Log.Logger.Information(summary);
+		}
+
+		var done = outcome.LimitReached
+			? "Done. Stopped early: this run's download limit was reached."
+			: "Done. All books have been processed";
+		Console.WriteLine(done);
+		Serilog.Log.Logger.Information(done);
 	}
 
 	/// <summary>
@@ -100,7 +327,7 @@ public class LiberateOptions : ProcessableOptionsBase
 	/// </summary>
 	internal bool BackFillsPdfs => !PdfOnly && !GetProductIds().Any();
 
-	private async Task LiberateFromLicense(string licPath)
+	private async Task LiberateFromLicense(LiberationQueue queue, string licPath)
 	{
 		var licenseInfo = licPath is "-" ? ReadLicenseFromStdIn()
 			: ReadLicenseFromFile(licPath);
@@ -122,14 +349,9 @@ public class LiberateOptions : ProcessableOptionsBase
 
 		PrepareBookForLiberate(libraryBook, isTargetedRun: true);
 
-		var processable = GetProcessable(licenseInfo);
-		if (IsSkippedByDailyLimit(processable, libraryBook))
-		{
-			Console.WriteLine(DailyDownloadLimitUserMessage.BuildCliSkippedSummary(1));
-			return;
-		}
-
-		await ProcessOneAsync(processable, libraryBook, true);
+		var outcome = await RunJobsAsync(queue, [NewJob(queue, libraryBook, PdfOnly, licenseInfo)]);
+		if (outcome.SkippedForDailyLimit > 0)
+			Console.WriteLine(DailyDownloadLimitUserMessage.BuildCliSkippedSummary(outcome.SkippedForDailyLimit));
 	}
 
 	private static DownloadOptions.LicenseInfo? ReadLicenseFromFile(string licFile)
@@ -189,40 +411,6 @@ public class LiberateOptions : ProcessableOptionsBase
 		return JsonSerializer.Create(jsonSettings);
 	}
 
-	private Processable GetProcessable(DownloadOptions.LicenseInfo? licenseInfo = null)
-		=> PdfOnly ? CreateProcessable<DownloadPdf>() : CreateBackupBook(licenseInfo);
-
-	/// <summary>
-	/// Runs the steps that follow a book download for the same title. Reached through the audiobook step's
-	/// Completed event, which fires whether or not the download worked, so what follows has to decide for
-	/// itself whether there is anything left to do.
-	/// </summary>
-	private void OnBookProcessed(DownloadPdf downloadPdf, UploadToAudiobookshelf uploadToAudiobookshelf, object? sender, LibraryBook libraryBook)
-	{
-		// The supplement is fetched from the license the audiobook download used - the same request, asked once.
-		// A step that obtained no license attempted nothing worth following up: asking for one here would put a
-		// second identical request to Audible, and where the first was refused, collect a second refusal.
-		if (sender is ILicensedDownload { ObtainedLicense: DownloadOptions.LicenseInfo license }
-			&& downloadPdf.Validate(libraryBook))
-		{
-			downloadPdf.LicenseInfo = license;
-			try
-			{
-				// Through the shared per-book handling so a refusal is recorded and reported the same way here
-				// as in a bulk pass. Run as sync for easy exception catching; this is fast anyway.
-				ProcessOneAsync(downloadPdf, libraryBook, validate: false).GetAwaiter().GetResult();
-			}
-			finally
-			{
-				// Processable instances are reused across books, so a license left behind would be applied to
-				// the next title, which it is not for.
-				downloadPdf.LicenseInfo = null;
-			}
-		}
-
-		uploadToAudiobookshelf.TryProcessAsync(libraryBook).GetAwaiter().GetResult();
-	}
-
 	private void PrepareBookForLiberate(LibraryBook lb, bool isTargetedRun)
 	{
 		// Targeted runs (explicit ASIN/id) always re-download. --force is for re-downloading the whole library.
@@ -237,17 +425,5 @@ public class LiberateOptions : ProcessableOptionsBase
 			// and the wait must restart from the beginning if the attempt fails again.
 			DownloadAttemptFailureStore.Clear(lb);
 		}
-	}
-
-	private Processable CreateBackupBook(DownloadOptions.LicenseInfo? licenseInfo)
-	{
-		var downloadPdf = CreateProcessable<DownloadPdf>();
-		var uploadToAudiobookshelf = CreateProcessable<UploadToAudiobookshelf>();
-
-		// Chain pdf download and audiobookshelf upload on DownloadDecryptBook.Completed
-		var downloadDecryptBook = CreateProcessable<DownloadDecryptBook>(
-			(sender, e) => OnBookProcessed(downloadPdf, uploadToAudiobookshelf, sender, e));
-		downloadDecryptBook.LicenseInfo = licenseInfo;
-		return downloadDecryptBook;
 	}
 }

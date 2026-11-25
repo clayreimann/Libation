@@ -516,8 +516,6 @@ public class LiberationQueueTests
 	{
 		var h = new Harness();
 		h.Queue.StopBeforeDispatch = job => Harness.Asin(job) == "B" ? "enough" : null;
-		var logs = new ConcurrentQueue<string>();
-		h.Queue.LogWritten += (_, line) => logs.Enqueue(line);
 		LiberationJob a = h.Job("A"), b = h.Job("B"), c = h.Job("C");
 
 		h.Add(a, b, c);
@@ -525,7 +523,6 @@ public class LiberationQueueTests
 
 		CollectionAssert.AreEqual(new[] { "A" }, h.Started.ToArray());
 		Assert.AreEqual(ProcessBookResult.Cancelled, b.Result);
-		CollectionAssert.AreEqual(new[] { "enough" }, logs.ToArray());
 		Assert.AreEqual(0, h.Queue.Jobs.Count(j => j.Status == ProcessBookStatus.Queued));
 	}
 
