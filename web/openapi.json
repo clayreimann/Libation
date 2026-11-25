@@ -1,0 +1,1424 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Libation daemon API",
+    "version": "14.3.0-rc.2"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:18080/"
+    }
+  ],
+  "paths": {
+    "/api/status": {
+      "get": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Daemon state, last results, next run, interval and version.",
+        "operationId": "getStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts": {
+      "get": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Accounts: id, name, locale and library-scan flag. Never tokens.",
+        "operationId": "getAccounts",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccountDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Books, newest first. offset (default 0), limit (default 100, max 1000), q (Lucene filter syntax), trash=true for the trash. total counts all matches.",
+        "operationId": "getLibrary",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int32"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trash",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryPageDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "One book by ASIN, trashed ones included, or 404.",
+        "operationId": "getBook",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/tags": {
+      "put": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Replaces a book's tags. 200 with the book, 400 bad body, 404 unknown ASIN.",
+        "operationId": "setBookTags",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TagsRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/status": {
+      "put": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Sets a book's liberated status to liberated or notLiberated. 200 with the book, 400 bad body, 404 unknown ASIN.",
+        "operationId": "setBookStatus",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/StatusRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/trash": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Moves a book to the trash. 200 with the book, 404 unknown ASIN.",
+        "operationId": "trashBook",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/restore": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Restores a book from the trash. 200 with the book, 404 unknown ASIN.",
+        "operationId": "restoreBook",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/liberate": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Queues one book for liberation, re-downloading it if already liberated. 202 with the job, 404 unknown ASIN, 409 already queued.",
+        "operationId": "liberateBook",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueJobDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Curated read-only settings: Books and working folders, naming templates, download, queue and library options. No secrets.",
+        "operationId": "getSettings",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/scan": {
+      "post": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Runs a library scan now, without liberating. 202, or 409 if busy.",
+        "operationId": "scan",
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/liberate": {
+      "post": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Runs a full cycle now: scan, then liberate if the scan succeeded. 202, or 409 if busy.",
+        "operationId": "liberate",
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Working and queued jobs, pending decisions and the current wait, if any.",
+        "operationId": "getQueue",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/decisions/{pauseId}": {
+      "post": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Answers a pending decision or wait. 200 with the queue, 400 bad body, 404 unknown id, 409 decision not allowed.",
+        "operationId": "decide",
+        "parameters": [
+          {
+            "name": "pauseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Server-Sent Events; event name is the record type, data is its JSON.",
+        "operationId": "streamEvents",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccountDto": {
+        "required": [
+          "accountId",
+          "accountName",
+          "locale",
+          "libraryScan"
+        ],
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string"
+          },
+          "accountName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "locale": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "libraryScan": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AudiobookshelfSettingsDto": {
+        "required": [
+          "enabled",
+          "includePdfs",
+          "serverConfigured"
+        ],
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "includePdfs": {
+            "type": "boolean"
+          },
+          "serverConfigured": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BookDto": {
+        "required": [
+          "asin",
+          "title",
+          "subtitle",
+          "authors",
+          "narrators",
+          "series",
+          "lengthInMinutes",
+          "bookStatus",
+          "pdfStatus",
+          "dateAdded",
+          "account",
+          "locale",
+          "contentType",
+          "isPodcastEpisode",
+          "tags",
+          "inTrash"
+        ],
+        "type": "object",
+        "properties": {
+          "asin": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "narrators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesDto"
+            }
+          },
+          "lengthInMinutes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "bookStatus": {
+            "type": "string"
+          },
+          "pdfStatus": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "dateAdded": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "account": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "isPodcastEpisode": {
+            "type": "boolean"
+          },
+          "tags": {
+            "type": "string"
+          },
+          "inTrash": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DecisionRequest": {
+        "required": [
+          "decision"
+        ],
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "action": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "applyToAll": {
+            "type": "boolean",
+            "default": false
+          },
+          "remember": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "DownloadSettingsDto": {
+        "required": [
+          "quality",
+          "overwriteExisting",
+          "useWidevine",
+          "requestXheAac",
+          "spatialAudioCodec",
+          "downloadCoverArt",
+          "downloadClipsBookmarks",
+          "clipsBookmarksFileFormat",
+          "createCueSheet",
+          "saveMetadataToFile",
+          "retainAaxFile",
+          "splitFilesByChapter",
+          "mergeOpeningAndEndCredits",
+          "stripUnabridged",
+          "stripAudibleBrandAudio",
+          "decryptToLossy",
+          "moveMoovToBeginning",
+          "combineNestedChapterTitles",
+          "allowLibationFixup",
+          "useCoverAsFolderIcon",
+          "minimumFileDuration",
+          "creationTime",
+          "lastWriteTime"
+        ],
+        "type": "object",
+        "properties": {
+          "quality": {
+            "type": "string"
+          },
+          "overwriteExisting": {
+            "type": "boolean"
+          },
+          "useWidevine": {
+            "type": "boolean"
+          },
+          "requestXheAac": {
+            "type": "boolean"
+          },
+          "spatialAudioCodec": {
+            "type": "string"
+          },
+          "downloadCoverArt": {
+            "type": "boolean"
+          },
+          "downloadClipsBookmarks": {
+            "type": "boolean"
+          },
+          "clipsBookmarksFileFormat": {
+            "type": "string"
+          },
+          "createCueSheet": {
+            "type": "boolean"
+          },
+          "saveMetadataToFile": {
+            "type": "boolean"
+          },
+          "retainAaxFile": {
+            "type": "boolean"
+          },
+          "splitFilesByChapter": {
+            "type": "boolean"
+          },
+          "mergeOpeningAndEndCredits": {
+            "type": "boolean"
+          },
+          "stripUnabridged": {
+            "type": "boolean"
+          },
+          "stripAudibleBrandAudio": {
+            "type": "boolean"
+          },
+          "decryptToLossy": {
+            "type": "boolean"
+          },
+          "moveMoovToBeginning": {
+            "type": "boolean"
+          },
+          "combineNestedChapterTitles": {
+            "type": "boolean"
+          },
+          "allowLibationFixup": {
+            "type": "boolean"
+          },
+          "useCoverAsFolderIcon": {
+            "type": "boolean"
+          },
+          "minimumFileDuration": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "creationTime": {
+            "type": "string"
+          },
+          "lastWriteTime": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorDto": {
+        "required": [
+          "error"
+        ],
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "LibraryPageDto": {
+        "required": [
+          "total",
+          "offset",
+          "limit",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "total": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "offset": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "limit": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookDto"
+            }
+          }
+        }
+      },
+      "LibrarySettingsDto": {
+        "required": [
+          "importEpisodes",
+          "importPlusTitles",
+          "downloadEpisodes",
+          "autoDownloadEpisodes",
+          "savePodcastsToParentFolder"
+        ],
+        "type": "object",
+        "properties": {
+          "importEpisodes": {
+            "type": "boolean"
+          },
+          "importPlusTitles": {
+            "type": "boolean"
+          },
+          "downloadEpisodes": {
+            "type": "boolean"
+          },
+          "autoDownloadEpisodes": {
+            "type": "boolean"
+          },
+          "savePodcastsToParentFolder": {
+            "type": "boolean"
+          }
+        }
+      },
+      "NamingSettingsDto": {
+        "required": [
+          "folderTemplate",
+          "fileTemplate",
+          "chapterFileTemplate",
+          "chapterTitleTemplate"
+        ],
+        "type": "object",
+        "properties": {
+          "folderTemplate": {
+            "type": "string"
+          },
+          "fileTemplate": {
+            "type": "string"
+          },
+          "chapterFileTemplate": {
+            "type": "string"
+          },
+          "chapterTitleTemplate": {
+            "type": "string"
+          }
+        }
+      },
+      "PendingDecisionDto": {
+        "required": [
+          "id",
+          "reason",
+          "jobId",
+          "allowed"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "jobId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "allowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "QueueDto": {
+        "required": [
+          "running",
+          "jobs",
+          "pending",
+          "waiting"
+        ],
+        "type": "object",
+        "properties": {
+          "running": {
+            "type": "boolean"
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueJobDto"
+            }
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingDecisionDto"
+            }
+          },
+          "waiting": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QueueWaitDto"
+              }
+            ]
+          }
+        }
+      },
+      "QueueJobDto": {
+        "required": [
+          "id",
+          "asin",
+          "title",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "QueueSettingsDto": {
+        "required": [
+          "maxConcurrentDownloads",
+          "downloadSpeedLimit",
+          "dailyDownloadLimit",
+          "dailyDownloadLimitQuantity",
+          "dailyDownloadLimitUnit",
+          "badBook"
+        ],
+        "type": "object",
+        "properties": {
+          "maxConcurrentDownloads": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "downloadSpeedLimit": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "dailyDownloadLimit": {
+            "type": "string"
+          },
+          "dailyDownloadLimitQuantity": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "dailyDownloadLimitUnit": {
+            "type": "string"
+          },
+          "badBook": {
+            "type": "string"
+          }
+        }
+      },
+      "QueueWaitDto": {
+        "required": [
+          "id",
+          "reason",
+          "since",
+          "nextCheck",
+          "jobId",
+          "allowed",
+          "volumes"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "nextCheck": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "jobId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "allowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "volumes": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/VolumeDto"
+            }
+          }
+        }
+      },
+      "SeriesDto": {
+        "required": [
+          "name",
+          "order",
+          "index"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "order": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "index": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "float"
+          }
+        }
+      },
+      "SettingsDto": {
+        "required": [
+          "books",
+          "inProgress",
+          "naming",
+          "download",
+          "queue",
+          "library",
+          "audiobookshelf"
+        ],
+        "type": "object",
+        "properties": {
+          "books": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "inProgress": {
+            "type": "string"
+          },
+          "naming": {
+            "$ref": "#/components/schemas/NamingSettingsDto"
+          },
+          "download": {
+            "$ref": "#/components/schemas/DownloadSettingsDto"
+          },
+          "queue": {
+            "$ref": "#/components/schemas/QueueSettingsDto"
+          },
+          "library": {
+            "$ref": "#/components/schemas/LibrarySettingsDto"
+          },
+          "audiobookshelf": {
+            "$ref": "#/components/schemas/AudiobookshelfSettingsDto"
+          }
+        }
+      },
+      "StatusDto": {
+        "required": [
+          "state",
+          "lastRun",
+          "lastSuccess",
+          "scanExitCode",
+          "liberateExitCode",
+          "nextRun",
+          "intervalSeconds",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "lastRun": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "lastSuccess": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "scanExitCode": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "liberateExitCode": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "nextRun": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "intervalSeconds": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "StatusRequest": {
+        "required": [
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "TagsRequest": {
+        "required": [
+          "tags"
+        ],
+        "type": "object",
+        "properties": {
+          "tags": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "VolumeDto": {
+        "required": [
+          "root",
+          "freeBytes",
+          "requiredBytes"
+        ],
+        "type": "object",
+        "properties": {
+          "root": {
+            "type": "string"
+          },
+          "freeBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "requiredBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "daemon"
+    },
+    {
+      "name": "library"
+    },
+    {
+      "name": "settings"
+    },
+    {
+      "name": "queue"
+    }
+  ]
+}
