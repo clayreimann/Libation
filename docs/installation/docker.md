@@ -100,6 +100,16 @@ Set `--metrics-file` (or `LIBATION_METRICS_FILE`) to write a Prometheus textfile
 
 Off by default. `--api` (or `LIBATION_API=1`) serves a JSON API under `/api` on the same `--listen` address: `GET /api/status`, `/api/accounts`, `/api/library?offset=&limit=`, `/api/library/{asin}`, `/api/events` (Server-Sent Events), and `POST /api/scan` and `/api/liberate` (run now; `202`, or `409` if a job is running). Account responses never include tokens.
 
+The download queue is part of the API. `GET /api/queue` returns the running state, the jobs (`working` first, then `queued`), any pending decision and any wait:
+
+```json
+{"running":true,"jobs":[{"id":"…","asin":"B017V4IM1G","title":"…","state":"working"}],"pending":[{"id":7,"reason":"badBook","jobId":"…","allowed":["badBook"]}],"waiting":null}
+```
+
+The daemon answers its own pauses (a failed book is left for the next cycle, guidance is acknowledged, a full disk waits for space), so `pending` is normally empty. Where one does appear, `POST /api/queue/decisions/{id}` answers it with `{"decision":"continue"}`, `"stop"`, `"resume"` or `{"decision":"badBook","action":"retry","applyToAll":true}` (`action` is `retry`, `ignore` or `abort`). It returns the queue on success, `400` for a body it cannot read, `404` for an unknown or already answered id, and `409` for a decision the pause does not allow.
+
+`/api/events` also carries `BookStarted`, `BookProgress` (at most once a second per book), `BookFinished`, `QueuePaused`, `QueueResumed`, `QueueWaiting` and `QueueWaitEnded`. As with the existing cycle events, the SSE event name is the type name and the data is camelCase JSON.
+
 There are no users. Set `--api-token-file` (or `LIBATION_API_TOKEN_FILE`) to a file containing one token and every `/api` request must send `Authorization: Bearer <token>`; `/health` stays open. `serve` exits if that file is missing or empty. Without a token, anyone who can reach the port controls the daemon, and `serve` logs a warning. Keep it on loopback, or put it behind your reverse proxy with TLS.
 
 ### Read-only configuration
