@@ -154,12 +154,29 @@ Bulk actions take `{"asins":[…]}` (at most 5000, duplicates are collapsed) and
 The download queue is part of the API. `GET /api/queue` returns the running state, the jobs (`working` first, then `queued`), any pending decision and any wait:
 
 ```json
-{"running":true,"jobs":[{"id":"…","asin":"B017V4IM1G","title":"…","state":"working"}],"pending":[{"id":7,"reason":"badBook","jobId":"…","allowed":["badBook"]}],"waiting":null}
+{"running":true,"jobs":[{"id":"…","asin":"B017V4IM1G","title":"…","state":"working"}],"pending":[{"id":7,"reason":"badBook","jobId":"…","allowed":["badBook"]}],"waiting":null,"paused":false,"stats":{"queued":3,"completed":12,"errors":1,"runningSince":"2026-08-10T12:00:00+00:00"}}
 ```
+
+`paused` is your own hold on starting new books (below), separate from `pending` and `waiting`. `stats` are the counters beside the desktop queue: `queued` books waiting, `completed` successes and `errors` (failed, validation fail, widevine, disk full) among the finished ones, and when the current run began (`runningSince` is `null` when none is in progress). `completed` and `errors` reset with `DELETE /api/queue/history`.
 
 The daemon answers its own pauses (a failed book is left for the next cycle, guidance is acknowledged, a full disk waits for space), so `pending` is normally empty. Where one does appear, `POST /api/queue/decisions/{id}` answers it with `{"decision":"continue"}`, `"stop"`, `"resume"` or `{"decision":"badBook","action":"retry","applyToAll":true}` (`action` is `retry`, `ignore` or `abort`). It returns the queue on success, `400` for a body it cannot read, `404` for an unknown or already answered id, and `409` for a decision the pause does not allow.
 
-`/api/events` also carries `BookStarted`, `BookProgress` (at most once a second per book), `BookFinished`, `QueuePaused`, `QueueResumed`, `QueueWaiting` and `QueueWaitEnded`. As with the existing cycle events, the SSE event name is the type name and the data is camelCase JSON.
+The queue controls match the desktop's:
+
+| Request | Body | What it does |
+| --- | --- | --- |
+| `DELETE /api/queue/jobs/{id}` | none | Removes a queued job (`{"id":"…","outcome":"removed"}`), or cancels a running one (`"outcome":"cancelling"`), which then finishes as `cancelled`. `404` for an unknown or finished job. |
+| `POST /api/queue/cancel` | none | Clears the queue and cancels every running job, like Cancel All. Returns the queue. |
+| `POST /api/queue/jobs/{id}/move` | `{"to":"top"}` (`top`, `up`, `down`, `bottom`) | Reorders a queued job. Returns the queue. `400` bad body, `404` unknown job, `409` job not queued. |
+| `POST /api/queue/pause` | none | Stops starting new jobs while running ones finish. Held until resumed, including across runs. Returns the queue. |
+| `POST /api/queue/resume` | none | Starts jobs again. Both are fine to repeat. |
+| `GET /api/queue/history` | none | The last 200 finished jobs, newest first: `[{"id":"…","asin":"…","title":"…","result":"success","status":"completed","finishedAt":"…"}]`. |
+| `DELETE /api/queue/history` | none | Forgets finished jobs, their logs and the completed and error counts, like Clear Finished. Returns the queue. |
+| `GET /api/queue/jobs/{id}/log` | none | The job's last 500 log lines, oldest first: `{"jobId":"…","dropped":0,"lines":[{"at":"…","level":"info","message":"…"}]}`. `level` is `info`, `warning` or `error`. Works for queued, running and finished jobs; `404` once forgotten. |
+
+Log lines are the ones the desktop shows per book. URL query strings and credentials, and values after `token`, `password`, `secret` or `Bearer`, are removed before a line is stored or sent, and each line is cut at 2000 characters.
+
+`/api/events` also carries `QueueDispatchPaused` and `QueueDispatchResumed` (no payload) when you pause or resume, and `BookLog` (`{"jobId":"…","level":"info","message":"…","at":"…"}`, `at` being when the line was written). Info lines are limited to 20 a second per book on the stream; warnings and errors are never held back, and `/log` has every line. It also carries `BookStarted`, `BookProgress` (at most once a second per book), `BookFinished`, `QueuePaused`, `QueueResumed`, `QueueWaiting` and `QueueWaitEnded`. As with the existing cycle events, the SSE event name is the type name and the data is camelCase JSON.
 
 There are no users. Set `--api-token-file` (or `LIBATION_API_TOKEN_FILE`) to a file containing one token and every `/api` request must send `Authorization: Bearer <token>`; `/health` stays open. `serve` exits if that file is missing or empty. Without a token, anyone who can reach the port controls the daemon, and `serve` logs a warning. Keep it on loopback, or put it behind your reverse proxy with TLS.
 
