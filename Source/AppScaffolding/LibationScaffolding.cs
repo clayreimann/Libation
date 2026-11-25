@@ -249,7 +249,7 @@ public static class LibationScaffolding
 			"Paths: LibationFiles={LibationFiles} AppsettingsJson={AppsettingsJson} SQLiteDb={SqliteDb}",
 			config.LibationFiles.Location,
 			config.LibationFiles.AppsettingsJsonFile ?? "(null, LIBATION_FILES_DIR may be set)",
-			Path.Combine(config.LibationFiles.Location, "LibationContext.db"));
+			SqliteStorage.DatabasePath);
 		DbContexts.TryEmitPendingInitialDatabaseStatistics();
 
 		// capture most Console.WriteLine() and write to serilog. See below tests for details.
