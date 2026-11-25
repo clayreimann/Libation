@@ -28,6 +28,23 @@ public abstract class OptionsBase
 			Environment.SetEnvironmentVariable(LibationFileManager.LibationFiles.LIBATION_FILES_DIR, LibationFiles.FullName);
 		}
 
+		if (RunsSetup)
+		{
+			if (!TryInitializeSetup())
+				return;
+
+			if (SettingOverrides is not null)
+				ProcessSettingsOverrides();
+		}
+
+		await ExecuteAsync();
+	}
+
+	/// <summary>False for verbs that run <see cref="Setup.Initialize"/> themselves, or must not touch config at all.</summary>
+	protected virtual bool RunsSetup => true;
+
+	protected static bool TryInitializeSetup(bool ephemeralSettings = true)
+	{
 		//***********************************************//
 		//                                               //
 		//   do not use Configuration before this line   //
@@ -35,7 +52,8 @@ public abstract class OptionsBase
 		//***********************************************//
 		try
 		{
-			Setup.Initialize();
+			Setup.Initialize(ephemeralSettings);
+			return true;
 		}
 		catch (Exception ex) when (StartupAssemblyBootstrap.TryFindInvalidConfigurationValue(ex, out var configEx) && configEx is not null)
 		{
@@ -45,13 +63,8 @@ public abstract class OptionsBase
 			Console.Error.WriteLine(configEx.Message);
 			Console.Error.WriteLine();
 			Console.Error.WriteLine("Edit Settings.json to use a valid value, then retry.");
-			return;
+			return false;
 		}
-
-		if (SettingOverrides is not null)
-			ProcessSettingsOverrides();
-
-		await ExecuteAsync();
 	}
 
 	/// <summary>Runs <see cref="ProcessAsync"/> with error reporting and returns the process exit code.</summary>
@@ -156,7 +169,7 @@ public abstract class OptionsBase
 		nameof(Configuration.GridColumnsDisplayIndices),
 		nameof(Configuration.GridColumnsWidths)];
 
-	private void ProcessSettingsOverrides()
+	protected void ProcessSettingsOverrides()
 	{
 		var configProperties = GetConfigurationProperties().ToArray();
 		foreach (var option in SettingOverrides?.Where(p => p.Property is not null && p.Value is not null) ?? [])
