@@ -1,17 +1,8 @@
-using ApplicationServices;
-using AudibleApi;
-using AudibleApi.Common;
-using AudibleUtilities;
 using DataLayer;
-using Dinah.Core;
-using Dinah.Core.ErrorHandling;
 using FileLiberator;
 using LibationEngine;
 using LibationFileManager;
-using LibationUiBase.Forms;
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 
 namespace LibationUiBase.ProcessQueue;
@@ -21,13 +12,18 @@ namespace LibationUiBase.ProcessQueue;
 /// </summary>
 public class ProcessBookViewModel : ReactiveObject
 {
-	public LibraryBook LibraryBook { get; protected set; }
-	public Configuration Configuration { get; }
-	private readonly BadBookSessionContext? _badBookSession;
+	private readonly LiberationJob _job;
+	internal LiberationJob Job => _job;
+
+	public LibraryBook LibraryBook => _job.LibraryBook;
+	public Configuration Configuration => _job.Configuration;
+
+	/// <summary>Lets a test or the designer stand in for the queue's job lookup.</summary>
+	public static implicit operator LiberationJob(ProcessBookViewModel vm) => vm._job;
 
 	#region Properties exposed to the view
-	public ProcessBookResult Result { get => field; set { RaiseAndSetIfChanged(ref field, value); RaisePropertyChanged(nameof(StatusText)); } }
-	public ProcessBookStatus Status { get => field; set { RaiseAndSetIfChanged(ref field, value); RaisePropertyChanged(nameof(IsFinished)); RaisePropertyChanged(nameof(IsDownloading)); RaisePropertyChanged(nameof(Queued)); } }
+	public ProcessBookResult Result { get => _result; set => _job.Result = value; }
+	public ProcessBookStatus Status { get => _status; set => _job.Status = value; }
 	public string? Narrator { get => field; set => RaiseAndSetIfChanged(ref field, value); }
 	public string? Author { get => field; set => RaiseAndSetIfChanged(ref field, value); }
 	public string? Title { get => field; set => RaiseAndSetIfChanged(ref field, value); }
@@ -39,17 +35,21 @@ public class ProcessBookViewModel : ReactiveObject
 	public bool IsDownloading => Status is ProcessBookStatus.Working;
 	public bool Queued => Status is ProcessBookStatus.Queued;
 
+	private ProcessBookResult _result;
+	private ProcessBookStatus _status;
+	private string? _statusOverride;
+
 	/// <summary>
 	/// Transient status shown instead of the usual text, e.g. while the queue waits on the daily download limit.
 	/// Null when the book's own state should speak for itself.
 	/// </summary>
-	public string? StatusOverride { get => field; set { RaiseAndSetIfChanged(ref field, value); RaisePropertyChanged(nameof(StatusText)); } }
+	public string? StatusOverride { get => _statusOverride; set => _job.StatusOverride = value; }
 
 	/// <summary>
 	/// True when this queue item downloads an audiobook, so the daily download limit applies to it.
 	/// PDF-only and mp3-conversion items are never limited.
 	/// </summary>
-	public bool IncludesBookDownload { get; private set; }
+	public bool IncludesBookDownload => _job.IncludesBookDownload;
 
 	public string StatusText => StatusOverride ?? (Result, LibraryBook.IsAudiblePlus) switch
 	{
@@ -71,33 +71,23 @@ public class ProcessBookViewModel : ReactiveObject
 
 	#endregion
 
-	#region Process Queue Logging
-
 	public event EventHandler<string>? LogWritten;
-	private void OnLogWritten(string text) => LogWritten?.Invoke(this, text.Trim());
 
-	private void LogError(string? message, Exception? ex = null)
-	{
-		OnLogWritten(message ?? "Automated backup: error");
-		if (ex is not null)
-			OnLogWritten("ERROR: " + ex.Message);
-	}
-	private void LogInfo(string text) => OnLogWritten(text);
-
-	#endregion
-
-	protected Processable CurrentProcessable => _currentProcessable ??= Processes.Dequeue().Invoke();
-	protected void NextProcessable() => _currentProcessable = null;
-	private Processable? _currentProcessable;
-
-	/// <summary> A series of Processable actions to perform on this book </summary>
-	protected Queue<Func<Processable>> Processes { get; } = new();
+	public bool CancellationRequested => _job.CancellationRequested;
 
 	public ProcessBookViewModel(LibraryBook libraryBook, Configuration configuration, BadBookSessionContext? badBookSession = null)
 	{
-		LibraryBook = libraryBook;
-		Configuration = configuration;
-		_badBookSession = badBookSession;
+		_job = new LiberationJob(libraryBook, configuration, GuiLiberationInteraction.Instance, badBookSession);
+		_job.ResultChanged += Job_ResultChanged;
+		_job.StatusChanged += Job_StatusChanged;
+		_job.StatusOverrideChanged += Job_StatusOverrideChanged;
+		_job.TitleChanged += (_, title) => Title = title;
+		_job.AuthorChanged += (_, author) => Author = author;
+		_job.NarratorChanged += (_, narrator) => Narrator = narrator;
+		_job.ProgressChanged += (_, progress) => Progress = progress;
+		_job.TimeRemainingChanged += (_, timeRemaining) => TimeRemaining = timeRemaining;
+		_job.CoverDiscovered += (_, coverArt) => Cover = BaseUtil.LoadImage(coverArt, PictureSize._80x80);
+		_job.LogWritten += (_, text) => LogWritten?.Invoke(this, text);
 
 		Title = LibraryBook.Book.TitleWithSubtitle;
 		Author = LibraryBook.Book.AuthorNames;
@@ -115,6 +105,26 @@ public class ProcessBookViewModel : ReactiveObject
 		Cover = BaseUtil.LoadImage(picture, PictureSize._80x80);
 	}
 
+	private void Job_ResultChanged(object? sender, ProcessBookResult result)
+	{
+		RaiseAndSetIfChanged(ref _result, result, nameof(Result));
+		RaisePropertyChanged(nameof(StatusText));
+	}
+
+	private void Job_StatusChanged(object? sender, ProcessBookStatus status)
+	{
+		RaiseAndSetIfChanged(ref _status, status, nameof(Status));
+		RaisePropertyChanged(nameof(IsFinished));
+		RaisePropertyChanged(nameof(IsDownloading));
+		RaisePropertyChanged(nameof(Queued));
+	}
+
+	private void Job_StatusOverrideChanged(object? sender, string? statusOverride)
+	{
+		RaiseAndSetIfChanged(ref _statusOverride, statusOverride, nameof(StatusOverride));
+		RaisePropertyChanged(nameof(StatusText));
+	}
+
 	private void PictureStorage_PictureCached(object? sender, PictureCachedEventArgs e)
 	{
 		if (e.Definition.PictureId == LibraryBook.Book.PictureId)
@@ -124,485 +134,21 @@ public class ProcessBookViewModel : ReactiveObject
 		}
 	}
 
-	public async Task<ProcessBookResult> ProcessOneAsync()
-	{
-		ProcessBookResult result = ProcessBookResult.None;
-		try
-		{
-			// Run every queued step (decrypt, PDF, MP3, ...) in order so disk-full and other failures
-			// from later steps are returned to the queue loop. Do not chain via Processable.Completed.
-			while (Processes.Count > 0)
-			{
-				var processable = CurrentProcessable;
-				result = await ExecuteProcessableAsync(processable);
+	public Task<ProcessBookResult> ProcessOneAsync() => _job.ProcessOneAsync();
 
-				if (processable is ILicensedDownload { ObtainedLicense: { } license })
-					obtainedLicense = license;
+	public Task CancelAsync() => _job.CancelAsync();
 
-				UnlinkProcessable(processable);
-				NextProcessable();
-
-				if (result is not ProcessBookResult.Success)
-					break;
-			}
-		}
-		finally
-		{
-			// DiskFull skips the per-book Abort/Retry/Ignore dialog; the queue shows one disk-full message instead.
-			if (result == ProcessBookResult.None)
-				result = await GetFailureActionAsync(LibraryBook);
-
-			var status = result switch
-			{
-				ProcessBookResult.Success => ProcessBookStatus.Completed,
-				ProcessBookResult.Cancelled => ProcessBookStatus.Cancelled,
-				_ => ProcessBookStatus.Failed,
-			};
-
-			Status = status;
-		}
-
-		Result = result;
-		return result;
-	}
-
-	private async Task<ProcessBookResult> ExecuteProcessableAsync(Processable processable)
-	{
-		string procName = processable.Name;
-		ProcessBookResult result = ProcessBookResult.None;
-		try
-		{
-			// Optional steps (e.g. PDF when the book has no supplement) use Validate() to mean "does not apply".
-			// Skip them instead of treating ProcessSingleAsync's "Validation failed" as a queue failure.
-			if (!processable.Validate(LibraryBook))
-				return ProcessBookResult.Success;
-
-			LinkProcessable(processable);
-
-			var statusHandler = await processable.ProcessSingleAsync(LibraryBook, validate: true);
-
-			if (statusHandler.IsSuccess)
-				result = ProcessBookResult.Success;
-			else if (statusHandler.Errors.Contains("Cancelled"))
-			{
-				LogInfo($"{procName}:  Process was cancelled - {LibraryBook.Book}");
-				result = ProcessBookResult.Cancelled;
-			}
-			else if (statusHandler.Errors.Contains("Validation failed"))
-			{
-				LogInfo($"{procName}:  Validation failed - {LibraryBook.Book}");
-				result = ProcessBookResult.ValidationFail;
-			}
-			else
-			{
-				foreach (var errorMessage in statusHandler.Errors)
-					LogError($"{procName}:  {errorMessage}");
-
-				// Prefer disk-full detection over generic retry; avoids treating truncated .aaxc as a normal failure.
-				if (statusHandler.Errors.Any(DiskSpaceHelper.ErrorMessageIndicatesDiskFull))
-				{
-					LogInfo($"{procName}:  Disk is full. Free space or change Books / In progress in Settings. - {LibraryBook.Book}");
-					result = ProcessBookResult.DiskFull;
-				}
-			}
-		}
-		catch (ApiErrorException ex) when (WidevineRecommendation.ShouldRecommendWidevine(ex, Configuration))
-		{
-			Serilog.Log.Logger.Error(ex, "ADRM license unavailable (Sable acr:null) for {Book}", LibraryBook.LogFriendly());
-			if (System.IO.File.Exists(AudibleApiStorage.AccountsSettingsFile))
-			{
-				using var persister = AudibleApiStorage.GetAccountsSettingsPersister();
-				var account = persister.AccountsSettings.GetAccount(LibraryBook.Account, LibraryBook.Book.Locale);
-				ThrottledDeviceRecovery.ApplyRecovery(persister.AccountsSettings, Configuration, account);
-			}
-			LogInfo($"{procName}:  {WidevineRecommendationUserMessage.BuildLogSummary(LibraryBook.Book.TitleWithSubtitle, LibraryBook.Account.ToMask())}");
-			result = ProcessBookResult.WidevineRecommended;
-		}
-		catch (ContentLicenseDeniedException ldex)
-		{
-			Serilog.Log.Logger.Error(ldex, "Content license was denied for {Book}", LibraryBook.LogFriendly());
-			if (ldex.IsCustomerThrottled)
-			{
-				bool recovered = false;
-				if (System.IO.File.Exists(AudibleApiStorage.AccountsSettingsFile))
-				{
-					using var persister = AudibleApiStorage.GetAccountsSettingsPersister();
-					var account = persister.AccountsSettings.GetAccount(LibraryBook.Account, LibraryBook.Book.Locale);
-					if (ThrottledDeviceRecovery.ShouldRecover(ldex, account, Configuration.Instance))
-					{
-						ThrottledDeviceRecovery.ApplyRecovery(persister.AccountsSettings, Configuration.Instance, account);
-						LogInfo($"{procName}:  Audible reports throttling on a legacy or non-Widevine registration. Libation updated settings to Android + Widevine and marked account '{LibraryBook.Account.ToMask()}' for re-registration. Sign in on next scan or liberate to complete setup. - {LibraryBook.Book}");
-						result = ProcessBookResult.LicenseDeniedThrottledRecovered;
-						recovered = true;
-					}
-				}
-
-				if (!recovered)
-				{
-					LogInfo($"{procName}:  Audible reports throttling. Try deregistering Libation devices and recreating the account first. Recovery steps: {AppScaffolding.LicenseRecoveryGuidance.DocumentationUrl}. If it persists, wait 24 to 48 hours, sometimes a few days. - {LibraryBook.Book}");
-					result = ProcessBookResult.LicenseDeniedThrottled;
-				}
-			}
-			else if (ldex.AYCL?.RejectionReason is null or RejectionReason.GenericError)
-			{
-				LogInfo($"{procName}:  Content license denied. A temporary interruption of service is possible. If Audible's app plays the title, try registration recovery: {AppScaffolding.LicenseRecoveryGuidance.DocumentationUrl}. Otherwise, waiting 24 to 48 hours, sometimes a few days, may help. - {LibraryBook.Book}");
-				result = ProcessBookResult.LicenseDeniedPossibleOutage;
-			}
-			else if (LibraryBook.IsAudiblePlus)
-			{
-				LogInfo($"{procName}:  Content license denied for this Audible Plus catalog title. Check access in the Audible app. If it plays, try registration recovery: {AppScaffolding.LicenseRecoveryGuidance.DocumentationUrl}. Heavy Plus use can also require waiting 24 to 48 hours, sometimes a few days. - {LibraryBook.Book}");
-				result = ProcessBookResult.LicenseDenied;
-			}
-			else
-			{
-				LogInfo($"{procName}:  Content license denied. Check your Audible account to see if you have access to this title. - {LibraryBook.Book}");
-				result = ProcessBookResult.LicenseDenied;
-			}
-		}
-		// HRESULT 0x80070070 / known messages from the OS when a volume is full (including many SMB shares).
-		catch (Exception ex) when (DiskSpaceHelper.IsDiskFullException(ex))
-		{
-			Serilog.Log.Logger.Error(ex, "Disk full during {ProcName} for {{@Book}}", procName, LibraryBook.LogFriendly());
-			LogInfo($"{procName}:  Disk is full. Free space or change Books / In progress in Settings. - {LibraryBook.Book}");
-			result = ProcessBookResult.DiskFull;
-		}
-		catch (Exception ex)
-		{
-			Serilog.Log.Logger.Error(ex, $"Unhandled exception in {procName} for {{@Book}}", LibraryBook.LogFriendly());
-			LogError(procName, ex);
-		}
-
-		return result;
-	}
-
-	private volatile bool cancellationRequested;
-
-	/// <summary>
-	/// Whether cancellation has been asked for on this book, whether or not there was anything
-	/// running to cancel at the time.
-	/// </summary>
-	/// <remarks>
-	/// A book held at the daily download limit has been taken off the queue but has not started a
-	/// step, so <see cref="CancelAsync"/> finds nothing to call and the book carries on waiting.
-	/// This is how the gate learns to stop rather than resume it. Per book rather than per queue on
-	/// purpose: a queue-wide flag has to be cleared again at some point, and whatever clears it can
-	/// un-cancel a book that is still parked - which is the same bug in a different place.
-	/// </remarks>
-	public bool CancellationRequested => cancellationRequested;
-
-	/// <summary>
-	/// Cancels this book's running step, if it has one. Safe to call on a book that has already
-	/// finished processing.
-	/// </summary>
-	/// <remarks>
-	/// Reads the <see cref="_currentProcessable"/> field rather than <see cref="CurrentProcessable"/>.
-	/// The property is lazy - <c>_currentProcessable ??= Processes.Dequeue().Invoke()</c> - so on a
-	/// book that has run its last step the field is null and <see cref="Processes"/> is empty, and
-	/// reading it throws "Queue empty.". That is not a narrow race: every book waiting in the bad
-	/// book dialog is in exactly that state, because <c>ProcessOneAsync</c> reaches the dialog from
-	/// its <c>finally</c> after the processable loop has drained. Reading the field also avoids
-	/// dequeuing from a non-thread-safe <see cref="Queue{T}"/> on the cancelling thread while the
-	/// book's own loop is reading it.
-	/// </remarks>
-	public async Task CancelAsync()
-	{
-		// Recorded before the early return, because the case where there is nothing to cancel is the
-		// one that matters. See CancellationRequested.
-		cancellationRequested = true;
-
-		// Deliberately the field, not the property. See remarks.
-		var processable = _currentProcessable;
-		if (processable is not AudioDecodable audioDecodable)
-			return;
-
-		try
-		{
-			await audioDecodable.CancelAsync();
-		}
-		catch (Exception ex)
-		{
-			// Not CurrentProcessable.Name - that would throw a second time, out of the catch.
-			LogError($"{audioDecodable.Name}:  Error while cancelling", ex);
-		}
-	}
-
-	public ProcessBookViewModel AddDownloadPdf() => AddProcessable<DownloadPdf>();
-	public ProcessBookViewModel AddDownloadDecryptBook()
-	{
-		IncludesBookDownload = true;
-		return AddProcessable<DownloadDecryptBook>();
-	}
-	public ProcessBookViewModel AddConvertToMp3() => AddProcessable<ConvertToMp3>();
-	public ProcessBookViewModel AddUploadToAudiobookshelf() => AddProcessable<UploadToAudiobookshelf>();
-	public ProcessBookViewModel AddSimulateBadBookFailure() => AddProcessable<SimulateBadBookFailure>();
-
-	private ProcessBookViewModel AddProcessable<T>() where T : Processable, IProcessable<T>
-		=> AddProcessable(T.Create);
+	public ProcessBookViewModel AddDownloadPdf() { _job.AddDownloadPdf(); return this; }
+	public ProcessBookViewModel AddDownloadDecryptBook() { _job.AddDownloadDecryptBook(); return this; }
+	public ProcessBookViewModel AddConvertToMp3() { _job.AddConvertToMp3(); return this; }
+	public ProcessBookViewModel AddUploadToAudiobookshelf() { _job.AddUploadToAudiobookshelf(); return this; }
+	public ProcessBookViewModel AddSimulateBadBookFailure() { _job.AddSimulateBadBookFailure(); return this; }
 
 	internal ProcessBookViewModel AddProcessable(Func<Configuration, Processable> create)
 	{
-		Processes.Enqueue(() =>
-		{
-			var processable = create(Configuration);
-
-			// Each step is created as it is reached, so by now an earlier step has published whatever license
-			// it obtained. Handing it on is what keeps a title to one license request per run.
-			if (processable is ILicensedDownload licensed)
-				licensed.LicenseInfo = obtainedLicense;
-
-			return processable;
-		});
+		_job.AddProcessable(create);
 		return this;
 	}
 
-	/// <summary>The license an earlier step for this book obtained, for the steps that follow it to reuse.</summary>
-	private DownloadOptions.LicenseInfo? obtainedLicense;
-
 	public override string ToString() => LibraryBook.ToString();
-
-	#region Subscribers and Unsubscribers
-
-	private void LinkProcessable(Processable processable)
-	{
-		processable.Begin += Processable_Begin;
-		processable.Completed += Processable_Completed;
-		processable.StatusUpdate += Processable_StatusUpdate;
-		processable.StreamingProgressChanged += Streamable_StreamingProgressChanged;
-		processable.StreamingTimeRemaining += Streamable_StreamingTimeRemaining;
-
-		if (processable is AudioDecodable audioDecodable)
-		{
-			audioDecodable.RequestCoverArt += AudioDecodable_RequestCoverArt;
-			audioDecodable.TitleDiscovered += AudioDecodable_TitleDiscovered;
-			audioDecodable.AuthorsDiscovered += AudioDecodable_AuthorsDiscovered;
-			audioDecodable.NarratorsDiscovered += AudioDecodable_NarratorsDiscovered;
-			audioDecodable.CoverImageDiscovered += AudioDecodable_CoverImageDiscovered;
-		}
-	}
-
-	private void UnlinkProcessable(Processable processable)
-	{
-		processable.Begin -= Processable_Begin;
-		processable.Completed -= Processable_Completed;
-		processable.StatusUpdate -= Processable_StatusUpdate;
-		processable.StreamingProgressChanged -= Streamable_StreamingProgressChanged;
-		processable.StreamingTimeRemaining -= Streamable_StreamingTimeRemaining;
-
-		if (processable is AudioDecodable audioDecodable)
-		{
-			audioDecodable.RequestCoverArt -= AudioDecodable_RequestCoverArt;
-			audioDecodable.TitleDiscovered -= AudioDecodable_TitleDiscovered;
-			audioDecodable.AuthorsDiscovered -= AudioDecodable_AuthorsDiscovered;
-			audioDecodable.NarratorsDiscovered -= AudioDecodable_NarratorsDiscovered;
-			audioDecodable.CoverImageDiscovered -= AudioDecodable_CoverImageDiscovered;
-		}
-	}
-
-	#endregion
-
-	#region AudioDecodable event handlers
-
-	private void AudioDecodable_TitleDiscovered(object? sender, string title) => Title = title;
-	private void AudioDecodable_AuthorsDiscovered(object? sender, string authors) => Author = authors;
-	private void AudioDecodable_NarratorsDiscovered(object? sender, string narrators) => Narrator = narrators;
-	private void AudioDecodable_CoverImageDiscovered(object? sender, byte[] coverArt)
-		=> Cover = BaseUtil.LoadImage(coverArt, PictureSize._80x80);
-
-	private byte[]? AudioDecodable_RequestCoverArt(object? sender, EventArgs e)
-	{
-		var pictureId = Configuration.Instance.FileDownloadQuality == Configuration.DownloadQuality.High
-		? LibraryBook.Book.PictureLarge ?? LibraryBook.Book.PictureId
-		: LibraryBook.Book.PictureId;
-
-		if (pictureId is null)
-			return null;
-
-		byte[] coverData = PictureStorage.GetPictureSynchronously(new PictureDefinition(pictureId, PictureSize.Native));
-		AudioDecodable_CoverImageDiscovered(this, coverData);
-		return coverData;
-	}
-
-	#endregion
-
-	#region Streamable event handlers
-
-	private void Streamable_StreamingTimeRemaining(object? sender, TimeSpan timeRemaining) => TimeRemaining = timeRemaining;
-	private void Streamable_StreamingProgressChanged(object? sender, Dinah.Core.Net.Http.DownloadProgress downloadProgress)
-	{
-		if (!downloadProgress.ProgressPercentage.HasValue)
-			return;
-
-		if (downloadProgress.ProgressPercentage == 0)
-			TimeRemaining = TimeSpan.Zero;
-		else
-			Progress = (int)downloadProgress.ProgressPercentage;
-	}
-
-	#endregion
-
-	#region Processable event handlers
-
-	private void Processable_Begin(object? sender, LibraryBook libraryBook)
-	{
-		Status = ProcessBookStatus.Working;
-
-		if (sender is Processable processable)
-			LogInfo($"{Environment.NewLine}{processable.Name} Step, Begin: {libraryBook.Book}");
-
-		Title = libraryBook.Book.TitleWithSubtitle;
-		Author = libraryBook.Book.AuthorNames;
-		Narrator = libraryBook.Book.NarratorNames;
-	}
-
-	private void Processable_StatusUpdate(object? sender, string statusUpdate)
-		=> LogInfo(statusUpdate);
-
-	private void Processable_Completed(object? sender, LibraryBook libraryBook)
-	{
-		if (sender is Processable processable)
-			LogInfo($"{processable.Name} Step, Completed: {libraryBook.Book}");
-	}
-
-	#endregion
-
-	#region Failure Handler	
-
-	protected async Task<ProcessBookResult> GetFailureActionAsync(LibraryBook libraryBook)
-	{
-		const DialogResult SkipResult = DialogResult.Ignore;
-		LogError($"ERROR. All books have not been processed. Book failed: {libraryBook.Book}");
-
-		DialogResult dialogResult = Configuration.BadBook switch
-		{
-			Configuration.BadBookAction.Abort => DialogResult.Abort,
-			Configuration.BadBookAction.Retry => DialogResult.Retry,
-			Configuration.BadBookAction.Ignore => DialogResult.Ignore,
-			Configuration.BadBookAction.Ask or _ => await AskBadBookActionAsync(libraryBook)
-		};
-
-		if (dialogResult == SkipResult)
-		{
-			await libraryBook.UpdateBookStatusAsync(LiberatedStatus.Error);
-			LogInfo($"Error. Skip: [{libraryBook.Book.AudibleProductId}] {libraryBook.Book.TitleWithSubtitle}");
-		}
-
-		return dialogResult is SkipResult ? ProcessBookResult.FailedSkip
-			 : dialogResult is DialogResult.Abort ? ProcessBookResult.FailedAbort
-			 : ProcessBookResult.FailedRetry;
-	}
-
-	/// <summary>
-	/// Asks the user what to do with a failed book, at most one dialog at a time. Without the gate,
-	/// three books failing together put three modals on screen racing to set the same session
-	/// override, and the user answers a question two of them no longer needed to ask.
-	/// </summary>
-	private async Task<DialogResult> AskBadBookActionAsync(LibraryBook libraryBook)
-	{
-		if (_badBookSession is null)
-			return await ShowRetryDialogAsync(libraryBook);
-
-		if (_badBookSession.Override is Configuration.BadBookAction alreadyAnswered)
-			return ToDialogResult(alreadyAnswered);
-
-		await _badBookSession.DialogGate.WaitAsync();
-		try
-		{
-			// Re-checked after the wait: the book ahead of us may have answered "apply to all".
-			if (_badBookSession.Override is Configuration.BadBookAction answeredWhileWaiting)
-				return ToDialogResult(answeredWhileWaiting);
-
-			return await ShowRetryDialogAsync(libraryBook);
-		}
-		finally
-		{
-			_badBookSession.DialogGate.Release();
-		}
-	}
-
-	protected async Task<DialogResult> ShowRetryDialogAsync(LibraryBook libraryBook)
-	{
-		string details;
-		try
-		{
-			static string trunc(string str)
-				=> string.IsNullOrWhiteSpace(str) ? "[empty]"
-				: (str.Length > 50) ? $"{str.Truncate(47)}..."
-				: str;
-
-			details = $"""
-				  Title: {libraryBook.Book.TitleWithSubtitle}
-				  ID: {libraryBook.Book.AudibleProductId}
-				  Author: {trunc(libraryBook.Book.AuthorNames)}
-				  Narr: {trunc(libraryBook.Book.NarratorNames)}
-				""";
-		}
-		catch
-		{
-			details = "[Error retrieving details]";
-		}
-
-		var skipDialogText = $"""
-			An error occurred while trying to process this book.
-			{details}
-			
-			- ABORT: Stop processing books.
-			
-			- RETRY: Skip this book for now, but retry if it is requeued. Continue processing the queued books.
-			
-			- IGNORE: Permanently ignore this book. Continue processing the queued books. (Will not try this book again later.)
-
-			Check "Apply to all remaining books" to use your choice for the rest of this queue.
-			Check "Remember in Settings" to save your choice in Download/Decrypt settings.
-			""";
-
-		try
-		{
-			var result = await BadBookActionDialogBase.Show(skipDialogText, "Skip this book?");
-
-			// This is the book the user was looking at when they said stop, so this is the book whose
-			// row should say so afterwards. Every other book in flight inherits the answer through
-			// Override below and was cancelled by it, which is a different thing and should read as
-			// one. Written before Override, not after: a book reading Override and racing ahead to
-			// the queue loop must not find the originator still unset and conclude there wasn't one.
-			if (result.Action is DialogResult.Abort && _badBookSession is not null)
-				_badBookSession.AbortOriginator = this;
-
-			// Abort is a statement about the run, not about this one book, so it becomes the session
-			// answer whether or not "apply to all" was checked. Without this a user who aborts with
-			// several books in flight is asked the same question again by every one of them, and the
-			// run they just stopped keeps prompting.
-			if (result.ApplyToAll || result.Action is DialogResult.Abort)
-				_badBookSession?.Override = ToBadBookAction(result.Action);
-
-			if (result.RememberInSettings)
-				Configuration.BadBook = ToBadBookAction(result.Action);
-
-			return result.Action;
-		}
-		catch (Exception ex)
-		{
-			Serilog.Log.Logger.Error(ex, "Error showing retry dialog. Defaulting to 'Retry'; action.");
-			return DialogResult.Retry;
-		}
-	}
-
-	private static DialogResult ToDialogResult(Configuration.BadBookAction action)
-		=> action switch
-		{
-			Configuration.BadBookAction.Abort => DialogResult.Abort,
-			Configuration.BadBookAction.Retry => DialogResult.Retry,
-			Configuration.BadBookAction.Ignore => DialogResult.Ignore,
-			_ => DialogResult.Retry
-		};
-
-	private static Configuration.BadBookAction ToBadBookAction(DialogResult action)
-		=> action switch
-		{
-			DialogResult.Abort => Configuration.BadBookAction.Abort,
-			DialogResult.Retry => Configuration.BadBookAction.Retry,
-			DialogResult.Ignore => Configuration.BadBookAction.Ignore,
-			_ => Configuration.BadBookAction.Retry
-		};
-
-	#endregion
 }

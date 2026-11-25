@@ -792,7 +792,7 @@ public class ProcessQueueViewModel : ReactiveObject
 						// Abort in settings) nobody answered anything, and the book that claimed the
 						// teardown keeps the abort as before.
 						var originator = _badBookSession.AbortOriginator;
-						var reportsTheAbort = originator is null ? tearsDownTheQueue : ReferenceEquals(originator, book);
+						var reportsTheAbort = originator is null ? tearsDownTheQueue : ReferenceEquals(originator, book.Job);
 
 						if (!reportsTheAbort)
 						{
