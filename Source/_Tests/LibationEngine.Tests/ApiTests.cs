@@ -65,6 +65,33 @@ public class ApiTests
 			return new(1, ["B000000001"]);
 		}
 
+		public string ExportLibrary(ExportFormat format, string? query = null, bool trash = false)
+		{
+			LastFilter = (query, trash);
+			if (query == "bad[")
+				throw new SearchQueryException("Cannot parse the search query: bad[");
+			var path = Path.GetTempFileName();
+			File.WriteAllText(path, $"exported {format}");
+			LastExportPath = path;
+			return path;
+		}
+
+		public string? LastExportPath;
+
+		public QuickFiltersDto Filters = new(false, []);
+		public bool FiltersReadOnly;
+
+		public QuickFiltersDto GetQuickFilters() => Filters;
+
+		public void SetQuickFilters(QuickFiltersDto filters)
+		{
+			if (FiltersReadOnly)
+				throw new UnauthorizedAccessException("denied");
+			Filters = filters;
+		}
+
+		public string? ValidateFilter(string filter) => filter.Contains('[') ? "Cannot parse the search query: " + filter : null;
+
 		public IReadOnlyList<BookDto> GetPodcastParents(string? query = null, bool trash = false)
 		{
 			LastFilter = (query, trash);
@@ -565,6 +592,69 @@ public class ApiTests
 		Assert.AreEqual(("x", true), h.Data.LastFilter);
 		Assert.IsTrue(parents.RootElement[0].GetProperty("isPodcastParent").GetBoolean());
 		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync(h.Base + "/api/library/podcasts?q=bad%5B")).StatusCode);
+	}
+
+	[TestMethod]
+	[DataRow("csv", "text/csv", ".csv")]
+	[DataRow("XLSX", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx")]
+	[DataRow("json", "application/json", ".json")]
+	public async Task Export_streams_a_file_with_type_name_and_filter(string format, string contentType, string extension)
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var response = await h.Http.GetAsync($"{h.Base}/api/library/export?format={format}&q=x&trash=true");
+		Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+		Assert.AreEqual(contentType, response.Content.Headers.ContentType?.MediaType);
+		Assert.AreEqual("attachment", response.Content.Headers.ContentDisposition?.DispositionType);
+		StringAssert.StartsWith(response.Content.Headers.ContentDisposition?.FileName, "libation-trash-");
+		StringAssert.EndsWith(response.Content.Headers.ContentDisposition?.FileName, extension);
+		Assert.AreEqual($"exported {Enum.Parse<ExportFormat>(format, ignoreCase: true)}", await response.Content.ReadAsStringAsync());
+		Assert.AreEqual(("x", true), h.Data.LastFilter);
+		Assert.IsFalse(File.Exists(h.Data.LastExportPath), "the temp file is removed once streamed");
+	}
+
+	[TestMethod]
+	[DataRow("")]
+	[DataRow("?format=pdf")]
+	[DataRow("?format=csv&q=bad%5B")]
+	public async Task Export_rejects_a_bad_format_or_query(string query)
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync($"{h.Base}/api/library/export{query}")).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Quick_filters_round_trip_and_reject_a_bad_filter_by_index()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		var url = $"{h.Base}/api/quick-filters";
+
+		var put = await h.Http.PutAsync(url, Body("""{"useDefault":true,"filters":[{"filter":"author:x","name":"X"},{"filter":"tag:y"}]}"""));
+		Assert.AreEqual(HttpStatusCode.OK, put.StatusCode);
+		var got = JsonDocument.Parse(await h.Http.GetStringAsync(url)).RootElement;
+		Assert.IsTrue(got.GetProperty("useDefault").GetBoolean());
+		Assert.AreEqual("X", got.GetProperty("filters")[0].GetProperty("name").GetString());
+		Assert.AreEqual("tag:y", got.GetProperty("filters")[1].GetProperty("filter").GetString());
+
+		var bad = await h.Http.PutAsync(url, Body("""{"useDefault":false,"filters":[{"filter":"ok"},{"filter":"bad["}]}"""));
+		Assert.AreEqual(HttpStatusCode.BadRequest, bad.StatusCode);
+		StringAssert.Contains(await bad.Content.ReadAsStringAsync(), "filters[1]");
+		Assert.AreEqual(2, h.Data.Filters.Filters.Count, "a rejected list changes nothing");
+
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.PutAsync(url, Body("""{"useDefault":false}"""))).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Quick_filters_answer_409_when_the_file_is_not_writable()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		h.Data.FiltersReadOnly = true;
+		var put = await h.Http.PutAsync($"{h.Base}/api/quick-filters", Body("""{"useDefault":false,"filters":[{"filter":"a"}]}"""));
+		Assert.AreEqual(HttpStatusCode.Conflict, put.StatusCode);
 	}
 
 	[TestMethod]

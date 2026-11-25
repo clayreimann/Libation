@@ -209,3 +209,7 @@ public sealed record SettingsDto(
 	QueueSettingsDto Queue,
 	LibrarySettingsDto Library,
 	AudiobookshelfSettingsDto Audiobookshelf);
+
+public sealed record QuickFilterDto(string Filter, string? Name = null);
+
+public sealed record QuickFiltersDto(bool UseDefault, IReadOnlyList<QuickFilterDto> Filters);

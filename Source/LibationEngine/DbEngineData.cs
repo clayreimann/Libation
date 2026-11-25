@@ -37,6 +37,38 @@ public sealed class DbEngineData : IEngineData
 		return new(books.Count, asins);
 	}
 
+	public string ExportLibrary(ExportFormat format, string? query = null, bool trash = false)
+	{
+		var books = Matching(query, trash)
+			.OrderByDescending(lb => lb.DateAdded)
+			.ThenBy(lb => lb.Book.AudibleProductId, StringComparer.Ordinal)
+			.ToList();
+		var path = Path.Combine(Path.GetTempPath(), $"libation-export-{Guid.NewGuid():N}");
+		try
+		{
+			switch (format)
+			{
+				case ExportFormat.Csv:
+					LibraryExporter.ToCsv(path, books);
+					break;
+				case ExportFormat.Xlsx:
+					LibraryExporter.ToXlsx(path, books);
+					break;
+				default:
+					LibraryExporter.ToJson(path, books);
+					break;
+			}
+			if (!File.Exists(path))
+				File.WriteAllBytes(path, []);
+			return path;
+		}
+		catch
+		{
+			File.Delete(path);
+			throw;
+		}
+	}
+
 	public IReadOnlyList<BookDto> GetPodcastParents(string? query = null, bool trash = false)
 	{
 		var seriesIds = Matching(query, trash)
@@ -98,6 +130,28 @@ public sealed class DbEngineData : IEngineData
 		catch (Lucene.Net.QueryParsers.ParseException ex)
 		{
 			throw new SearchQueryException($"Cannot parse the search query: {ex.Message.Split('\n')[0]}");
+		}
+	}
+
+	public QuickFiltersDto GetQuickFilters()
+		=> new(QuickFilters.UseDefault, QuickFilters.Filters.Select(f => new QuickFilterDto(f.Filter, f.Name)).ToList());
+
+	public void SetQuickFilters(QuickFiltersDto filters)
+	{
+		QuickFilters.ReplaceAll(filters.Filters.Select(f => new QuickFilters.NamedFilter(f.Filter, string.IsNullOrWhiteSpace(f.Name) ? null : f.Name.Trim())));
+		QuickFilters.UseDefault = filters.UseDefault;
+	}
+
+	public string? ValidateFilter(string filter)
+	{
+		try
+		{
+			Search(filter);
+			return null;
+		}
+		catch (SearchQueryException ex)
+		{
+			return ex.Message;
 		}
 	}
 

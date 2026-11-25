@@ -21,6 +21,8 @@ public static class BulkResults
 		=> new(results.Count(r => r.Result == Ok), results.Where(r => r.Result == NotFound).Select(r => r.Asin).ToList(), results);
 }
 
+public enum ExportFormat { Csv, Xlsx, Json }
+
 public enum LocateOutcome { Ok, NoSuchBook, Invalid, Busy }
 
 public sealed record LocateResult(LocateOutcome Outcome, BookDetailDto? Book = null, string? Error = null);
@@ -42,6 +44,18 @@ public interface IEngineData
 	/// <summary>Podcast parent rows having at least one episode that matches <paramref name="query"/> and <paramref name="trash"/>, by title.</summary>
 	/// <exception cref="SearchQueryException">The query cannot be parsed.</exception>
 	IReadOnlyList<BookDto> GetPodcastParents(string? query = null, bool trash = false);
+
+	/// <summary>Writes the matching books to a new temp file as desktop's export does; the caller deletes it.</summary>
+	/// <exception cref="SearchQueryException">The query cannot be parsed.</exception>
+	string ExportLibrary(ExportFormat format, string? query = null, bool trash = false);
+
+	QuickFiltersDto GetQuickFilters();
+
+	/// <exception cref="IOException">The filters file cannot be written.</exception>
+	void SetQuickFilters(QuickFiltersDto filters);
+
+	/// <summary>Null when the query parses, else the parse error.</summary>
+	string? ValidateFilter(string filter);
 
 	BookDto? GetBook(string asin);
 	BookDetailDto? GetBookDetail(string asin);

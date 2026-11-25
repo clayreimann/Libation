@@ -30,9 +30,10 @@ public static class ApiEndpoints
 				foreach (var parameter in operation.Parameters ?? [])
 					if (parameter.Name is { } name && QueryEnums.TryGetValue(name, out var values) && parameter.Schema is Microsoft.OpenApi.OpenApiSchema schema)
 						schema.Enum = values.Select(v => (System.Text.Json.Nodes.JsonNode)System.Text.Json.Nodes.JsonValue.Create(v)!).ToList();
-				foreach (var response in operation.Responses?.Values.ToList() ?? [])
-					if (response.Content?.TryGetValue("image/jpeg", out var media) == true)
-						media.Schema = new Microsoft.OpenApi.OpenApiSchema { Type = Microsoft.OpenApi.JsonSchemaType.String, Format = "binary" };
+				foreach (var (status, response) in operation.Responses?.ToList() ?? [])
+					foreach (var (contentType, media) in response.Content ?? new Dictionary<string, Microsoft.OpenApi.OpenApiMediaType>())
+						if (contentType == "image/jpeg" || operation.OperationId == ExportOperation && status == "200")
+							media.Schema = new Microsoft.OpenApi.OpenApiSchema { Type = Microsoft.OpenApi.JsonSchemaType.String, Format = "binary" };
 				return Task.CompletedTask;
 			});
 			options.AddSchemaTransformer((schema, context, _) =>
@@ -52,6 +53,15 @@ public static class ApiEndpoints
 				return Task.CompletedTask;
 			});
 		});
+
+	private const string ExportOperation = "exportLibrary";
+
+	private static readonly Dictionary<string, (string ContentType, string Extension)> ExportFormats = new(StringComparer.OrdinalIgnoreCase)
+	{
+		["csv"] = ("text/csv", "csv"),
+		["xlsx"] = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"),
+		["json"] = ("application/json", "json")
+	};
 
 	private static readonly Dictionary<string, string[]> QueryEnums = new()
 	{
@@ -137,6 +147,60 @@ public static class ApiEndpoints
 			.WithName("getLibraryAsins").WithTags("library")
 			.Produces<LibraryAsinsDto>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapGet("/library/export", (string? format, string? q, bool? trash) =>
+		{
+			var wanted = format?.Trim() ?? "";
+			if (!ExportFormats.TryGetValue(wanted, out var type))
+				return Error("format must be csv, xlsx or json.", StatusCodes.Status400BadRequest);
+
+			string path;
+			try
+			{
+				path = data.ExportLibrary(Enum.Parse<ExportFormat>(wanted, ignoreCase: true), q, trash ?? false);
+			}
+			catch (SearchQueryException ex)
+			{
+				return Error(ex.Message, StatusCodes.Status400BadRequest);
+			}
+
+			var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.DeleteOnClose | FileOptions.SequentialScan);
+			return Results.File(stream, type.ContentType, $"libation-{(trash == true ? "trash" : "library")}-{DateTime.Now:yyyyMMdd}.{type.Extension}");
+		}).WithSummary("Downloads the library as csv, xlsx or json, the same export as the desktop and the CLI, newest first. q (Lucene filter syntax) and trash filter as in /library. 400 bad format or query.")
+			.WithName(ExportOperation).WithTags("library")
+			.Produces<byte[]>(StatusCodes.Status200OK, "text/csv", ExportFormats["xlsx"].ContentType, "application/json")
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapGet("/quick-filters", () => Results.Json(data.GetQuickFilters()))
+			.WithSummary("The saved quick filters in display order, and whether the first one applies by default.")
+			.WithName("getQuickFilters").WithTags("library")
+			.Produces<QuickFiltersDto>(StatusCodes.Status200OK);
+
+		api.MapPut("/quick-filters", (QuickFiltersDto? body) =>
+		{
+			if (body?.Filters is null)
+				return Error("filters is required.", StatusCodes.Status400BadRequest);
+			for (var i = 0; i < body.Filters.Count; i++)
+			{
+				if (body.Filters[i]?.Filter is not { } filter || string.IsNullOrWhiteSpace(filter))
+					return Error($"filters[{i}]: filter is required.", StatusCodes.Status400BadRequest);
+				if (data.ValidateFilter(filter) is { } problem)
+					return Error($"filters[{i}]: {problem}", StatusCodes.Status400BadRequest);
+			}
+			try
+			{
+				data.SetQuickFilters(body);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				return Error($"Quick filters cannot be saved: {ex.Message}", StatusCodes.Status409Conflict);
+			}
+			return Results.Json(data.GetQuickFilters());
+		}).WithSummary("Replaces the whole quick filter list; every filter must parse as a library query. 400 names the offending filters[index]; 409 when the filters file is not writable.")
+			.WithName("putQuickFilters").WithTags("library")
+			.Produces<QuickFiltersDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapGet("/library/podcasts", (string? q, bool? trash) =>
 		{
