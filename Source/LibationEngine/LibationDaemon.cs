@@ -23,9 +23,13 @@ public static class LibationDaemon
 
 		var state = new CycleState();
 		var scheduler = new CycleScheduler(options, jobs, state, time);
-		using var health = options.Once ? null : new HealthServer(options.ListenUrl, state);
-		health?.Start();
+		await using var host = options.Once ? null : DaemonHost.Build(options.ListenUrl, state);
+		if (host is not null)
+			await host.StartAsync(cts.Token);
 
-		return await scheduler.RunAsync(cts.Token);
+		var rc = await scheduler.RunAsync(cts.Token);
+		if (host is not null)
+			await host.StopAsync(CancellationToken.None);
+		return rc;
 	}
 }

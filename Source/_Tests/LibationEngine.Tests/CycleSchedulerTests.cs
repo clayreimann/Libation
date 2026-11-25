@@ -223,13 +223,14 @@ public class CycleSchedulerTests
 	}
 
 	[TestMethod]
-	[DataRow("http://127.0.0.1:8080", "http://127.0.0.1:8080/")]
-	[DataRow("http://127.0.0.1:8080/", "http://127.0.0.1:8080/")]
-	[DataRow("http://0.0.0.0:8080", "http://+:8080/")]
-	[DataRow("http://*:9000", "http://+:9000/")]
-	[DataRow("http://localhost:1", "http://localhost:1/")]
-	public void Listen_url_becomes_a_listener_prefix(string url, string prefix)
-		=> Assert.AreEqual(prefix, HealthServer.ToPrefix(url));
+	[DataRow("http://127.0.0.1:8080", "http://127.0.0.1:8080")]
+	[DataRow("http://127.0.0.1:8080/", "http://127.0.0.1:8080")]
+	[DataRow("http://0.0.0.0:8080", "http://*:8080")]
+	[DataRow("http://*:9000", "http://*:9000")]
+	[DataRow("http://localhost:1", "http://localhost:1")]
+	[DataRow("http://+:9000", "http://*:9000")]
+	public void Listen_url_is_normalized_for_kestrel(string url, string expected)
+		=> Assert.AreEqual(expected, ListenUrl.Normalize(url));
 
 	[TestMethod]
 	public void Health_snapshot_serializes_as_camel_case_json()
