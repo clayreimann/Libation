@@ -97,10 +97,7 @@ public class FindBetterQualityBooksViewModel : ReactiveObject
 		ScanWidevine = Configuration.Instance.UseWidevine;
 	}
 
-	public static bool ShouldScan(LibraryBook lb)
-		=> lb.Book.ContentType is ContentType.Product //only scan books, not podcasts
-		&& !lb.Book.IsSpatial //skip spatial audio books. When querying the /metadata endpoint, it will only show ac-4 data for spatial audiobooks.
-		&& lb.Book.UserDefinedItem.BookStatus is LiberatedStatus.Liberated;
+	public static bool ShouldScan(LibraryBook lb) => QualityCheck.ShouldScan(lb);
 
 	public void StopScan()
 	{
@@ -118,39 +115,9 @@ public class FindBetterQualityBooksViewModel : ReactiveObject
 
 		SignificantCount = Books?.Count(b => b.IsSignificant) ?? 0;
 
-		bool widevineNewlyEnabled = false;
-		bool xHeAacNewlyRequested = false;
-		bool accountsMarked = false;
+		var settings = QualityCheck.ApplyUpgradeSettings(ScanWidevine, significant.Select(b => b.AvailableCodec).ToArray());
 
-		bool requiresWidevine = ScanWidevine || significant.Any(b => b.AvailableCodec is "xHE-AAC" or "EC-3" or "AC-4");
-		if (File.Exists(AudibleApiStorage.AccountsSettingsFile))
-		{
-			using var persister = AudibleApiStorage.GetAccountsSettingsPersister();
-			if (requiresWidevine)
-			{
-				var recovery = ThrottledDeviceRecovery.ApplyRecovery(persister.AccountsSettings, Configuration.Instance);
-				widevineNewlyEnabled = recovery.WidevineEnabled;
-				accountsMarked = recovery.MarkedAccounts.Count > 0;
-			}
-			else
-			{
-				accountsMarked = ThrottledDeviceRecovery.MarkObsoleteAccounts(persister.AccountsSettings) > 0;
-			}
-		}
-		else if (requiresWidevine)
-		{
-			widevineNewlyEnabled = !Configuration.Instance.UseWidevine;
-			Configuration.Instance.UseWidevine = true;
-			Configuration.Instance.DeviceRegistrationKind = AudibleApi.DeviceRegistrationKind.CurrentAndroid;
-		}
-
-		if (requiresWidevine && significant.Any(b => b.AvailableCodec == "xHE-AAC") && !Configuration.Instance.Request_xHE_AAC)
-		{
-			Configuration.Instance.Request_xHE_AAC = true;
-			xHeAacNewlyRequested = true;
-		}
-
-		return new MarkBooksResult(significant.Length, widevineNewlyEnabled, xHeAacNewlyRequested, accountsMarked);
+		return new MarkBooksResult(significant.Length, settings.WidevineEnabled, settings.XHeAacRequested, settings.AccountsMarkedForReRegistration);
 	}
 
 	public async Task ScanAsync()
@@ -177,11 +144,11 @@ public class FindBetterQualityBooksViewModel : ReactiveObject
 				try
 				{
 					cts.Token.ThrowIfCancellationRequested();
-					var url = GetUrl(b.LibraryBook);
+					var url = QualityCheck.MetadataUrl(b.LibraryBook, ScanWidevine);
 					//Don't re-scan a file if we have already loaded existing audio codec and bitrate.
 					if (b.Bitrate == 0 && b.Codec == null)
 					{
-						var (file, bestFormat) = FindHighestExistingFormat(b.LibraryBook);
+						var (file, bestFormat) = QualityCheck.FindHighestExistingFormat(b.LibraryBook);
 
 						if (file is not null)
 						{
@@ -204,10 +171,10 @@ public class FindBetterQualityBooksViewModel : ReactiveObject
 					}
 
 					var resp = await cli.GetAsync(url, cts.Token);
-					var (codecString, bitrate) = await ReadAudioInfoAsync(resp.EnsureSuccessStatusCode());
+					var available = await QualityCheck.ReadAvailableAsync(resp.EnsureSuccessStatusCode());
 
-					b.AvailableCodec = codecString;
-					b.AvailableBitrate = bitrate;
+					b.AvailableCodec = available.Codec;
+					b.AvailableBitrate = available.Bitrate;
 					b.ScanStatus = ProcessBookStatus.Completed;
 				}
 				catch (OperationCanceledException)
@@ -236,49 +203,4 @@ public class FindBetterQualityBooksViewModel : ReactiveObject
 			IsScanning = false;
 		}
 	}
-
-	private static (string? file, AudioFormat format) FindHighestExistingFormat(LibraryBook libraryBook)
-	{
-		var largestFile
-			= AudibleFileStorage.Audio
-			.GetPaths(libraryBook.Book.AudibleProductId)
-			.Select(p => new FileInfo(p))
-			.Where(f => f.Exists && f.Extension.EqualsInsensitive(".m4b"))
-			.OrderByDescending(f => f.Length)
-			.FirstOrDefault()
-			?.FullName;
-
-		return largestFile is null ? (null, AudioFormat.Default)
-			: (largestFile, AudioFormatDecoder.FromMpeg4(largestFile));
-	}
-
-	private static async Task<(string codec, int bitrate)> ReadAudioInfoAsync(HttpResponseMessage response)
-	{
-		var data = await response.Content.ReadAsJObjectAsync();
-		var totalLengthMs = data["content_metadata"]?["chapter_info"]?.Value<long>("runtime_length_ms") ?? throw new InvalidDataException("Missing runtime length");
-		var contentReference = data["content_metadata"]?["content_reference"];
-		var totalSize = contentReference?.Value<long>("content_size_in_bytes") ?? throw new InvalidDataException("Missing content size");
-		var codec = contentReference?.Value<string>("codec") ?? throw new InvalidDataException("Missing codec name");
-
-		var codecString = codec switch
-		{
-			AudibleApi.Codecs.AAC_LC => "AAC-LC",
-			AudibleApi.Codecs.xHE_AAC => "xHE-AAC",
-			AudibleApi.Codecs.EC_3 => "EC-3",
-			AudibleApi.Codecs.AC_4 => "AC-4",
-			_ => codec,
-		};
-
-		var bitrate = (int)(totalSize / 1024d * 1000 / totalLengthMs * 8); // in kbps
-		return (codecString, bitrate);
-	}
-
-	private string GetUrl(LibraryBook libraryBook)
-	{
-		var drm_type = ScanWidevine ? "Widevine" : "Adrm";
-		var locale = AudibleApi.Localization.Get(libraryBook.Book.Locale);
-		return string.Format(BaseUrl, locale.TopDomain, libraryBook.Book.AudibleProductId, drm_type);
-	}
-
-	private const string BaseUrl = "ht" + "tps://api.audible.{0}/1.0/content/{1}/metadata?response_groups=chapter_info,content_reference&quality=High&drm_type={2}";
 }

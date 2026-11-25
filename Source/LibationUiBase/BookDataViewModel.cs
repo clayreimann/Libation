@@ -33,8 +33,7 @@ public class BookDataViewModel : ReactiveObject
 		{
 			RaiseAndSetIfChanged(ref field, value);
 			AvailableBitrateString = GetBitrateString(value);
-			var diff = (double)AvailableBitrate / Bitrate;
-			IsSignificant = diff >= 1.15;
+			IsSignificant = QualityCheck.IsSignificant(Bitrate, AvailableBitrate);
 		}
 	}
 
