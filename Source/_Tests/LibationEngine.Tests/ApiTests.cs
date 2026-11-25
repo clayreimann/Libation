@@ -404,6 +404,21 @@ public class ApiTests
 	}
 
 	[TestMethod]
+	public async Task Status_says_whether_accounts_are_managed_by_an_import_file()
+	{
+		async Task<bool> Managed(string? import)
+		{
+			await using var h = new Harness(api: true, accountsImport: import);
+			await h.WaitIdleAfterFirstCycle();
+			using var doc = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/status"));
+			return doc.RootElement.GetProperty("accountsManagedByImport").GetBoolean();
+		}
+
+		Assert.IsFalse(await Managed(null));
+		Assert.IsTrue(await Managed(Path.Combine(Path.GetTempPath(), "missing-accounts.json")));
+	}
+
+	[TestMethod]
 	public async Task Scan_runs_exactly_once_and_a_concurrent_request_gets_409()
 	{
 		await using var h = new Harness(api: true);

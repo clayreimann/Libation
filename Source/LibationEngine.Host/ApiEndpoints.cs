@@ -183,7 +183,7 @@ public static class ApiEndpoints
 		{
 			var s = state.Snapshot();
 			return new(s.State, s.LastRun, s.LastSuccess, s.ScanExitCode, s.LiberateExitCode, s.NextRun,
-				(int)options.Interval.TotalSeconds, LibationScaffolding.BuildVersion?.ToString(), NeedingLogin());
+				(int)options.Interval.TotalSeconds, LibationScaffolding.BuildVersion?.ToString(), NeedingLogin(), !string.IsNullOrWhiteSpace(options.AccountsImportPath));
 		}
 
 		IResult Run(RunKind kind, IReadOnlyList<string>? accounts = null)
@@ -196,7 +196,7 @@ public static class ApiEndpoints
 		app.MapOpenApi("/api/openapi.json");
 
 		api.MapGet("/status", Status)
-			.WithSummary("Daemon state, last results, next run, interval and version.")
+			.WithSummary("Daemon state, last results, next run, interval and version. accountsManagedByImport is true when accounts come from LIBATION_ACCOUNTS_IMPORT: signing in again works, adding, renaming and removing do not.")
 			.WithName("getStatus").WithTags("daemon")
 			.Produces<StatusDto>(StatusCodes.Status200OK);
 

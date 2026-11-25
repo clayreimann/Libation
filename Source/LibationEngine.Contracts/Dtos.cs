@@ -9,7 +9,8 @@ public sealed record StatusDto(
 	DateTimeOffset? NextRun,
 	int IntervalSeconds,
 	string? Version,
-	IReadOnlyList<string> AccountsNeedingLogin);
+	IReadOnlyList<string> AccountsNeedingLogin,
+	bool AccountsManagedByImport);
 
 public static class AuthStates
 {

@@ -63,6 +63,33 @@ public class AccountsEngineTests
 	}
 
 	[TestMethod]
+	public void Signing_in_again_under_an_import_survives_until_the_import_file_changes()
+	{
+		var vault = Path.Combine(directory, "vault.json");
+		var live = Path.Combine(directory, AccountsImporter.AccountsFileName);
+		var importer = new AccountsImporter(vault, directory);
+
+		Seed(new Account("imported@example.com") { IdentityTokens = new Identity(Localization.Get("us")) });
+		File.Copy(live, vault);
+		Assert.IsTrue(importer.Import());
+		Assert.AreEqual(AuthStates.NeedsLogin, data.GetAccounts().Single().AuthState);
+
+		using (var persister = AudibleApiStorage.GetAccountsSettingsPersister())
+		{
+			persister.AccountsSettings.Delete(persister.AccountsSettings.GetAccount("imported@example.com", "us")!);
+			persister.AccountsSettings.Add(Registered("imported@example.com", "us"));
+		}
+		Assert.AreEqual(AuthStates.SignedIn, data.GetAccounts().Single().AuthState);
+
+		Assert.IsFalse(importer.Import());
+		Assert.AreEqual(AuthStates.SignedIn, data.GetAccounts().Single().AuthState);
+
+		File.WriteAllText(vault, File.ReadAllText(vault).Replace("imported@example.com", "imported@example.com "));
+		Assert.IsTrue(importer.Import());
+		Assert.AreEqual(AuthStates.NeedsLogin, data.GetAccounts().Single().AuthState);
+	}
+
+	[TestMethod]
 	public void Auth_state_follows_the_desktop_rules()
 	{
 		var reRegister = Registered("rereg@example.com", "us");
