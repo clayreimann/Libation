@@ -31,6 +31,14 @@ public static class ApiEndpoints
 				{
 					var schema = await context.GetOrCreateSchemaAsync(type, null, ct);
 					schemas.Schemas[type.Name] = schema;
+					foreach (var property in type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly))
+						if (property.PropertyType.Assembly == typeof(StatusDto).Assembly && property.PropertyType.IsClass && !property.PropertyType.IsSubclassOf(typeof(EngineEvent))
+							&& schema is Microsoft.OpenApi.OpenApiSchema { Properties: { } members }
+							&& members.ContainsKey(JsonNamingPolicy.CamelCase.ConvertName(property.Name)))
+						{
+							schemas.Schemas.TryAdd(property.PropertyType.Name, await context.GetOrCreateSchemaAsync(property.PropertyType, null, ct));
+							members[JsonNamingPolicy.CamelCase.ConvertName(property.Name)] = new Microsoft.OpenApi.OpenApiSchemaReference(property.PropertyType.Name, document);
+						}
 					refs.Add(new Microsoft.OpenApi.OpenApiSchemaReference(type.Name, document));
 				}
 				schemas.Schemas[nameof(EngineEvent)] = new Microsoft.OpenApi.OpenApiSchema
@@ -56,8 +64,7 @@ public static class ApiEndpoints
 			});
 			options.AddSchemaTransformer((schema, context, _) =>
 			{
-				if (context.JsonPropertyInfo is null
-					&& context.JsonTypeInfo.Kind == System.Text.Json.Serialization.Metadata.JsonTypeInfoKind.Object
+				if (context.JsonTypeInfo.Kind == System.Text.Json.Serialization.Metadata.JsonTypeInfoKind.Object
 					&& context.JsonTypeInfo.Type.Assembly == typeof(StatusDto).Assembly
 					&& schema.Properties is { Count: > 0 })
 				{

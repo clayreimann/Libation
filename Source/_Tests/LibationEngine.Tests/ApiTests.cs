@@ -1086,6 +1086,26 @@ public class ApiTests
 	}
 
 	[TestMethod]
+	[DataRow("QueuePaused", "pause", "PendingDecisionDto", "reason")]
+	[DataRow("QueueWaiting", "wait", "QueueWaitDto", "reason")]
+	[DataRow("LocateScanProgress", "scan", "LocateScanDto", "state")]
+	public async Task OpenApi_events_reference_shared_dtos_so_their_enums_survive(string evt, string property, string dto, string enumProperty)
+	{
+		var schemas = await SchemaDocument();
+		var member = schemas.GetProperty(evt).GetProperty("properties").GetProperty(property);
+		Assert.AreEqual($"#/components/schemas/{dto}", member.GetProperty("$ref").GetString());
+		Assert.IsGreaterThan(0, schemas.GetProperty(dto).GetProperty("properties").GetProperty(enumProperty).GetProperty("enum").GetArrayLength());
+	}
+
+	[TestMethod]
+	public async Task OpenApi_queue_changed_references_the_queue_dto_whose_jobs_keep_their_state_enum()
+	{
+		var schemas = await SchemaDocument();
+		Assert.AreEqual("#/components/schemas/QueueDto", schemas.GetProperty("QueueChanged").GetProperty("properties").GetProperty("queue").GetProperty("$ref").GetString());
+		Assert.IsGreaterThan(0, schemas.GetProperty("QueueJobDto").GetProperty("properties").GetProperty("state").GetProperty("enum").GetArrayLength());
+	}
+
+	[TestMethod]
 	public async Task OpenApi_document_lists_every_route_with_a_typed_success_response()
 	{
 		using var dir = new TempDir();
