@@ -85,63 +85,6 @@ public class ProcessBookViewModelTests : QueueTestBase
 		return new ContentLicenseDeniedException(new Uri("https://audible.com/licenserequest"), license);
 	}
 
-	private sealed class DialogScript
-	{
-		private int concurrent;
-		private int maxConcurrent;
-		private int calls;
-		private readonly Queue<TaskCompletionSource<BadBookDialogResult>> pending = new();
-
-		public int Calls => Volatile.Read(ref calls);
-		public int MaxConcurrent => Volatile.Read(ref maxConcurrent);
-
-		/// <summary>Answers each dialog as soon as it appears.</summary>
-		public static DialogScript Answering(BadBookDialogResult answer)
-		{
-			var script = new DialogScript();
-			BadBookActionDialogBase.ShowAsyncImpl = (_, _, _) => script.Enter(Task.FromResult(answer));
-			return script;
-		}
-
-		/// <summary>Leaves every dialog open until <see cref="Answer"/> is called.</summary>
-		public static DialogScript Holding()
-		{
-			var script = new DialogScript();
-			BadBookActionDialogBase.ShowAsyncImpl = (_, _, _) =>
-			{
-				var gate = new TaskCompletionSource<BadBookDialogResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-				lock (script.pending) script.pending.Enqueue(gate);
-				return script.Enter(gate.Task);
-			};
-			return script;
-		}
-
-		public void Answer(BadBookDialogResult answer)
-		{
-			TaskCompletionSource<BadBookDialogResult> gate;
-			lock (pending) gate = pending.Dequeue();
-			gate.SetResult(answer);
-		}
-
-		private async Task<BadBookDialogResult> Enter(Task<BadBookDialogResult> answer)
-		{
-			Interlocked.Increment(ref calls);
-			var now = Interlocked.Increment(ref concurrent);
-			int seen;
-			while (now > (seen = Volatile.Read(ref maxConcurrent)) && Interlocked.CompareExchange(ref maxConcurrent, now, seen) != seen) { }
-			try
-			{
-				return await answer;
-			}
-			finally
-			{
-				Interlocked.Decrement(ref concurrent);
-			}
-		}
-	}
-
-	private static BadBookDialogResult Dialog(DialogResult action, bool applyToAll = false, bool remember = false)
-		=> new(action, applyToAll, remember);
 
 	[TestMethod]
 	public async Task steps_run_in_order_and_a_book_whose_steps_all_succeed_completes()
@@ -230,16 +173,15 @@ public class ProcessBookViewModelTests : QueueTestBase
 	}
 
 	[TestMethod]
-	public async Task a_disk_full_exception_is_a_disk_full_result_and_skips_the_bad_book_dialog()
+	public async Task a_disk_full_exception_is_a_disk_full_result_and_skips_the_bad_book_handling()
 	{
-		var dialog = DialogScript.Answering(Dialog(DialogResult.Retry));
+		Configuration.Instance.BadBook = Configuration.BadBookAction.Ask;
 		var book = Chain(Book("A"), Throws(new IOException("There is not enough space on the disk.")));
 
 		var result = await book.ProcessOneAsync();
 
 		Assert.AreEqual(ProcessBookResult.DiskFull, result);
 		Assert.AreEqual(ProcessBookStatus.Failed, book.Status);
-		Assert.AreEqual(0, dialog.Calls);
 	}
 
 	[TestMethod]
@@ -329,13 +271,12 @@ public class ProcessBookViewModelTests : QueueTestBase
 	}
 
 	[TestMethod]
-	[DataRow(Configuration.BadBookAction.Abort, ProcessBookResult.FailedAbort, LiberatedStatus.NotLiberated)]
-	[DataRow(Configuration.BadBookAction.Retry, ProcessBookResult.FailedRetry, LiberatedStatus.NotLiberated)]
-	[DataRow(Configuration.BadBookAction.Ignore, ProcessBookResult.FailedSkip, LiberatedStatus.Error)]
-	public async Task the_bad_book_setting_decides_the_result_without_asking(Configuration.BadBookAction setting, ProcessBookResult expected, LiberatedStatus storedStatus)
+	[DataRow(Configuration.BadBookAction.Abort, ProcessBookResult.FailedAbort)]
+	[DataRow(Configuration.BadBookAction.Retry, ProcessBookResult.FailedRetry)]
+	[DataRow(Configuration.BadBookAction.Ignore, ProcessBookResult.FailedSkip)]
+	public async Task the_bad_book_setting_decides_the_result_without_asking(Configuration.BadBookAction setting, ProcessBookResult expected)
 	{
 		Configuration.Instance.BadBook = setting;
-		var dialog = DialogScript.Answering(Dialog(DialogResult.Abort));
 		var book = Chain(PersistedBook("Bad Book"), Fails("boom"));
 
 		var result = await book.ProcessOneAsync();
@@ -343,143 +284,47 @@ public class ProcessBookViewModelTests : QueueTestBase
 		Assert.AreEqual(expected, result);
 		Assert.AreEqual(expected, book.Result);
 		Assert.AreEqual(ProcessBookStatus.Failed, book.Status);
-		Assert.AreEqual(0, dialog.Calls);
-		Assert.AreEqual(storedStatus, StoredStatus(book));
+		Assert.AreEqual(LiberatedStatus.NotLiberated, StoredStatus(book), "The job wrote a status the queue owns.");
 	}
 
 	[TestMethod]
-	public async Task the_ask_setting_shows_the_dialog_and_uses_its_answer()
+	public async Task the_ask_setting_finishes_the_book_awaiting_a_decision_without_a_dialog()
 	{
 		Configuration.Instance.BadBook = Configuration.BadBookAction.Ask;
-		var dialog = DialogScript.Answering(Dialog(DialogResult.Abort));
 		var book = Chain(Book("A"), Fails("boom"));
 
 		var result = await book.ProcessOneAsync();
 
-		Assert.AreEqual(ProcessBookResult.FailedAbort, result);
-		Assert.AreEqual(1, dialog.Calls);
+		Assert.AreEqual(ProcessBookResult.AwaitingDecision, result);
+		Assert.AreEqual(ProcessBookStatus.Failed, book.Status);
+		Assert.AreEqual("Error, waiting for your choice", book.StatusText);
+		Assert.AreEqual(0, Dialogs.Captions.Length);
 	}
 
 	[TestMethod]
-	public async Task an_answer_to_apply_to_all_is_used_by_later_books_without_asking_again()
+	[DataRow(Configuration.BadBookAction.Retry, ProcessBookResult.FailedRetry)]
+	[DataRow(Configuration.BadBookAction.Ignore, ProcessBookResult.FailedSkip)]
+	[DataRow(Configuration.BadBookAction.Abort, ProcessBookResult.FailedAbort)]
+	public async Task an_apply_to_all_override_decides_the_result_for_every_later_book(Configuration.BadBookAction answer, ProcessBookResult expected)
 	{
-		var session = new BadBookSessionContext();
-		var dialog = DialogScript.Answering(Dialog(DialogResult.Retry, applyToAll: true));
+		Configuration.Instance.BadBook = Configuration.BadBookAction.Ask;
+		var session = new BadBookSessionContext { Override = answer };
 		ProcessBookViewModel a = Chain(Book("A", session: session), Fails("boom")), b = Chain(Book("B", session: session), Fails("boom"));
 
-		var first = await a.ProcessOneAsync();
-		var second = await b.ProcessOneAsync();
-
-		Assert.AreEqual(ProcessBookResult.FailedRetry, first);
-		Assert.AreEqual(ProcessBookResult.FailedRetry, second);
-		Assert.AreEqual(1, dialog.Calls);
-		Assert.AreEqual(Configuration.BadBookAction.Retry, session.Override);
+		Assert.AreEqual(expected, await a.ProcessOneAsync());
+		Assert.AreEqual(expected, await b.ProcessOneAsync());
 	}
 
 	[TestMethod]
-	public async Task an_answer_without_apply_to_all_is_asked_again_for_the_next_book()
+	public async Task resetting_the_session_forgets_the_override()
 	{
-		var session = new BadBookSessionContext();
-		var dialog = DialogScript.Answering(Dialog(DialogResult.Retry));
-		ProcessBookViewModel a = Chain(Book("A", session: session), Fails("boom")), b = Chain(Book("B", session: session), Fails("boom"));
-
-		await a.ProcessOneAsync();
-		Assert.IsNull(session.Override);
-		await b.ProcessOneAsync();
-
-		Assert.AreEqual(2, dialog.Calls);
-		Assert.IsNull(session.AbortOriginator);
-	}
-
-	[TestMethod]
-	public async Task an_abort_answer_becomes_the_session_override_and_names_its_book_even_without_apply_to_all()
-	{
-		var session = new BadBookSessionContext();
-		var dialog = DialogScript.Answering(Dialog(DialogResult.Abort));
-		ProcessBookViewModel a = Chain(Book("A", session: session), Fails("boom")), b = Chain(Book("B", session: session), Fails("boom"));
-
-		var first = await a.ProcessOneAsync();
-		var second = await b.ProcessOneAsync();
-
-		Assert.AreEqual(ProcessBookResult.FailedAbort, first);
-		Assert.AreEqual(ProcessBookResult.FailedAbort, second);
-		Assert.AreEqual(Configuration.BadBookAction.Abort, session.Override);
-		Assert.AreSame(a.LibraryBook, session.AbortOriginator?.LibraryBook);
-		Assert.AreEqual(1, dialog.Calls);
-	}
-
-	[TestMethod]
-	public async Task resetting_the_session_forgets_the_override_and_the_originator()
-	{
-		var session = new BadBookSessionContext();
-		DialogScript.Answering(Dialog(DialogResult.Abort));
-		await Chain(Book("A", session: session), Fails("boom")).ProcessOneAsync();
+		var session = new BadBookSessionContext { Override = Configuration.BadBookAction.Abort };
 
 		session.Reset();
 
 		Assert.IsNull(session.Override);
-		Assert.IsNull(session.AbortOriginator);
-	}
-
-	[TestMethod]
-	public async Task remember_in_settings_writes_the_answer_to_the_configuration()
-	{
 		Configuration.Instance.BadBook = Configuration.BadBookAction.Ask;
-		DialogScript.Answering(Dialog(DialogResult.Abort, remember: true));
-		var book = Chain(Book("A"), Fails("boom"));
-
-		await book.ProcessOneAsync();
-
-		Assert.AreEqual(Configuration.BadBookAction.Abort, Configuration.Instance.BadBook);
-	}
-
-	[TestMethod]
-	public async Task two_books_failing_together_never_have_two_dialogs_open_at_once()
-	{
-		var session = new BadBookSessionContext();
-		var dialog = DialogScript.Holding();
-		ProcessBookViewModel a = Chain(Book("A", session: session), Fails("boom")), b = Chain(Book("B", session: session), Fails("boom"));
-
-		var first = a.ProcessOneAsync();
-		var second = b.ProcessOneAsync();
-		await Eventually(() => dialog.Calls == 1, "the first dialog to open");
-
-		await Task.Delay(200);
-		Assert.AreEqual(1, dialog.Calls, "The second book opened a dialog while the first was still showing.");
-
-		dialog.Answer(Dialog(DialogResult.Retry));
-		await Eventually(() => dialog.Calls == 2, "the second dialog to open");
-		dialog.Answer(Dialog(DialogResult.Retry));
-		await Task.WhenAll(first, second);
-
-		Assert.AreEqual(1, dialog.MaxConcurrent);
-	}
-
-	[TestMethod]
-	public async Task a_book_waiting_behind_an_apply_to_all_answer_uses_it_instead_of_asking()
-	{
-		var session = new BadBookSessionContext();
-		var dialog = DialogScript.Holding();
-		ProcessBookViewModel a = Chain(Book("A", session: session), Fails("boom")), b = Chain(Book("B", session: session), Fails("boom"));
-
-		var first = a.ProcessOneAsync();
-		var second = b.ProcessOneAsync();
-		await Eventually(() => dialog.Calls == 1, "the first dialog to open");
-
-		dialog.Answer(Dialog(DialogResult.Retry, applyToAll: true));
-		await Task.WhenAll(first, second);
-
-		Assert.AreEqual(1, dialog.Calls);
-		Assert.AreEqual(ProcessBookResult.FailedRetry, b.Result);
-	}
-
-	[TestMethod]
-	public async Task a_dialog_that_throws_defaults_to_retry()
-	{
-		BadBookActionDialogBase.ShowAsyncImpl = (_, _, _) => Task.FromException<BadBookDialogResult>(new InvalidOperationException("no window"));
-		var book = Chain(Book("A"), Fails("boom"));
-
-		Assert.AreEqual(ProcessBookResult.FailedRetry, await book.ProcessOneAsync());
+		Assert.AreEqual(ProcessBookResult.AwaitingDecision, await Chain(Book("A", session: session), Fails("boom")).ProcessOneAsync());
 	}
 
 	[TestMethod]
@@ -494,18 +339,14 @@ public class ProcessBookViewModelTests : QueueTestBase
 	}
 
 	[TestMethod]
-	public async Task cancelling_a_book_waiting_in_the_bad_book_dialog_does_not_throw()
+	public async Task cancelling_a_book_awaiting_a_decision_does_not_throw()
 	{
-		var dialog = DialogScript.Holding();
+		Configuration.Instance.BadBook = Configuration.BadBookAction.Ask;
 		var book = Chain(Book("A"), Fails("boom"));
-
-		var processing = book.ProcessOneAsync();
-		await Eventually(() => dialog.Calls == 1, "the dialog to open");
+		Assert.AreEqual(ProcessBookResult.AwaitingDecision, await book.ProcessOneAsync());
 
 		await book.CancelAsync();
 
 		Assert.IsTrue(book.CancellationRequested);
-		dialog.Answer(Dialog(DialogResult.Retry));
-		Assert.AreEqual(ProcessBookResult.FailedRetry, await processing);
 	}
 }

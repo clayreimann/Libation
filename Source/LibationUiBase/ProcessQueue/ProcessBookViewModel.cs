@@ -66,6 +66,7 @@ public class ProcessBookViewModel : ReactiveObject
 		(ProcessBookResult.LicenseDeniedThrottledRecovered, _) => "License denied (re-login needed)",
 		(ProcessBookResult.WidevineRecommended, _) => WidevineRecommendationUserMessage.QueueStatusText,
 		(ProcessBookResult.DiskFull, _) => "Disk full, queue stopped",
+		(ProcessBookResult.AwaitingDecision, _) => "Error, waiting for your choice",
 		_ => Status.ToString(),
 	};
 
@@ -77,7 +78,7 @@ public class ProcessBookViewModel : ReactiveObject
 
 	public ProcessBookViewModel(LibraryBook libraryBook, Configuration configuration, BadBookSessionContext? badBookSession = null)
 	{
-		_job = new LiberationJob(libraryBook, configuration, GuiLiberationInteraction.Instance, badBookSession);
+		_job = new LiberationJob(libraryBook, configuration, badBookSession);
 		_job.ResultChanged += Job_ResultChanged;
 		_job.StatusChanged += Job_StatusChanged;
 		_job.StatusOverrideChanged += Job_StatusOverrideChanged;

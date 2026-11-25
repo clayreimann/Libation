@@ -1,6 +1,8 @@
 using DataLayer;
 using LibationFileManager;
+using LibationUiBase.Forms;
 using LibationUiBase.ProcessQueue;
+using System.Collections.Concurrent;
 
 namespace LibationUiBase.Tests;
 
@@ -36,7 +38,6 @@ public class ProcessQueueResultTests : QueueTestBase
 	[DataRow(ProcessBookResult.LicenseDeniedThrottled)]
 	[DataRow(ProcessBookResult.LicenseDeniedThrottledRecovered)]
 	[DataRow(ProcessBookResult.WidevineRecommended)]
-	[DataRow(ProcessBookResult.DiskFull)]
 	public async Task every_result_other_than_a_validation_failure_leaves_the_row_in_completed(ProcessBookResult result)
 	{
 		var (queue, books) = NewQueue(atOnce: 1);
@@ -88,34 +89,116 @@ public class ProcessQueueResultTests : QueueTestBase
 		Assert.AreEqual(2, queue.Queue.Completed.Count);
 	}
 
-	[TestMethod]
-	public async Task a_disk_full_result_tears_the_queue_down_like_an_abort()
+	private static Func<ProcessBookViewModel, Task<ProcessBookResult>> Scripted(
+		ConcurrentQueue<string> started,
+		Func<string, int, ProcessBookResult> outcome)
 	{
-		var (queue, books) = NewQueue(atOnce: 1);
+		var calls = new ConcurrentDictionary<string, int>();
+		return book =>
+		{
+			var id = GatedBooks.Id(book);
+			started.Enqueue(id);
+			var result = outcome(id, calls.AddOrUpdate(id, 1, (_, n) => n + 1));
+			book.Result = result;
+			return Task.FromResult(result);
+		};
+	}
+
+	[TestMethod]
+	public async Task a_disk_full_result_pauses_the_queue_and_resuming_runs_every_book_again()
+	{
+		Dialogs.Respond = _ => Task.FromResult(DialogResult.Yes);
+		var queue = new ProcessQueueViewModel { MaxConcurrentDownloads = 1, MachineCeilingOverride = 1 };
+		var started = new ConcurrentQueue<string>();
+		queue.ProcessBookHandler = Scripted(started, (id, call) => id == "A" && call == 1 ? ProcessBookResult.DiskFull : ProcessBookResult.Success);
+		ProcessBookViewModel a = Book("A"), b = Book("B"), c = Book("C");
+
+		queue.AddToQueue([a, b, c]);
+		await RunToCompletion(queue);
+
+		CollectionAssert.AreEqual(new[] { "A", "B", "C", "A" }, started.ToArray());
+		Assert.AreEqual(1, Dialogs.Count(DiskFullUserMessage.DialogCaption));
+		Assert.AreEqual(3, queue.Queue.Completed.Count);
+		Assert.IsTrue(queue.Queue.Completed.All(x => x.Result == ProcessBookResult.Success));
+	}
+
+	[TestMethod]
+	public async Task stopping_at_a_disk_full_pause_clears_the_queue_without_starting_another_book()
+	{
+		Dialogs.Respond = _ => Task.FromResult(DialogResult.No);
+		var queue = new ProcessQueueViewModel { MaxConcurrentDownloads = 1, MachineCeilingOverride = 1 };
+		var started = new ConcurrentQueue<string>();
+		queue.ProcessBookHandler = Scripted(started, (_, _) => ProcessBookResult.DiskFull);
 
 		queue.AddToQueue([Book("A"), Book("B"), Book("C")]);
-		await books.WaitForStarted(1);
-		books.Finish("A", ProcessBookResult.DiskFull);
-
 		await RunToCompletion(queue);
-		Assert.AreEqual(1, books.Started.Count, "A queued book started after the disk filled.");
-		Assert.AreEqual(1, queue.Queue.Count);
+
+		Assert.AreEqual(1, started.Count, "A queued book started after the disk filled.");
+		Assert.AreEqual(0, queue.Queue.Count);
 		Assert.IsFalse(queue.ProgressBarVisible);
 		Assert.AreEqual(1, Dialogs.Count(DiskFullUserMessage.DialogCaption));
 	}
 
 	[TestMethod]
-	public async Task the_disk_full_notice_is_shown_once_per_run_even_when_several_books_fill_the_disk()
+	public async Task the_disk_full_dialog_is_shown_once_when_several_books_fill_the_disk()
 	{
-		var (queue, books) = NewQueue(atOnce: 2);
+		Dialogs.Respond = _ => Task.FromResult(DialogResult.Yes);
+		var queue = new ProcessQueueViewModel { MaxConcurrentDownloads = 2, MachineCeilingOverride = 2 };
+		var started = new ConcurrentQueue<string>();
+		var scripted = Scripted(started, (_, call) => call == 1 ? ProcessBookResult.DiskFull : ProcessBookResult.Success);
+		queue.ProcessBookHandler = async book =>
+		{
+			var result = scripted(book);
+			// Both books are in flight before either reports the full disk.
+			await QueueTestBase.Eventually(() => started.Count >= 2, "both books to start");
+			return await result;
+		};
 
 		queue.AddToQueue([Book("A"), Book("B")]);
-		await books.WaitForStarted(2);
-		books.Finish("A", ProcessBookResult.DiskFull);
-		books.Finish("B", ProcessBookResult.DiskFull);
-
 		await RunToCompletion(queue);
+
 		Assert.AreEqual(1, Dialogs.Count(DiskFullUserMessage.DialogCaption));
+		Assert.AreEqual(2, queue.Queue.Completed.Count);
+	}
+
+	[TestMethod]
+	public async Task a_skipped_bad_book_answered_in_the_dialog_is_marked_as_an_error_and_the_queue_moves_on()
+	{
+		var queue = new ProcessQueueViewModel { MaxConcurrentDownloads = 1, MachineCeilingOverride = 1 };
+		var started = new ConcurrentQueue<string>();
+		queue.ProcessBookHandler = Scripted(started, (id, _) => id == "A" ? ProcessBookResult.AwaitingDecision : ProcessBookResult.Success);
+		BadBookActionDialogBase.ShowAsyncImpl = (_, _, _) => Task.FromResult(new BadBookDialogResult(DialogResult.Ignore, false, false));
+		var a = PersistedBook("Bad One");
+		var persistedId = GatedBooks.Id(a);
+		queue.ProcessBookHandler = Scripted(started, (id, _) => id == persistedId ? ProcessBookResult.AwaitingDecision : ProcessBookResult.Success);
+
+		queue.AddToQueue([a, Book("B")]);
+		await RunToCompletion(queue);
+
+		Assert.AreEqual(LiberatedStatus.Error, StoredStatus(a));
+		Assert.AreEqual(ProcessBookResult.FailedSkip, a.Result);
+		CollectionAssert.AreEqual(new[] { persistedId, "B" }, started.ToArray());
+	}
+
+	[TestMethod]
+	public async Task apply_to_all_in_the_bad_book_dialog_answers_every_waiting_book_with_one_dialog()
+	{
+		var queue = new ProcessQueueViewModel { MaxConcurrentDownloads = 3, MachineCeilingOverride = 3 };
+		var started = new ConcurrentQueue<string>();
+		queue.ProcessBookHandler = Scripted(started, (_, _) => ProcessBookResult.AwaitingDecision);
+		var dialogs = 0;
+		BadBookActionDialogBase.ShowAsyncImpl = (_, _, _) =>
+		{
+			Interlocked.Increment(ref dialogs);
+			return Task.FromResult(new BadBookDialogResult(DialogResult.Retry, true, false));
+		};
+		ProcessBookViewModel a = Book("A"), b = Book("B"), c = Book("C");
+
+		queue.AddToQueue([a, b, c]);
+		await RunToCompletion(queue);
+
+		Assert.AreEqual(1, dialogs);
+		Assert.IsTrue(new[] { a, b, c }.All(x => x.Result == ProcessBookResult.FailedRetry));
 	}
 
 	[TestMethod]

@@ -27,6 +27,7 @@ public class ProcessQueueViewModel : ReactiveObject
 
 	/// <summary>Internal so a test can stand in for a user having answered the bad book dialog.</summary>
 	internal BadBookSessionContext BadBookSession => _engine.BadBookSession;
+	internal LiberationQueue Engine => _engine;
 	public Task? QueueRunner => _engine.Runner;
 	public bool Running => _engine.Running;
 
@@ -43,10 +44,12 @@ public class ProcessQueueViewModel : ReactiveObject
 	}
 
 	private Timer? _runningTimeTimer;
+	private readonly GuiQueuePrompter _prompter;
 
 	public ProcessQueueViewModel()
 	{
-		_engine = new LiberationQueue(GuiLiberationInteraction.Instance, () => MaxConcurrentDownloads);
+		_engine = new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => MaxConcurrentDownloads, OnDiskFull = DiskFullPolicy.Ask });
+		_prompter = new GuiQueuePrompter(_engine);
 		Queue = new ProcessBookQueue(_engine.Jobs);
 		_engine.RunJob = job => ProcessBookHandler(Queue.For(job));
 

@@ -264,11 +264,8 @@ public class ProcessQueueDispatchTests
 		queue.AddToQueue([a, b, c]);
 		await books.WaitForStarted(3);
 
-		// No dialog was answered here - this is Bad Book set to Abort in settings, where every book
-		// that fails aborts on its own account. Nobody is the one the user was asked about, so the
-		// first book through tears the queue down and keeps the abort; the others were cancelled by it.
-		Assert.IsNull(queue.BadBookSession.AbortOriginator);
-
+		// Bad Book set to Abort in settings: every book that fails aborts on its own account, and the
+		// first through tears the queue down and keeps the abort.
 		books.Finish("A", ProcessBookResult.FailedAbort);
 		books.Finish("B", ProcessBookResult.FailedAbort);
 		books.Finish("C", ProcessBookResult.FailedAbort);
@@ -282,33 +279,30 @@ public class ProcessQueueDispatchTests
 	}
 
 	[TestMethod]
-	public async Task the_book_the_user_aborted_reports_the_abort_whichever_book_tears_the_queue_down()
+	public async Task the_book_the_user_aborted_reports_the_abort_and_the_books_still_waiting_report_cancelled()
 	{
+		BadBookActionDialogBase.ShowAsyncImpl = (_, _, _) => new TaskCompletionSource<BadBookDialogResult>().Task;
 		var (queue, books) = NewQueue(atOnce: 3);
-
 		var a = Book("A");
 		var b = Book("B");
 		var c = Book("C");
 		queue.AddToQueue([a, b, c]);
 		await books.WaitForStarted(3);
 
-		// C is the book the user was looking at when they answered Abort. A and B inherit that answer
-		// through the session override, which is what puts all three here reporting FailedAbort.
-		queue.BadBookSession.AbortOriginator = c;
+		books.Finish("A", ProcessBookResult.AwaitingDecision);
+		books.Finish("B", ProcessBookResult.AwaitingDecision);
+		books.Finish("C", ProcessBookResult.AwaitingDecision);
+		await QueueTestBase.Eventually(() => queue.Engine.Pending.Count == 3, "three pauses");
 
-		// A finishes first and so claims the teardown. Nothing below depends on it winning - that race
-		// is what made the old status arbitrary - but this is the ordering that used to leave the row
-		// the user actually aborted saying "Cancelled" while A's said "Error, Abort".
-		books.Finish("A", ProcessBookResult.FailedAbort);
-		await Task.Delay(50);
-		books.Finish("B", ProcessBookResult.FailedAbort);
-		books.Finish("C", ProcessBookResult.FailedAbort);
+		var chosen = queue.Engine.Pending[1];
+		Assert.IsTrue(queue.Engine.Resume(chosen.Id, Decision.BadBook(Configuration.BadBookAction.Abort)));
 
 		await RunToCompletion(queue);
 
-		Assert.AreEqual(ProcessBookResult.FailedAbort, c.Result, "The book the user aborted did not report the abort.");
-		Assert.AreEqual(ProcessBookResult.Cancelled, a.Result, "A book that inherited the abort reported it as its own.");
-		Assert.AreEqual(ProcessBookResult.Cancelled, b.Result, "A book that inherited the abort reported it as its own.");
+		var aborted = new[] { a, b, c }.Single(x => ReferenceEquals(x.LibraryBook, queue.Engine.FindJob(chosen.Job!.Value)!.LibraryBook));
+		Assert.AreEqual(ProcessBookResult.FailedAbort, aborted.Result, "The book the user aborted did not report the abort.");
+		Assert.AreEqual(2, new[] { a, b, c }.Count(x => x.Result == ProcessBookResult.Cancelled));
+		Assert.AreEqual(0, queue.Engine.Pending.Count);
 	}
 
 	[TestMethod]

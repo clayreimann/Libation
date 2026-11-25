@@ -20,6 +20,15 @@ public static class DiskFullUserMessage
 			Free disk space (or move Books / In progress to a larger drive in Settings), delete partial files under your In progress folder if needed, then retry your backups in smaller batches.
 			""";
 
+	public static string BuildQueuePausedBody()
+		=> """
+			Libation paused the backup queue because the disk ran out of free space. Books that were downloading have been put back in the queue.
+
+			Download and decrypt use temporary files under your "In progress" folder, then write finished audiobooks to your Books location. Those folders can be on different drives, and each needs enough free space for its role.
+
+			Free disk space (or move Books / In progress to a larger drive in Settings), delete partial files under your In progress folder if needed, then choose Yes to resume the queue. Choose No to stop it.
+			""";
+
 	public static string BuildPreflightBlockedBody(IReadOnlyList<DiskSpaceHelper.BackupDriveSpace> drives, int bookCount)
 	{
 		var sb = new StringBuilder();
