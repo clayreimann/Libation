@@ -165,7 +165,7 @@ internal class ServeOptions : OptionsBase
 			})
 		{
 			CreateBookJob = asin => new LiberateOptions { SharedQueue = queue }.CreateTargetedJob(queue, asin),
-			ScanAccounts = (accounts, _) => new ScanOptions { AccountNames = accounts }.ExecuteAsync()
+			ScanAccounts = (selection, _) => new ScanOptions { AccountNames = selection.Accounts, Locale = selection.Locale }.ExecuteAsync()
 		};
 
 		Environment.ExitCode = await LibationDaemon.RunAsync(options, jobs, queue: queue);

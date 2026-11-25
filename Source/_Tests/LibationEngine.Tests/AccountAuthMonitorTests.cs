@@ -65,6 +65,29 @@ public class AccountAuthMonitorTests
 	}
 
 	[TestMethod]
+	public void A_subset_scan_only_signs_in_the_flagged_accounts_it_covered()
+	{
+		var events = new EventBroadcaster();
+		using var sub = events.Subscribe();
+		using var monitor = new AccountAuthMonitor(events);
+		AccountDto Account(string id, string locale) => new(id, id + " name", locale, true, AuthStates.NeedsLogin, CredentialKinds.None, []);
+		var accounts = new[] { Account("a@example.com", "us"), Account("a@example.com", "uk"), Account("b@example.com", "us") };
+		monitor.Flag("a@example.com", "uk");
+		monitor.Flag("b@example.com", "us");
+
+		monitor.ScanSucceeded(new ScanSelection(["a@example.com"], "us"), () => accounts);
+		Assert.IsTrue(monitor.IsFlagged("a@example.com"));
+
+		monitor.ScanSucceeded(new ScanSelection(["a@example.com"], "uk"), () => accounts);
+
+		Assert.IsFalse(monitor.IsFlagged("a@example.com"));
+		Assert.IsTrue(monitor.IsFlagged("b@example.com"));
+		Assert.IsTrue(sub.Reader.TryRead(out var evt));
+		Assert.AreEqual(("a@example.com", "uk"), (((AccountSignedIn)evt!).AccountId, ((AccountSignedIn)evt).Locale));
+		Assert.IsFalse(sub.Reader.TryRead(out _));
+	}
+
+	[TestMethod]
 	public void SignedIn_publishes_even_when_the_account_was_not_flagged()
 	{
 		var events = new EventBroadcaster();
@@ -113,15 +136,15 @@ public class AccountAuthMonitorTests
 		var scanCalls = 0;
 		var jobs = new DaemonJobs(_ => { scanCalls++; return Task.FromResult(0); }, _ => Task.FromResult(0), _ => Task.FromResult(0))
 		{
-			ScanAccounts = (names, _) => { subsets.Add(string.Join(',', names)); return Task.FromResult(0); }
+			ScanAccounts = (selection, _) => { subsets.Add(string.Join(',', selection.Accounts!)); return Task.FromResult(0); }
 		};
 		var scheduler = new CycleScheduler(new DaemonOptions(TimeSpan.FromMinutes(30), false, "http://127.0.0.1:0", dir.Path), jobs, new CycleState())
 		{
-			OnScanSucceeded = () => successes++
+			OnScanSucceeded = _ => successes++
 		};
 		using var cts = new CancellationTokenSource();
 		var run = scheduler.RunAsync(cts.Token);
-		await Eventually(() => scheduler.TryRequestRun(RunKind.Scan, ["a", "b"]));
+		await Eventually(() => scheduler.TryRequestRun(RunKind.Scan, new ScanSelection(["a", "b"], null)));
 		await Eventually(() => subsets.Count == 1);
 		cts.Cancel();
 		await run;

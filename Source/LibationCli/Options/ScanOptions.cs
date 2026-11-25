@@ -14,6 +14,9 @@ public class ScanOptions : OptionsBase
 	[Value(0, MetaName = "Accounts", HelpText = "Optional: user ID or nicknames of accounts to scan.", Required = false)]
 	public IEnumerable<string>? AccountNames { get; set; }
 
+	[Option("locale", HelpText = "Optional: only scan accounts in this marketplace, such as us or uk.")]
+	public string? Locale { get; set; }
+
 	protected override async Task ProcessAsync()
 	{
 		var accounts = getAccounts();
@@ -45,7 +48,9 @@ public class ScanOptions : OptionsBase
 	private Account[] getAccounts()
 	{
 		using var persister = AudibleApiStorage.GetAccountsSettingsPersister();
-		var allAccounts = persister.AccountsSettings.GetAll().ToArray();
+		var allAccounts = persister.AccountsSettings.GetAll()
+			.Where(a => string.IsNullOrWhiteSpace(Locale) || string.Equals(a.Locale?.Name, Locale.Trim(), StringComparison.OrdinalIgnoreCase))
+			.ToArray();
 
 		if (AccountNames?.Any() is not true)
 			return allAccounts;

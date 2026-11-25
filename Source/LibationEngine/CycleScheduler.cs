@@ -18,7 +18,7 @@ public sealed class CycleScheduler
 	private readonly object runGate = new();
 	private TaskCompletionSource? wake;
 	private RunKind? requested;
-	private IReadOnlyList<string>? requestedAccounts;
+	private ScanSelection? requestedAccounts;
 	private long successTs;
 	private int liberateRc;
 
@@ -40,17 +40,17 @@ public sealed class CycleScheduler
 	public EventBroadcaster Events { get; }
 
 	/// <summary>Raised after a scan that exits 0.</summary>
-	public Action? OnScanSucceeded { get; set; }
+	public Action<ScanSelection?>? OnScanSucceeded { get; set; }
 
-	/// <summary>Queues an immediate run; false if a job is running or one is already queued. <paramref name="accounts"/> narrows a scan.</summary>
-	public bool TryRequestRun(RunKind kind, IReadOnlyList<string>? accounts = null)
+	/// <summary>Queues an immediate run; false if a job is running or one is already queued. <paramref name="selection"/> narrows a scan.</summary>
+	public bool TryRequestRun(RunKind kind, ScanSelection? selection = null)
 	{
 		lock (runGate)
 		{
 			if (wake is null || requested is not null)
 				return false;
 			requested = kind;
-			requestedAccounts = kind == RunKind.Scan ? accounts : null;
+			requestedAccounts = kind == RunKind.Scan ? selection : null;
 			wake.TrySetResult();
 			return true;
 		}
@@ -132,7 +132,7 @@ public sealed class CycleScheduler
 		}
 	}
 
-	private IReadOnlyList<string>? TakeRequestedAccounts()
+	private ScanSelection? TakeRequestedAccounts()
 	{
 		lock (runGate)
 		{
@@ -168,28 +168,28 @@ public sealed class CycleScheduler
 		}
 	}
 
-	private async Task<int> ScanAsync(CancellationToken ct, IReadOnlyList<string>? accounts = null)
+	private async Task<int> ScanAsync(CancellationToken ct, ScanSelection? selection = null)
 	{
 		SetState(DaemonState.Scanning);
 		Events.Publish(new ScanStarted());
-		var scanRc = accounts is not null && jobs.ScanAccounts is { } subset
-			? await RunJob("scan", token => subset(accounts, token), ct)
+		var scanRc = selection is not null && jobs.ScanAccounts is { } subset
+			? await RunJob("scan", token => subset(selection, token), ct)
 			: await RunJob("scan", jobs.Scan, ct);
 		var now = time.GetUtcNow();
 		state.RecordScan(now, scanRc);
 		if (scanRc == 0)
 		{
 			successTs = now.ToUnixTimeSeconds();
-			OnScanSucceeded?.Invoke();
+			OnScanSucceeded?.Invoke(jobs.ScanAccounts is null ? null : selection);
 		}
 		Events.Publish(new ScanFinished(scanRc));
 		return scanRc;
 	}
 
-	private async Task RunScanOnlyAsync(CancellationToken ct, IReadOnlyList<string>? accounts)
+	private async Task RunScanOnlyAsync(CancellationToken ct, ScanSelection? selection)
 	{
 		ImportAccounts();
-		var scanRc = await ScanAsync(ct, accounts);
+		var scanRc = await ScanAsync(ct, selection);
 		SetState(DaemonState.Idle);
 		WriteMetrics(time.GetUtcNow().ToUnixTimeSeconds(), scanRc);
 	}

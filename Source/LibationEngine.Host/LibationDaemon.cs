@@ -54,7 +54,8 @@ public static class LibationDaemon
 		var state = new CycleState();
 		var scheduler = new CycleScheduler(options, jobs, state, time);
 		using var authMonitor = new AccountAuthMonitor(scheduler.Events);
-		scheduler.OnScanSucceeded = authMonitor.ClearAll;
+		var accountData = data ?? new DbEngineData();
+		scheduler.OnScanSucceeded = selection => authMonitor.ScanSucceeded(selection, accountData.GetAccounts);
 		using var loginSessions = logins ?? new LoginSessions(new AudibleLoginBackend());
 		_ = new QueueEventPublisher(queue, scheduler.Events, time);
 		await using var host = options.Once ? null : DaemonHost.Build(options, state, scheduler, queue, data, apiToken, jobs.CreateBookJob, authMonitor, loginSessions);

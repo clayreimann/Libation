@@ -1,3 +1,4 @@
+using LibationEngine.Contracts;
 namespace LibationEngine;
 
 public sealed record DaemonOptions(
@@ -21,6 +22,15 @@ public sealed record DaemonJobs(
 	/// <summary>Builds the job for one book by ASIN, or null when the book is not in the library.</summary>
 	public Func<string, LiberationJob?>? CreateBookJob { get; init; }
 
-	/// <summary>Scans only the named accounts (login id or name); when null a subset request scans everything.</summary>
-	public Func<IReadOnlyList<string>, CancellationToken, Task<int>>? ScanAccounts { get; init; }
+	/// <summary>Scans only the selected accounts; when null a subset request scans everything.</summary>
+	public Func<ScanSelection, CancellationToken, Task<int>>? ScanAccounts { get; init; }
+}
+
+/// <summary>Accounts by login id or name, narrowed to one marketplace by Locale; either may be null but not both.</summary>
+public sealed record ScanSelection(IReadOnlyList<string>? Accounts, string? Locale)
+{
+	public bool Matches(AccountDto account)
+		=> (Locale is null || string.Equals(account.Locale, Locale, StringComparison.OrdinalIgnoreCase))
+			&& (Accounts is null || Accounts.Any(n => string.Equals(account.AccountId, n, StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(account.AccountName, n, StringComparison.OrdinalIgnoreCase)));
 }

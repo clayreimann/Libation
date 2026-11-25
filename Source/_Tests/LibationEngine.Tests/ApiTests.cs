@@ -236,6 +236,7 @@ public class ApiTests
 		public readonly string Base;
 		public int ScanCalls, LiberateCalls;
 		public readonly List<string> ScanSubsets = [];
+		public readonly List<string?> ScanLocales = [];
 		public volatile TaskCompletionSource? Gate;
 		public readonly SemaphoreSlim ScanEntered = new(0);
 
@@ -276,9 +277,10 @@ public class ApiTests
 				_ => Task.FromResult(0))
 			{
 				CreateBookJob = asin => asin == "B000000001" ? Job(asin) : null,
-				ScanAccounts = (accounts, _) =>
+				ScanAccounts = (selection, _) =>
 				{
-					ScanSubsets.Add(string.Join(',', accounts));
+					ScanSubsets.Add(string.Join(',', selection.Accounts ?? []));
+					ScanLocales.Add(selection.Locale);
 					return Task.FromResult(0);
 				}
 			};
@@ -633,6 +635,34 @@ public class ApiTests
 		await Eventually(() => Task.FromResult(h.ScanSubsets.Count == 1));
 		Assert.AreEqual("B@example.com,Main", h.ScanSubsets[0]);
 		Assert.AreEqual(scansBefore, h.ScanCalls);
+	}
+
+	[TestMethod]
+	public async Task Scan_can_target_one_marketplace_of_an_account_id_that_exists_in_several()
+	{
+		await using var h = new Harness(api: true);
+		h.Data.Accounts.Add(new("a@example.com", "Main UK", "uk", true, AuthStates.SignedIn, CredentialKinds.Modern, []));
+		await h.WaitIdleAfterFirstCycle();
+
+		async Task<HttpResponseMessage> Scan(string json) => await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/scan", json));
+
+		var nowhere = await Scan("""{"accounts":["a@example.com"],"locale":"de"}""");
+		Assert.AreEqual(HttpStatusCode.BadRequest, nowhere.StatusCode);
+		Assert.Contains("marketplace de", await nowhere.Content.ReadAsStringAsync());
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await Scan("""{"locale":"de"}""")).StatusCode);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await Scan("""{"locale":" "}""")).StatusCode);
+		Assert.IsEmpty(h.ScanSubsets);
+
+		Assert.AreEqual(HttpStatusCode.Accepted, (await Scan("""{"accounts":["a@example.com"],"locale":"UK"}""")).StatusCode);
+		await Eventually(() => Task.FromResult(h.ScanSubsets.Count == 1));
+		await h.WaitIdleAfterFirstCycle();
+		Assert.AreEqual("a@example.com", h.ScanSubsets[0]);
+		Assert.AreEqual("UK", h.ScanLocales[0]);
+
+		Assert.AreEqual(HttpStatusCode.Accepted, (await Scan("""{"locale":"uk"}""")).StatusCode);
+		await Eventually(() => Task.FromResult(h.ScanSubsets.Count == 2));
+		Assert.AreEqual("", h.ScanSubsets[1]);
+		Assert.AreEqual("uk", h.ScanLocales[1]);
 	}
 
 	[TestMethod]

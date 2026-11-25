@@ -33,7 +33,8 @@ public sealed record AccountDto(
 
 public sealed record AccountPatchRequest(string? AccountName, bool? LibraryScan);
 
-public sealed record ScanRequest(IReadOnlyList<string>? Accounts);
+/// <summary>Accounts are ids or names; Locale narrows them (or all accounts) to one marketplace, for an id that exists in several.</summary>
+public sealed record ScanRequest(IReadOnlyList<string>? Accounts, string? Locale = null);
 
 public sealed record SeriesDto(string Name, string? Order, float Index, string Asin);
 

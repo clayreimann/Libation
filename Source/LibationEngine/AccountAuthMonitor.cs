@@ -29,6 +29,21 @@ public sealed class AccountAuthMonitor : IDisposable
 		events.Publish(new AccountSignedIn(accountId, locale));
 	}
 
+	/// <summary>Like <see cref="ClearAll"/>, but only for flagged accounts the scan covered.</summary>
+	public void ScanSucceeded(ScanSelection? selection, Func<IReadOnlyList<AccountDto>> accounts)
+	{
+		if (selection is null)
+		{
+			ClearAll();
+			return;
+		}
+		foreach (var account in accounts().Where(selection.Matches))
+			if (flagged.TryGetValue(account.AccountId, out var locale)
+				&& (locale is null || string.Equals(locale, account.Locale, StringComparison.OrdinalIgnoreCase))
+				&& flagged.TryRemove(account.AccountId, out _))
+				events.Publish(new AccountSignedIn(account.AccountId, account.Locale));
+	}
+
 	/// <summary>Unflags every account, publishing <see cref="AccountSignedIn"/> for each.</summary>
 	public void ClearAll()
 	{
@@ -36,6 +51,8 @@ public sealed class AccountAuthMonitor : IDisposable
 			if (flagged.TryRemove(id, out _))
 				events.Publish(new AccountSignedIn(id, locale));
 	}
+
+	internal void Flag(string accountId, string? locale) => flagged[accountId] = locale;
 
 	public void Dispose() => ApiExtended.AuthenticationRequired -= OnRequired;
 

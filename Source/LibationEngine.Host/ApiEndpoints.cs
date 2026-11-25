@@ -186,8 +186,8 @@ public static class ApiEndpoints
 				(int)options.Interval.TotalSeconds, LibationScaffolding.BuildVersion?.ToString(), NeedingLogin(), !string.IsNullOrWhiteSpace(options.AccountsImportPath));
 		}
 
-		IResult Run(RunKind kind, IReadOnlyList<string>? accounts = null)
-			=> scheduler.TryRequestRun(kind, accounts)
+		IResult Run(RunKind kind, ScanSelection? selection = null)
+			=> scheduler.TryRequestRun(kind, selection)
 				? Results.Json(Status(), statusCode: StatusCodes.Status202Accepted)
 				: Results.Json(new ErrorDto("A job is already running or queued."), statusCode: StatusCodes.Status409Conflict);
 
@@ -708,18 +708,23 @@ public static class ApiEndpoints
 
 		api.MapPost("/scan", (ScanRequest? body) =>
 		{
-			if (body?.Accounts is not { } names)
+			if (body?.Accounts is null && body?.Locale is null)
 				return Run(RunKind.Scan);
-			if (names.Count == 0 || names.Any(string.IsNullOrWhiteSpace))
+			if (body.Accounts is { } listed && (listed.Count == 0 || listed.Any(string.IsNullOrWhiteSpace)))
 				return Error("accounts must name at least one account; omit it to scan all.", StatusCodes.Status400BadRequest);
+			if (body.Locale is not null && string.IsNullOrWhiteSpace(body.Locale))
+				return Error("locale must not be blank.", StatusCodes.Status400BadRequest);
 
+			var locale = body.Locale?.Trim();
 			var known = data.GetAccounts();
-			var unknown = names.Where(n => !known.Any(a => string.Equals(a.AccountId, n.Trim(), StringComparison.OrdinalIgnoreCase)
-				|| string.Equals(a.AccountName, n.Trim(), StringComparison.OrdinalIgnoreCase))).ToList();
-			return unknown.Count > 0
-				? Error($"No such account: {string.Join(", ", unknown)}.", StatusCodes.Status400BadRequest)
-				: Run(RunKind.Scan, names.Select(n => n.Trim()).ToList());
-		}).WithSummary("Runs a library scan now, without liberating. An optional body {\"accounts\":[\"id or name\"]} scans only those accounts, as the CLI's scan does; no body scans all. 202, 400 bad body or unknown account, or 409 if busy.")
+			var unknown = (body.Accounts?.Select(n => n.Trim()) ?? [""])
+				.Where(n => !known.Any(a => new ScanSelection(n.Length == 0 ? null : [n], locale).Matches(a))).ToList();
+			if (unknown.Count > 0)
+				return Error(locale is null
+					? $"No such account: {string.Join(", ", unknown)}."
+					: unknown[0].Length == 0 ? $"No account in marketplace {locale}." : $"No such account in marketplace {locale}: {string.Join(", ", unknown)}.", StatusCodes.Status400BadRequest);
+			return Run(RunKind.Scan, new ScanSelection(body.Accounts?.Select(n => n.Trim()).ToList(), locale));
+		}).WithSummary("Runs a library scan now, without liberating. An optional body {\"accounts\":[\"id or name\"],\"locale\":\"uk\"} scans only those accounts, as the CLI's scan does; locale limits the scan to one marketplace, for an id that exists in several, and alone scans every account in it. No body scans all. 202, 400 bad body or unknown account or marketplace, or 409 if busy.")
 			.WithName("scan").WithTags("daemon")
 			.Produces<StatusDto>(StatusCodes.Status202Accepted)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
