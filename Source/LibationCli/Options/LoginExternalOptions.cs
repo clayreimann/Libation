@@ -4,7 +4,9 @@ using AudibleApi.Common;
 using AudibleUtilities;
 using CommandLine;
 using DataLayer;
+using LibationEngine;
 using LibationFileManager;
+using LoginRequiredReason = LibationEngine.ExternalLoginFlow.LoginRequiredReason;
 using System;
 using System.Linq;
 using System.Net;
@@ -30,38 +32,8 @@ internal class LoginExternalOptions : OptionsBase
 	[Option('f', "force", Required = false, HelpText = "Force re-authentication even if the account is already authenticated.")]
 	public bool Force { get; set; }
 
-	internal enum LoginRequiredReason
-	{
-		NotAuthenticated,
-		RequiresReRegistration,
-		ObsoleteDeviceRegistration,
-		MissingRequiredTokens,
-		Forced,
-		AlreadyAuthenticated
-	}
-
-	internal static LoginRequiredReason EvaluateLoginRequirement(
-		Account? account,
-		ApiAuthenticationMethod requiredAuth,
-		bool force)
-	{
-		if (account?.RequiresReRegistration == true)
-			return LoginRequiredReason.RequiresReRegistration;
-
-		if (account?.IdentityTokens?.IsValid != true)
-			return LoginRequiredReason.NotAuthenticated;
-
-		if (account.HasObsoleteDeviceRegistration())
-			return LoginRequiredReason.ObsoleteDeviceRegistration;
-
-		if (!account.IdentityTokens.HasRequiredTokens(requiredAuth))
-			return LoginRequiredReason.MissingRequiredTokens;
-
-		if (force)
-			return LoginRequiredReason.Forced;
-
-		return LoginRequiredReason.AlreadyAuthenticated;
-	}
+	internal static LoginRequiredReason EvaluateLoginRequirement(Account? account, ApiAuthenticationMethod requiredAuth, bool force)
+		=> ExternalLoginFlow.EvaluateLoginRequirement(account, requiredAuth, force);
 
 	protected override async Task ProcessAsync()
 	{
@@ -96,63 +68,33 @@ internal class LoginExternalOptions : OptionsBase
 			return;
 		}
 
-		string jsonPath;
-		LoginRequiredReason requirement;
-		ApiAuthenticationMethod requiredAuth;
-		using (var persister = AudibleApiStorage.GetAccountsSettingsPersister())
+		var plan = ExternalLoginFlow.Begin(accountId, locale, registrationProfile, !string.IsNullOrWhiteSpace(DeviceRegistration), Force);
+		switch (plan.Reason)
 		{
-			// Persist by canonical locale name ("germany"), not the user input ("de").
-			var account = persister.AccountsSettings.Upsert(accountId, locale.Name);
-			jsonPath = account.GetIdentityTokensJsonPath();
-
-			requiredAuth = AccountCredentialStatus.RequiredAuthenticationMethods;
-			requirement = EvaluateLoginRequirement(account, requiredAuth, Force);
-
-			switch (requirement)
-			{
-				case LoginRequiredReason.AlreadyAuthenticated:
+			case LoginRequiredReason.AlreadyAuthenticated:
+				Console.WriteLine(
+					$"Account '{accountId}' ({locale.Name}) is already authenticated. No browser login needed.");
+				if (!string.IsNullOrWhiteSpace(DeviceRegistration))
 					Console.WriteLine(
-						$"Account '{accountId}' ({locale.Name}) is already authenticated. No browser login needed.");
-					if (!string.IsNullOrWhiteSpace(DeviceRegistration))
-						Console.WriteLine(
-							"Device registration only applies to a new sign-in. Remove the account first, then run login-external again.");
-					return;
+						"Device registration only applies to a new sign-in. Remove the account first, then run login-external again.");
+				return;
 
-				case LoginRequiredReason.RequiresReRegistration:
-					Console.WriteLine($"Account '{accountId}' ({locale.Name}) is marked as requiring re-registration. Proceeding with sign-in...");
-					account.IdentityTokens?.Invalidate();
-					if (string.IsNullOrWhiteSpace(DeviceRegistration))
-					{
-						Configuration.Instance.UseWidevine = true;
-						Configuration.Instance.DeviceRegistrationKind = DeviceRegistrationKind.CurrentAndroid;
-						registrationProfile = DeviceRegistrationProfile.CurrentAndroid;
-					}
-					break;
+			case LoginRequiredReason.RequiresReRegistration:
+				Console.WriteLine($"Account '{accountId}' ({locale.Name}) is marked as requiring re-registration. Proceeding with sign-in...");
+				break;
 
-				case LoginRequiredReason.ObsoleteDeviceRegistration:
-					Console.WriteLine($"Account '{accountId}' ({locale.Name}) has an obsolete or legacy device registration. Proceeding with sign-in...");
-					account.IdentityTokens?.Invalidate();
-					if (string.IsNullOrWhiteSpace(DeviceRegistration))
-					{
-						Configuration.Instance.UseWidevine = true;
-						Configuration.Instance.DeviceRegistrationKind = DeviceRegistrationKind.CurrentAndroid;
-						registrationProfile = DeviceRegistrationProfile.CurrentAndroid;
-					}
-					break;
+			case LoginRequiredReason.ObsoleteDeviceRegistration:
+				Console.WriteLine($"Account '{accountId}' ({locale.Name}) has an obsolete or legacy device registration. Proceeding with sign-in...");
+				break;
 
-				case LoginRequiredReason.MissingRequiredTokens:
-					Console.WriteLine(
-						$"Account '{accountId}' ({locale.Name}) is missing credentials for modern authentication ({requiredAuth}). Starting sign-in to retrieve missing tokens...");
-					break;
+			case LoginRequiredReason.MissingRequiredTokens:
+				Console.WriteLine(
+					$"Account '{accountId}' ({locale.Name}) is missing credentials for modern authentication ({plan.RequiredAuth}). Starting sign-in to retrieve missing tokens...");
+				break;
 
-				case LoginRequiredReason.Forced:
-					Console.WriteLine($"Forcing re-authentication for account '{accountId}' ({locale.Name})...");
-					break;
-
-				case LoginRequiredReason.NotAuthenticated:
-				default:
-					break;
-			}
+			case LoginRequiredReason.Forced:
+				Console.WriteLine($"Forcing re-authentication for account '{accountId}' ({locale.Name})...");
+				break;
 		}
 
 		var presetResponse = ResponseUrl?.Trim();
@@ -164,26 +106,10 @@ internal class LoginExternalOptions : OptionsBase
 			return;
 		}
 
-		var forceLogin = requirement is LoginRequiredReason.Forced or LoginRequiredReason.MissingRequiredTokens or LoginRequiredReason.RequiresReRegistration or LoginRequiredReason.ObsoleteDeviceRegistration;
 		var loginExternal = new CliLoginExternal(presetResponse);
 		try
 		{
-			_ = await EzApiCreator.GetApiAsync(
-				loginExternal,
-				locale,
-				AudibleApiStorage.AccountsSettingsFile,
-				jsonPath,
-				registrationProfile,
-				forceLogin: forceLogin,
-				requiredAuthMethods: requiredAuth);
-
-			using var persister = AudibleApiStorage.GetAccountsSettingsPersister();
-			var account = persister.AccountsSettings.GetAccount(accountId, locale.Name);
-			if (account is not null)
-				account.RequiresReRegistration = false;
-
-			if (forceLogin)
-				DownloadAttemptFailureStore.ClearForAccount(accountId, DataLayer.DownloadFailureKind.LicenseDenied);
+			await ExternalLoginFlow.AuthenticateAsync(accountId, locale, plan, loginExternal);
 		}
 		catch (Exception ex)
 		{
@@ -195,25 +121,9 @@ internal class LoginExternalOptions : OptionsBase
 		Console.WriteLine($"Successfully authenticated account '{accountId}' ({locale.Name}).");
 	}
 
-	/// <summary>
-	/// Resolve by locale name or country code. Prefers modern (non-pre-amazon) locales for country codes.
-	/// Works with older AudibleApi builds where <see cref="Localization.Get"/> only matched names.
-	/// </summary>
-	internal static AudibleApi.Locale ResolveLocale(string localeInput)
-	{
-		var fromGet = Localization.Get(localeInput);
-		if (!IsEmptyLocale(fromGet))
-			return fromGet;
+	internal static AudibleApi.Locale ResolveLocale(string localeInput) => ExternalLoginFlow.ResolveLocale(localeInput);
 
-		return Localization.Locales
-			.Where(l => l.CountryCode.Equals(localeInput, StringComparison.OrdinalIgnoreCase)
-				|| l.Name.Equals(localeInput, StringComparison.OrdinalIgnoreCase))
-			.OrderBy(l => l.WithUsername)
-			.FirstOrDefault()
-			?? AudibleApi.Locale.Empty;
-	}
-
-	internal static bool IsEmptyLocale(Locale locale) => string.IsNullOrEmpty(locale.CountryCode);
+	internal static bool IsEmptyLocale(Locale locale) => ExternalLoginFlow.IsEmptyLocale(locale);
 
 	internal bool TryResolveRegistrationProfile(out DeviceRegistrationProfile profile, out string error)
 	{

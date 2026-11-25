@@ -3,6 +3,7 @@ using AudibleApi.Authorization;
 using AudibleApi.Common;
 using AudibleApi.Cryptography;
 using AudibleUtilities;
+using LibationEngine;
 using LibationFileManager;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
@@ -68,17 +69,17 @@ BxlXqPnQ4mG66oqSFQgDEmFdMhRb2of6xL1gYYL62C80G2T7QtmPfSab
 	public void EvaluateLoginRequirement_null_or_invalid_tokens_returns_NotAuthenticated()
 	{
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.NotAuthenticated,
+			ExternalLoginFlow.LoginRequiredReason.NotAuthenticated,
 			LoginExternalOptions.EvaluateLoginRequirement(null, ApiAuthenticationMethod.AdpSignature, force: false));
 
 		var account = new Account("test@example.com");
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.NotAuthenticated,
+			ExternalLoginFlow.LoginRequiredReason.NotAuthenticated,
 			LoginExternalOptions.EvaluateLoginRequirement(account, ApiAuthenticationMethod.AdpSignature, force: false));
 
 		account.IdentityTokens = new Identity(Localization.Get("us"));
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.NotAuthenticated,
+			ExternalLoginFlow.LoginRequiredReason.NotAuthenticated,
 			LoginExternalOptions.EvaluateLoginRequirement(account, ApiAuthenticationMethod.AdpSignature, force: false));
 	}
 
@@ -91,7 +92,7 @@ BxlXqPnQ4mG66oqSFQgDEmFdMhRb2of6xL1gYYL62C80G2T7QtmPfSab
 		};
 
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.AlreadyAuthenticated,
+			ExternalLoginFlow.LoginRequiredReason.AlreadyAuthenticated,
 			LoginExternalOptions.EvaluateLoginRequirement(account, ApiAuthenticationMethod.AdpSignature | ApiAuthenticationMethod.BearerToken, force: false));
 	}
 
@@ -104,7 +105,7 @@ BxlXqPnQ4mG66oqSFQgDEmFdMhRb2of6xL1gYYL62C80G2T7QtmPfSab
 		};
 
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.Forced,
+			ExternalLoginFlow.LoginRequiredReason.Forced,
 			LoginExternalOptions.EvaluateLoginRequirement(account, ApiAuthenticationMethod.AdpSignature | ApiAuthenticationMethod.BearerToken, force: true));
 	}
 
@@ -119,12 +120,12 @@ BxlXqPnQ4mG66oqSFQgDEmFdMhRb2of6xL1gYYL62C80G2T7QtmPfSab
 		// When an additional or missing method is required but missing
 		var unavailableMethod = (ApiAuthenticationMethod)8;
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.MissingRequiredTokens,
+			ExternalLoginFlow.LoginRequiredReason.MissingRequiredTokens,
 			LoginExternalOptions.EvaluateLoginRequirement(account, unavailableMethod, force: false));
 
 		// Missing token takes precedence even if force is true
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.MissingRequiredTokens,
+			ExternalLoginFlow.LoginRequiredReason.MissingRequiredTokens,
 			LoginExternalOptions.EvaluateLoginRequirement(account, ApiAuthenticationMethod.AdpSignature | unavailableMethod, force: true));
 	}
 
@@ -138,12 +139,12 @@ BxlXqPnQ4mG66oqSFQgDEmFdMhRb2of6xL1gYYL62C80G2T7QtmPfSab
 		};
 
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.RequiresReRegistration,
+			ExternalLoginFlow.LoginRequiredReason.RequiresReRegistration,
 			LoginExternalOptions.EvaluateLoginRequirement(account, ApiAuthenticationMethod.AdpSignature | ApiAuthenticationMethod.BearerToken, force: false));
 
 		// Takes precedence over force flag
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.RequiresReRegistration,
+			ExternalLoginFlow.LoginRequiredReason.RequiresReRegistration,
 			LoginExternalOptions.EvaluateLoginRequirement(account, ApiAuthenticationMethod.AdpSignature | ApiAuthenticationMethod.BearerToken, force: true));
 	}
 
@@ -157,12 +158,12 @@ BxlXqPnQ4mG66oqSFQgDEmFdMhRb2of6xL1gYYL62C80G2T7QtmPfSab
 		};
 
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.ObsoleteDeviceRegistration,
+			ExternalLoginFlow.LoginRequiredReason.ObsoleteDeviceRegistration,
 			LoginExternalOptions.EvaluateLoginRequirement(account, ApiAuthenticationMethod.AdpSignature | ApiAuthenticationMethod.BearerToken, force: false));
 
 		// Takes precedence over force flag
 		Assert.AreEqual(
-			LoginExternalOptions.LoginRequiredReason.ObsoleteDeviceRegistration,
+			ExternalLoginFlow.LoginRequiredReason.ObsoleteDeviceRegistration,
 			LoginExternalOptions.EvaluateLoginRequirement(account, ApiAuthenticationMethod.AdpSignature | ApiAuthenticationMethod.BearerToken, force: true));
 	}
 
