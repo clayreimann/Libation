@@ -1,0 +1,12 @@
+**/bin
+**/obj
+**/node_modules
+**/TestResults
+.git
+.github
+.vs
+.vscode
+.idea
+.claude
+/*.md
+docs

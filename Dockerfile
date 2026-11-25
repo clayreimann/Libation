@@ -13,6 +13,23 @@ RUN dotnet publish \
     -p:PublishReadyToRun=true \
     -p:SelfContained=true
 
+FROM mcr.microsoft.com/dotnet/runtime:10.0 AS libationd
+ARG USER_UID=1001
+ARG USER_GID=1001
+
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 LIBATION_FILES_DIR=/config LIBATION_BOOKS_DIR=/data
+
+RUN mkdir -m777 /config /data
+
+COPY --from=build /Source/bin/Publish/Linux-chardonnay /libation
+
+USER ${USER_UID}:${USER_GID}
+
+EXPOSE 8080
+HEALTHCHECK CMD ["/libation/LibationCli","health"]
+ENTRYPOINT ["/libation/LibationCli"]
+CMD ["serve"]
+
 FROM mcr.microsoft.com/dotnet/runtime:10.0
 ARG USER_UID=1001
 ARG USER_GID=1001
@@ -35,7 +52,7 @@ RUN apt-get update && apt-get -y upgrade && \
     mkdir -m777 ${LIBATION_CONFIG_INTERNAL} ${LIBATION_BOOKS_DIR}
 
 COPY --from=build /Source/bin/Publish/Linux-chardonnay /libation
-COPY Docker/* /libation
+COPY Docker/liberate.sh Docker/appsettings.json /libation/
 
 RUN ln -s /libation/LibationCli /usr/local/bin/LibationCli
 

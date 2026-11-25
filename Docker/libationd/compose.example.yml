@@ -1,0 +1,19 @@
+services:
+  libationd:
+    image: ghcr.io/clayreimann/libation:libationd
+    command: ["serve", "--reconcile-on-start"]
+    restart: unless-stopped
+    environment:
+      LIBATION_MASTER_KEY_FILE: /secrets/libation-master.key
+      LIBATION_ACCOUNTS_IMPORT: /secrets/AccountsSettings.json
+      LIBATION_METRICS_FILE: /metrics/libation.prom
+      SLEEP_TIME: 1h
+    volumes:
+      - ./config:/config
+      - ./secrets:/secrets:ro
+      - ./metrics:/metrics
+      - ./data:/data
+    # /health binds to loopback by default. To reach it from the host (status only; no auth):
+    # command: ["serve", "--reconcile-on-start", "--listen", "http://0.0.0.0:8080"]
+    # ports:
+    #   - "8080:8080"
