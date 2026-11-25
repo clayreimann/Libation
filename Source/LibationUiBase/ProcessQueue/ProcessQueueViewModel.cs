@@ -1,6 +1,7 @@
 using ApplicationServices;
 using DataLayer;
 using FileLiberator;
+using LibationEngine;
 using LibationFileManager;
 using LibationUiBase.Forms;
 using LibationUiBase;
@@ -20,38 +21,35 @@ public record LogEntry(DateTime LogDate, string LogMessage)
 
 public class ProcessQueueViewModel : ReactiveObject
 {
-	/// <summary>
-	/// How often a queue paused on the daily download limit re-checks. Short and fixed: never a delay computed
-	/// from when capacity is expected, so a change of setting or the window rolling over is picked up promptly.
-	/// </summary>
-	private static readonly TimeSpan DailyLimitPollInterval = TimeSpan.FromSeconds(15);
-
 	public ObservableCollection<LogEntry> LogEntries { get; } = new();
-	public TrackedQueue<ProcessBookViewModel> Queue { get; } = new();
-	private readonly BadBookSessionContext _badBookSession = new();
+	private readonly LiberationQueue _engine;
+	public ProcessBookQueue Queue { get; }
 
-	/// <summary>
-	/// Internal rather than private so a test can stand in for a user having answered the bad book
-	/// dialog, which the dispatch tests otherwise never reach - their books finish on command instead
-	/// of failing their way into it.
-	/// </summary>
-	internal BadBookSessionContext BadBookSession => _badBookSession;
-	public Task? QueueRunner { get; private set; }
-	public bool Running => !QueueRunner?.IsCompleted ?? false;
+	/// <summary>Internal so a test can stand in for a user having answered the bad book dialog.</summary>
+	internal BadBookSessionContext BadBookSession => _engine.BadBookSession;
+	public Task? QueueRunner => _engine.Runner;
+	public bool Running => _engine.Running;
 
-	private bool dailyLimitMessageShownThisRun;
-
-	/// <summary>
-	/// The single call the dispatch loop makes into a book. Replaced in tests by a fake that finishes
-	/// on command, which is what lets the loop itself - the capacity cap, the enqueue signal, the
-	/// abort drain - be driven without downloading anything. A seam rather than a refactor: the loop
-	/// is unchanged and this is the only line that knows how a book is processed.
-	/// </summary>
+	/// <summary>The single call the dispatch loop makes into a book; replaced in tests by a fake that finishes on command.</summary>
 	internal Func<ProcessBookViewModel, Task<ProcessBookResult>> ProcessBookHandler { get; set; }
 		= book => book.ProcessOneAsync();
 
+	internal TimeProvider Clock { get => _engine.Clock; set => _engine.Clock = value; }
+
+	internal Func<DateTimeOffset, IReadOnlyList<DownloadHistoryEntry>> DownloadHistory
+	{
+		get => _engine.DownloadHistory;
+		set => _engine.DownloadHistory = value;
+	}
+
+	private Timer? _runningTimeTimer;
+
 	public ProcessQueueViewModel()
 	{
+		_engine = new LiberationQueue(GuiLiberationInteraction.Instance, () => MaxConcurrentDownloads);
+		Queue = new ProcessBookQueue(_engine.Jobs);
+		_engine.RunJob = job => ProcessBookHandler(Queue.For(job));
+
 		// The queue is mutated from book threads and read by index from the UI thread, so its
 		// notifications have to arrive on the UI thread in the order the queue actually changed.
 		// alwaysInvoke: true is the part that matters - it makes BeginInvoke post unconditionally.
@@ -63,11 +61,42 @@ public class ProcessQueueViewModel : ReactiveObject
 
 		Queue.QueuedCountChanged += Queue_QueuedCountChanged;
 		Queue.CompletedCountChanged += Queue_CompletedCountChanged;
+		_engine.LogWritten += (_, message) => AddQueueLogEntry(message);
+		_engine.JobStarted += (_, job) => ProcessStart?.Invoke(this, Queue.For(job));
+		_engine.JobEnded += (_, job) => ProcessEnd?.Invoke(this, Queue.For(job));
+		_engine.RunStarted += Engine_RunStarted;
+		_engine.RunCompleted += Engine_RunCompleted;
+		_engine.RunEnded += Engine_RunEnded;
+
 		SpeedLimit = Configuration.Instance.DownloadSpeedLimit / 1024m / 1024;
 		// Assigned to the field, not through the property: constructing the view model must not write
 		// the setting back, or opening the queue on a smaller machine would overwrite what the user chose.
 		_maxConcurrentDownloads = Configuration.Instance.MaxConcurrentDownloads;
 		AutoScrollQueue = Configuration.Instance.AutoScrollQueue;
+	}
+
+	private void Engine_RunStarted(object? sender, EventArgs e)
+	{
+		RunningTime = string.Empty;
+		ProgressBarVisible = true;
+		var startingTime = DateTime.Now;
+		_runningTimeTimer = new Timer(_ => RunningTime = timeToStr(DateTime.Now - startingTime), null, 0, 500);
+
+		static string timeToStr(TimeSpan time)
+			=> time.TotalHours < 1 ? $"{time:mm\\:ss}"
+			: $"{time.TotalHours:F0}:{time:mm\\:ss}";
+	}
+
+	private void Engine_RunCompleted(object? sender, EventArgs e)
+	{
+		Queue_CompletedCountChanged(this, 0);
+		ProgressBarVisible = false;
+	}
+
+	private void Engine_RunEnded(object? sender, EventArgs e)
+	{
+		Interlocked.Exchange(ref _runningTimeTimer, null)?.Dispose();
+		DiskSpaceBackupPreflight.ResetBulkPreflightForQueueRun();
 	}
 
 	public int CompletedCount { get => field; private set { RaiseAndSetIfChanged(ref field, value); RaisePropertyChanged(nameof(AnyCompleted)); } }
@@ -93,22 +122,18 @@ public class ProcessQueueViewModel : ReactiveObject
 	}
 	private int _maxConcurrentDownloads;
 
+
 	/// <summary>
 	/// What this machine can usefully manage. Overridable so that tests of the dispatch loop pin it
-	/// instead of inheriting the host's core count - otherwise a test asking for three books at once
-	/// passes on a developer's machine and fails on a two-core CI runner, having tested the runner
-	/// rather than the loop.
+	/// instead of inheriting the host's core count.
 	/// </summary>
-	internal int? MachineCeilingOverride { get; set; }
-
-	private int MachineCeiling => MachineCeilingOverride ?? Configuration.MaxAllowedConcurrentDownloads;
+	internal int? MachineCeilingOverride { get => _engine.MachineCeilingOverride; set => _engine.MachineCeilingOverride = value; }
 
 	/// <summary>
 	/// How many books actually run at once: what the user asked for, held down to what this machine
-	/// can usefully manage. Applied here, at the point of use, so the stored setting is left alone.
+	/// can usefully manage. Applied at the point of use, so the stored setting is left alone.
 	/// </summary>
-	private int EffectiveConcurrentDownloads
-		=> Math.Clamp(MaxConcurrentDownloads, Configuration.MinConcurrentDownloads, MachineCeiling);
+	private int EffectiveConcurrentDownloads => _engine.EffectiveConcurrentDownloads;
 	public bool AutoScrollQueue { get => field; set { RaiseAndSetIfChanged(ref field, value); Configuration.Instance.AutoScrollQueue = value; } }
 
 	/// <summary>Exposed so UI controls can bind their spinner bounds rather than hardcoding them.</summary>
@@ -174,10 +199,9 @@ public class ProcessQueueViewModel : ReactiveObject
 				: 0;
 
 			config.DownloadSpeedLimit = (long)(_speedLimit * 1024 * 1024);
-			// Apply to all currently active books. Over a copy, because the speed limit is changed from
-			// the UI thread while book tasks start and finish, which mutates the queue's active list.
-			foreach (var activeBook in Queue.GetActive().OfType<ProcessBookViewModel>())
-				activeBook.Configuration.DownloadSpeedLimit = config.DownloadSpeedLimit;
+			// Over a copy inside the engine, because the speed limit is changed from the UI thread while
+			// book tasks start and finish.
+			_engine.SetSpeedLimit(config.DownloadSpeedLimit);
 
 			SpeedLimitIncrement = _speedLimit > 100 ? 10
 				: _speedLimit > 10 ? 1
@@ -271,7 +295,7 @@ public class ProcessQueueViewModel : ReactiveObject
 		var procs = libraryBooks
 			.Where(e => !IsBookInQueue(e))
 			.Take(maxBooks)
-			.Select(entry => new ProcessBookViewModel(entry, config, _badBookSession).AddSimulateBadBookFailure())
+			.Select(entry => new ProcessBookViewModel(entry, config, _engine.BadBookSession).AddSimulateBadBookFailure())
 			.ToArray();
 
 		if (procs.Length == 0)
@@ -464,7 +488,7 @@ public class ProcessQueueViewModel : ReactiveObject
 		AddToQueue(procs);
 
 		ProcessBookViewModel Create(LibraryBook entry)
-			=> new ProcessBookViewModel(entry, config, _badBookSession).AddDownloadPdf();
+			=> new ProcessBookViewModel(entry, config, _engine.BadBookSession).AddDownloadPdf();
 	}
 
 	private void AddDownloadDecrypt(IList<LibraryBook> entries, Configuration config)
@@ -479,7 +503,7 @@ public class ProcessQueueViewModel : ReactiveObject
 		AddToQueue(procs);
 
 		ProcessBookViewModel Create(LibraryBook entry)
-			=> new ProcessBookViewModel(entry, config, _badBookSession).AddDownloadDecryptBook().AddDownloadPdf().AddUploadToAudiobookshelf();
+			=> new ProcessBookViewModel(entry, config, _engine.BadBookSession).AddDownloadDecryptBook().AddDownloadPdf().AddUploadToAudiobookshelf();
 	}
 
 	private void AddConvertMp3(IList<LibraryBook> entries, Configuration config)
@@ -492,9 +516,13 @@ public class ProcessQueueViewModel : ReactiveObject
 		AddToQueue(procs);
 
 		ProcessBookViewModel Create(LibraryBook entry)
-			=> new ProcessBookViewModel(entry, config, _badBookSession).AddConvertToMp3();
+			=> new ProcessBookViewModel(entry, config, _engine.BadBookSession).AddConvertToMp3();
 	}
 
+	/// <summary>
+	/// Internal rather than private so the dispatch loop can be started from a test with books it
+	/// controls, without going through the queueing dialogs on the way in.
+	/// </summary>
 	/// <summary>
 	/// Internal rather than private so the dispatch loop can be started from a test with books it
 	/// controls, without going through the queueing dialogs on the way in.
@@ -505,151 +533,7 @@ public class ProcessQueueViewModel : ReactiveObject
 			book.LogWritten += ProcessBook_LogWritten;
 
 		Queue.Enqueue(pbook);
-		SignalEnqueued();
-		if (!Running)
-			QueueRunner = Task.Run(QueueLoop);
-	}
-
-	/// <summary>
-	/// Completes when books are added to the queue, so <see cref="QueueLoop"/> can wake on a new
-	/// arrival instead of only on a book finishing.
-	/// </summary>
-	private TaskCompletionSource _enqueueSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-	private Task WaitForEnqueueAsync() => Volatile.Read(ref _enqueueSignal).Task;
-
-	/// <summary>
-	/// Swaps in a fresh signal for the next wait, then completes the old one to release anyone
-	/// already waiting on it.
-	/// </summary>
-	private void SignalEnqueued()
-		=> Interlocked
-			.Exchange(ref _enqueueSignal, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
-			.TrySetResult();
-
-	#endregion
-
-	#region Daily download limit
-
-	private enum DailyLimitGate
-	{
-		/// <summary>The limit does not stop this book right now.</summary>
-		Proceed,
-		/// <summary>This book is limited but something else in the queue is not; try it later.</summary>
-		Defer,
-		/// <summary>The user cancelled the queue while it was waiting.</summary>
-		Cancelled
-	}
-
-	/// <summary>
-	/// Runs immediately before a book downloads, never at queueing time, so the queue keeps its contents and a
-	/// user can raise or turn off the limit mid-run. Every iteration re-reads the setting, re-queries the
-	/// history and re-reads the clock: a queue left alone for days must resume by itself as its oldest
-	/// downloads age out of the rolling window.
-	/// </summary>
-	/// <param name="deferralsSoFar">
-	/// How many books this queue run has already moved to the back for the limit. Compared against the live
-	/// queued count so the rotation cannot continue indefinitely.
-	/// </param>
-	private async Task<DailyLimitGate> WaitForDailyLimitAsync(ProcessBookViewModel nextBook, int deferralsSoFar)
-	{
-		if (!nextBook.IncludesBookDownload)
-			return DailyLimitGate.Proceed;
-
-		var paused = false;
-
-		while (true)
-		{
-			// This book's own cancellation, not a queue-wide flag. Cancel All reaches a parked book
-			// through ProcessBookViewModel.CancelAsync like any other active book, so nothing has to
-			// be set here and cleared later - and books queued while this one is being cancelled
-			// cannot withdraw its cancellation on their way in.
-			if (nextBook.CancellationRequested)
-			{
-				nextBook.StatusOverride = null;
-				return DailyLimitGate.Cancelled;
-			}
-
-			var now = DateTimeOffset.Now;
-			var allowance = DailyDownloadLimit.Evaluate(Configuration.Instance, DownloadHistoryStore.GetCurrentWindow(now), now);
-
-			if (!allowance.Blocks(nextBook.LibraryBook.IsAudiblePlus))
-			{
-				nextBook.StatusOverride = null;
-				if (paused)
-				{
-					var resumed = $"Daily download limit: capacity is available again. Resuming with {nextBook.LibraryBook.Book.TitleWithSubtitle}.";
-					Serilog.Log.Logger.Information("Daily download limit no longer blocks {libraryBook}. Resuming the queue.", nextBook.LibraryBook.LogFriendly());
-					AddQueueLogEntry(resumed);
-				}
-				return DailyLimitGate.Proceed;
-			}
-
-			// Under "Plus titles only" a mixed queue can keep going; do not stall owned titles behind a Plus title.
-			if (deferralsSoFar < QueuedCount && AnyOtherQueuedBookAllowed(nextBook, allowance))
-			{
-				nextBook.StatusOverride = null;
-				Serilog.Log.Logger.Information(
-					"Daily download limit blocks {libraryBook}. Moving it to the end of the queue and continuing with titles the limit does not cover.",
-					nextBook.LibraryBook.LogFriendly());
-				AddQueueLogEntry(DailyDownloadLimitUserMessage.BuildDeferredLogEntry(allowance, nextBook.LibraryBook.Book.TitleWithSubtitle));
-				return DailyLimitGate.Defer;
-			}
-
-			if (!paused)
-			{
-				paused = true;
-				Serilog.Log.Logger.Information(
-					"Daily download limit reached; pausing the queue before {libraryBook}. {@DebugInfo}",
-					nextBook.LibraryBook.LogFriendly(),
-					new { allowance.Scope, allowance.Unit, allowance.Quantity, allowance.UsedBooks, allowance.UsedBytes, allowance.NextCapacityAt });
-				AddQueueLogEntry(DailyDownloadLimitUserMessage.BuildQueueLogEntry(allowance, nextBook.LibraryBook.Book.TitleWithSubtitle));
-				ShowDailyLimitMessageOncePerRun(allowance, nextBook.LibraryBook.Book.TitleWithSubtitle);
-			}
-
-			nextBook.StatusOverride = DailyDownloadLimitUserMessage.BuildWaitingStatus(allowance);
-
-			await Task.Delay(DailyLimitPollInterval);
-		}
-	}
-
-	/// <summary>Moves the book being held back to the end of the queue without counting it as completed.</summary>
-	private void RequeueLast(ProcessBookViewModel book)
-	{
-		// Removes this book by identity, not whichever happens to be first. With several books in
-		// flight the first active one is some other book's download, so deferring the second of three
-		// would silently evict the first instead.
-		Queue.RemoveActive(book);
-		Queue.Enqueue([book]);
-	}
-
-	private bool AnyOtherQueuedBookAllowed(ProcessBookViewModel nextBook, DailyDownloadLimit.Allowance allowance)
-		=> Queue.Any(b =>
-			b is not null
-			&& !ReferenceEquals(b, nextBook)
-			&& b.Status is ProcessBookStatus.Queued
-			&& (!b.IncludesBookDownload || !allowance.Blocks(b.LibraryBook.IsAudiblePlus)));
-
-	/// <summary>
-	/// Deliberately not awaited. This dialog only completes when the user dismisses it, and a queue that is
-	/// waiting must be free to resume by itself hours later with nobody at the keyboard. Shown once per queue
-	/// run so a multi-day drip-feed does not stack up a dialog per day; later pauses use the log and status.
-	/// </summary>
-	private void ShowDailyLimitMessageOncePerRun(DailyDownloadLimit.Allowance allowance, string bookTitleWithSubtitle)
-	{
-		if (dailyLimitMessageShownThisRun)
-			return;
-
-		dailyLimitMessageShownThisRun = true;
-
-		_ = MessageBoxBase.Show(
-			DailyDownloadLimitUserMessage.BuildQueuePausedBody(allowance, bookTitleWithSubtitle),
-			DailyDownloadLimitUserMessage.DialogCaption,
-			MessageBoxButtons.OK,
-			MessageBoxIcon.Information)
-			.ContinueWith(
-				t => Serilog.Log.Logger.Error(t.Exception, "Failed to show the daily download limit message"),
-				TaskContinuationOptions.OnlyOnFaulted);
+		_engine.StartOrWake();
 	}
 
 	#endregion
@@ -661,299 +545,7 @@ public class ProcessQueueViewModel : ReactiveObject
 	/// Clears the queue and cancels every book currently downloading, including one held at the daily
 	/// download limit - which is why both UIs call this instead of manipulating the queue directly.
 	/// </summary>
-	/// <remarks>
-	/// <see cref="TrackedQueue{T}.ClearQueue"/> only prevents new work from starting. With parallel
-	/// downloads there may be several books already running, and those keep going until they are
-	/// cancelled individually.
-	/// <para>
-	/// Each cancellation is isolated. This runs from the queue loop's abort and disk full paths, so
-	/// a single book throwing here would surface through <see cref="Task.WhenAll(Task[])"/>, take
-	/// <c>QueueLoop</c> out through its outer catch, and leave the remaining books running
-	/// unsupervised with the progress bar still on screen.
-	/// </para>
-	/// </remarks>
-	/// <param name="except">
-	/// A book calling this from its own completion path (abort, disk full). It has already finished
-	/// and must not be asked to cancel itself.
-	/// </param>
-	public async Task CancelAllAsync(ProcessBookViewModel? except = null)
-	{
-		Queue.ClearQueue();
-
-		// Snapshot before cancelling: Active is mutated as each book unwinds.
-		var inFlight = Queue.GetActive().Where(b => b != except).ToArray();
-
-		await Task.WhenAll(inFlight.Select(CancelOneAsync));
-
-		static async Task CancelOneAsync(ProcessBookViewModel book)
-		{
-			try
-			{
-				await book.CancelAsync();
-			}
-			catch (Exception ex)
-			{
-				// One book failing to cancel must not abandon the rest of the list.
-				Serilog.Log.Logger.Error(ex, "Error while cancelling {Book}", book.LibraryBook.LogFriendly());
-			}
-		}
-	}
-
-	private async Task QueueLoop()
-	{
-		try
-		{
-			Serilog.Log.Logger.Information("Begin processing queue");
-
-			_badBookSession.Reset();
-			dailyLimitMessageShownThisRun = false;
-			RunningTime = string.Empty;
-			ProgressBarVisible = true;
-			var startingTime = DateTime.Now;
-
-			// Shared state written from parallel book tasks — protected by resultLock
-			bool shownLicenseGuidanceMessage = false;
-			bool shownWidevineGuidanceMessage = false;
-			bool shownDiskFullMessage = false;
-			var resultLock = new object();
-			// A plain flag, not a CancellationTokenSource: nothing here is cancellable by token. The
-			// book tasks are stopped by CancelAllAsync; this only tells the dispatch loop to stop
-			// starting new ones. Written from book tasks and read by the loop, hence Volatile — a
-			// captured local lives on the closure, so it can be passed by ref but not marked volatile.
-			bool aborted = false;
-			var activeTasks = new HashSet<Task>();
-			// Bounds the daily-limit deferral rotation, so a book can never be shuffled to the back
-			// forever. Counted since the last book that actually started, not since the run began.
-			int consecutiveDeferrals = 0;
-
-			using var counterTimer = new Timer(_ => RunningTime = timeToStr(DateTime.Now - startingTime), null, 0, 500);
-
-			// True for the one book that gets to tear the queue down, false for every book that arrives
-			// after it. Written under the lock and read by the dispatch loop without it, hence the
-			// volatile write.
-			bool ClaimAbort()
-			{
-				lock (resultLock)
-				{
-					if (aborted)
-						return false;
-					Volatile.Write(ref aborted, true);
-					return true;
-				}
-			}
-
-			async Task ProcessBookAsync(ProcessBookViewModel book)
-			{
-				Serilog.Log.Logger.Information("Begin processing queued item: '{item_LibraryBook}'", book.LibraryBook);
-				ProcessStart?.Invoke(this, book);
-
-				var result = await ProcessBookHandler(book);
-
-				// Claimed before the queue is touched, and before the logging. Exactly one book tears the
-				// queue down: Abort is a session-wide override now, so every book in flight arrives here -
-				// directly or by inheriting that answer - and each one re-entering CancelAllAsync would
-				// have every book asking every other book to cancel. The winner is whichever book reaches
-				// this line first, not necessarily the one whose dialog was answered; they are
-				// interchangeable here, and racing to identify the answering book would buy nothing.
-				// Claiming this early also keeps the window small in which the loop can start another
-				// book, which would then outlive the abort by starting after CancelAllAsync snapshots
-				// what to cancel.
-				bool tearsDownTheQueue
-					= (result is ProcessBookResult.FailedAbort or ProcessBookResult.DiskFull)
-					&& ClaimAbort();
-
-				Serilog.Log.Logger.Information("Completed processing: '{item_LibraryBook}' result: {result}", book.LibraryBook, result);
-
-				if (result == ProcessBookResult.ValidationFail)
-				{
-					Queue.RemoveActive(book);
-				}
-				else
-				{
-					Queue.MarkCompleted(book);
-
-					if (result == ProcessBookResult.FailedAbort)
-					{
-						if (tearsDownTheQueue)
-							await CancelAllAsync(book);
-
-						// Tearing the queue down and reporting the abort are separate jobs, and only the
-						// first one is indifferent to which book does it. The status left on a row is read
-						// afterwards by someone who remembers which book they were asked about, so the
-						// abort belongs to the book they answered for - not to whichever book happened to
-						// reach the teardown first, which put "Cancelled" on the row they aborted and
-						// "Error, Abort" on an unrelated one. With no dialog in play (Bad Book set to
-						// Abort in settings) nobody answered anything, and the book that claimed the
-						// teardown keeps the abort as before.
-						var originator = _badBookSession.AbortOriginator;
-						var reportsTheAbort = originator is null ? tearsDownTheQueue : ReferenceEquals(originator, book);
-
-						if (!reportsTheAbort)
-						{
-							// Cancelled by the abort rather than the cause of it.
-							book.Result = ProcessBookResult.Cancelled;
-							book.Status = ProcessBookStatus.Cancelled;
-						}
-					}
-					else if (result == ProcessBookResult.DiskFull)
-					{
-						// Same reasoning: several books can run out of disk at once.
-						if (tearsDownTheQueue)
-							await CancelAllAsync(book);
-						bool show;
-						lock (resultLock) { show = !shownDiskFullMessage; shownDiskFullMessage = true; }
-						if (show)
-							await MessageBoxBase.Show(
-								DiskFullUserMessage.BuildQueueStoppedBody(),
-								DiskFullUserMessage.DialogCaption,
-								MessageBoxButtons.OK,
-								MessageBoxIcon.Warning);
-					}
-					else if (result == ProcessBookResult.FailedSkip)
-					{
-						await book.LibraryBook.UpdateBookStatusAsync(LiberatedStatus.Error);
-					}
-					else if (result == ProcessBookResult.LicenseDeniedPossibleOutage
-						|| result == ProcessBookResult.LicenseDeniedThrottled
-						|| result == ProcessBookResult.LicenseDeniedThrottledRecovered
-						|| (result == ProcessBookResult.LicenseDenied && book.LibraryBook.IsAudiblePlus))
-					{
-						bool show;
-						lock (resultLock) { show = !shownLicenseGuidanceMessage; shownLicenseGuidanceMessage = true; }
-						if (show)
-						{
-							var title = book.LibraryBook.Book.TitleWithSubtitle;
-							var (locale, hasAdditionalMarketplaces) = AppScaffolding.LicenseRecoveryGuidance.GetAccountContext(book.LibraryBook);
-							var updateStatus = AppScaffolding.LibationScaffolding.LastVersionCheckOutcome;
-							var body = result switch
-							{
-								ProcessBookResult.LicenseDeniedPossibleOutage => ContentLicenseDeniedUserMessage.BuildDialogBodyForPossibleOutage(title, locale, updateStatus, hasAdditionalMarketplaces),
-								ProcessBookResult.LicenseDeniedThrottled => ContentLicenseDeniedUserMessage.BuildDialogBodyForThrottling(title, locale, updateStatus, hasAdditionalMarketplaces),
-								ProcessBookResult.LicenseDeniedThrottledRecovered => ContentLicenseDeniedUserMessage.BuildDialogBodyForThrottlingRecovered(title),
-								_ => ContentLicenseDeniedUserMessage.BuildDialogBodyForPlusCatalog(title, locale, updateStatus, hasAdditionalMarketplaces)
-							};
-							await MessageBoxBase.Show(
-								body,
-								ContentLicenseDeniedUserMessage.DialogCaption,
-								MessageBoxButtons.OK,
-								MessageBoxIcon.Asterisk);
-						}
-					}
-					else if (result == ProcessBookResult.WidevineRecommended)
-					{
-						bool show;
-						lock (resultLock) { show = !shownWidevineGuidanceMessage; shownWidevineGuidanceMessage = true; }
-						if (show)
-							await MessageBoxBase.Show(
-								WidevineRecommendationUserMessage.BuildDialogBody(book.LibraryBook.Book.TitleWithSubtitle),
-								WidevineRecommendationUserMessage.DialogCaption,
-								MessageBoxButtons.OK,
-								MessageBoxIcon.Asterisk);
-					}
-				}
-
-				ProcessEnd?.Invoke(this, book);
-			}
-
-			while (true)
-			{
-				// A faulted book task is dropped here, before the closing WhenAll could rethrow it, so
-				// its exception has to be observed on the way out or it is lost. ProcessOneAsync can
-				// throw out of its finally via GetFailureActionAsync; in the sequential loop that
-				// reached the outer catch and was logged, and it still should be.
-				activeTasks.RemoveWhere(t =>
-				{
-					if (!t.IsCompleted)
-						return false;
-					if (t.IsFaulted)
-						Serilog.Log.Logger.Error(t.Exception, "A book failed to process and did not report a result");
-					return true;
-				});
-
-				// Captured before the queue is inspected. If a book is enqueued between the
-				// TryDequeueNext below and the wait at the bottom of the loop, this task is
-				// already completed and the wait returns immediately rather than missing it.
-				var enqueued = WaitForEnqueueAsync();
-
-				if (Volatile.Read(ref aborted))
-				{
-					await Task.WhenAll(activeTasks);
-					break;
-				}
-
-				// If at capacity, wait for a slot to open before trying to dequeue more
-				if (activeTasks.Count >= EffectiveConcurrentDownloads)
-				{
-					await Task.WhenAny(activeTasks);
-					continue;
-				}
-
-				if (Queue.TryDequeueNext(out var nextBook))
-				{
-					// Checked as a book is about to start rather than at queueing time, so the queue keeps
-					// its contents and the user can raise or turn off the limit mid-run. It belongs in this
-					// single dispatch loop and not inside the book task: the gate decides whether a book may
-					// start at all, and a per-book wait would have every blocked book polling at once.
-					// Books already in flight keep running while the loop is held here.
-					var gate = await WaitForDailyLimitAsync(nextBook, consecutiveDeferrals);
-
-					if (gate is DailyLimitGate.Defer)
-					{
-						consecutiveDeferrals++;
-						RequeueLast(nextBook);
-						continue;
-					}
-
-					if (gate is DailyLimitGate.Cancelled)
-					{
-						Serilog.Log.Logger.Information("Queue was cancelled while waiting on the daily download limit.");
-						nextBook.Result = ProcessBookResult.Cancelled;
-						nextBook.Status = ProcessBookStatus.Cancelled;
-						// The sequential loop retired this book on its next step. A dispatch loop has no
-						// such step, so nothing else would take it off the active list - it is retired here.
-						Queue.MarkCompleted(nextBook);
-						continue;
-					}
-
-					consecutiveDeferrals = 0;
-					activeTasks.Add(ProcessBookAsync(nextBook));
-					continue;
-				}
-
-				// Queue is empty; if no tasks are running we are done - unless a book was queued
-				// while we were looking, in which case go round again and pick it up.
-				if (activeTasks.Count == 0)
-				{
-					if (enqueued.IsCompleted)
-						continue;
-					break;
-				}
-
-				// Items are still in flight but nothing is queued. Wake on whichever comes first:
-				// a book finishing, or a new book being queued. Waiting only on the active tasks
-				// would leave newly queued books sitting until an in-flight one happened to
-				// finish, so a batch queued a moment after the loop started would trickle in one
-				// at a time instead of filling the available slots.
-				await Task.WhenAny(activeTasks.Append(enqueued));
-			}
-
-			await Task.WhenAll(activeTasks);
-
-			Serilog.Log.Logger.Information("Completed processing queue");
-			Queue_CompletedCountChanged(this, 0);
-			ProgressBarVisible = false;
-		}
-		catch (Exception ex)
-		{
-			Serilog.Log.Logger.Error(ex, "An error was encountered while processing queued items");
-		}
-		finally
-		{
-			DiskSpaceBackupPreflight.ResetBulkPreflightForQueueRun();
-		}
-
-		string timeToStr(TimeSpan time)
-			=> time.TotalHours < 1 ? $"{time:mm\\:ss}"
-			: $"{time.TotalHours:F0}:{time:mm\\:ss}";
-	}
+	/// <param name="except">A book calling this from its own completion path; it must not cancel itself.</param>
+	public Task CancelAllAsync(ProcessBookViewModel? except = null)
+		=> _engine.CancelAllAsync(except?.Job);
 }

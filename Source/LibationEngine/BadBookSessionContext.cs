@@ -1,7 +1,7 @@
 ﻿using System.Threading;
 using LibationFileManager;
 
-namespace LibationUiBase.ProcessQueue;
+namespace LibationEngine;
 
 public class BadBookSessionContext
 {
@@ -25,7 +25,7 @@ public class BadBookSessionContext
 	/// were asked about, and "Cancelled" on that row with "Error, Abort" on some other book's is
 	/// the wrong way round.
 	/// </remarks>
-	public ProcessBookViewModel? AbortOriginator { get; set; }
+	public LiberationJob? AbortOriginator { get; set; }
 
 	public void Reset()
 	{

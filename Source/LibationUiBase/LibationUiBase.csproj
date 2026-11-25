@@ -19,6 +19,7 @@
 	<ProjectReference Include="..\ApplicationServices\ApplicationServices.csproj" />
 	<ProjectReference Include="..\AppScaffolding\AppScaffolding.csproj" />
 	<ProjectReference Include="..\FileLiberator\FileLiberator.csproj" />
+	<ProjectReference Include="..\LibationEngine\LibationEngine.csproj" />
   </ItemGroup>
 
   <ItemGroup>
