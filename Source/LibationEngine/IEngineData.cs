@@ -21,6 +21,12 @@ public static class BulkResults
 		=> new(results.Count(r => r.Result == Ok), results.Where(r => r.Result == NotFound).Select(r => r.Asin).ToList(), results);
 }
 
+public enum LocateOutcome { Ok, NoSuchBook, Invalid, Busy }
+
+public sealed record LocateResult(LocateOutcome Outcome, BookDetailDto? Book = null, string? Error = null);
+
+public sealed record LocateScanStart(LocateOutcome Outcome, LocateScanDto? Scan = null, string? Error = null);
+
 public interface IEngineData
 {
 	IReadOnlyList<AccountDto> GetAccounts();
@@ -53,4 +59,11 @@ public interface IEngineData
 	Task<IReadOnlyList<BulkItemDto>> BulkSetTrash(IReadOnlyList<string> asins, bool inTrash);
 	Task<IReadOnlyList<BulkItemDto>> BulkPurge(IReadOnlyList<string> asins);
 	SettingsDto GetSettings();
+
+	/// <summary>Records an existing audio file under Books for the book and marks it liberated, as desktop's Locate file.</summary>
+	Task<LocateResult> LocateFile(string asin, string path);
+
+	/// <summary>Starts the background folder scan; <paramref name="publish"/> receives its progress.</summary>
+	LocateScanStart StartLocateScan(string folder, Action<EngineEvent> publish);
+	LocateScanDto GetLocateScan();
 }

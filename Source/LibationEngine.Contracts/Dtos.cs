@@ -121,6 +121,15 @@ public sealed record BulkTagsRequest(IReadOnlyList<string>? Asins, string? Tags 
 /// <summary>Body of <c>PUT /api/library/status</c> and <c>/pdf-status</c>; Status is liberated or notLiberated.</summary>
 public sealed record BulkStatusRequest(IReadOnlyList<string>? Asins, string? Status);
 
+/// <summary>Body of <c>POST /api/library/{asin}/locate</c>; Path is an absolute audio file under the Books folder.</summary>
+public sealed record LocateRequest(string? Path);
+
+/// <summary>Body of <c>POST /api/library/locate-scan</c>; Folder is an absolute folder under the Books folder.</summary>
+public sealed record LocateScanRequest(string? Folder);
+
+/// <summary>State is idle, running, completed or failed. Found counts audio files carrying an ASIN, Matched those whose book is in the library, Updated the books newly marked liberated.</summary>
+public sealed record LocateScanDto(string State, string? Folder, int Found, int Matched, int Updated, string? Error, DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt);
+
 /// <summary>Result is ok, notFound or conflict.</summary>
 public sealed record BulkItemDto(string Asin, string Result);
 

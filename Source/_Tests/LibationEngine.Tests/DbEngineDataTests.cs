@@ -194,4 +194,134 @@ public class DbEngineDataTests
 		Assert.AreEqual("NotLiberated", data.GetBook("B0PLAIN0001")!.BookStatus);
 		Assert.AreEqual("Liberated", data.GetBook("B0PDF000001")!.BookStatus);
 	}
+
+	private string WriteFile(string folder, string name, byte[]? content = null)
+	{
+		Directory.CreateDirectory(folder);
+		var path = Path.Combine(folder, name);
+		File.WriteAllBytes(path, content ?? [1]);
+		return path;
+	}
+
+	private static byte[] Mp3WithAsin(string asin)
+	{
+		var frame = new List<byte> { 0 };
+		frame.AddRange(System.Text.Encoding.ASCII.GetBytes("AUDIBLE_ASIN"));
+		frame.Add(0);
+		frame.AddRange(System.Text.Encoding.ASCII.GetBytes(asin));
+
+		var body = new List<byte>(System.Text.Encoding.ASCII.GetBytes("TXXX"));
+		body.AddRange([0, 0, 0, (byte)frame.Count, 0, 0]);
+		body.AddRange(frame);
+
+		var tag = new List<byte>(System.Text.Encoding.ASCII.GetBytes("ID3"));
+		tag.AddRange([3, 0, 0, 0, 0, (byte)(body.Count >> 7), (byte)(body.Count & 0x7F)]);
+		tag.AddRange(body);
+		return [.. tag];
+	}
+
+	[TestMethod]
+	public async Task LocateFile_records_a_file_under_Books_and_marks_the_book_liberated()
+	{
+		var path = WriteFile(Path.Combine(booksDirectory, "Some Author", "Some Book"), "no asin in this name.m4b");
+
+		var result = await data.LocateFile("B0PLAIN0001", path);
+
+		Assert.AreEqual(LocateOutcome.Ok, result.Outcome);
+		Assert.AreEqual("Liberated", result.Book!.BookStatus);
+		Assert.IsTrue(result.Book.AudioFileExists);
+		Assert.AreEqual(path, AudibleFileStorage.Audio.GetPath("B0PLAIN0001")?.Path);
+		Assert.AreEqual("Liberated", data.GetBook("B0PLAIN0001")!.BookStatus);
+	}
+
+	[TestMethod]
+	public async Task LocateFile_rejects_paths_outside_Books_traversal_and_non_audio()
+	{
+		var outside = WriteFile(Path.Combine(directory, "elsewhere"), "B0PLAIN0001.m4b");
+		var sibling = WriteFile(booksDirectory + "2", "B0PLAIN0001.m4b");
+		var text = WriteFile(booksDirectory, "notes.txt");
+		var inside = WriteFile(booksDirectory, "real.m4b");
+
+		string[] bad =
+		[
+			outside,
+			sibling,
+			text,
+			Path.Combine(booksDirectory, "missing.m4b"),
+			Path.Combine(booksDirectory, "..", "elsewhere", "B0PLAIN0001.m4b"),
+			Path.Combine(booksDirectory, "sub", "..", "real.m4b"),
+			"real.m4b",
+			"",
+			booksDirectory
+		];
+		foreach (var path in bad)
+		{
+			var result = await data.LocateFile("B0PLAIN0001", path);
+			Assert.AreEqual(LocateOutcome.Invalid, result.Outcome, path);
+			Assert.IsFalse(string.IsNullOrEmpty(result.Error), path);
+		}
+
+		Assert.AreEqual("NotLiberated", data.GetBook("B0PLAIN0001")!.BookStatus);
+		Assert.AreEqual(LocateOutcome.NoSuchBook, (await data.LocateFile("nope", inside)).Outcome);
+	}
+
+	[TestMethod]
+	public async Task LocateFile_without_a_Books_folder_is_invalid()
+	{
+		var inside = WriteFile(booksDirectory, "real.m4b");
+		Configuration.Instance.Books = null;
+		Assert.AreEqual(LocateOutcome.Invalid, (await data.LocateFile("B0PLAIN0001", inside)).Outcome);
+	}
+
+	[TestMethod]
+	public async Task LocateScan_matches_embedded_asins_and_marks_books_liberated()
+	{
+		WriteFile(Path.Combine(booksDirectory, "found"), "untagged-name.mp3", Mp3WithAsin("B0PLAIN0001"));
+		WriteFile(Path.Combine(booksDirectory, "found"), "other.mp3", Mp3WithAsin("B0UNKNOWN01"));
+		WriteFile(Path.Combine(booksDirectory, "found"), "no tag.mp3");
+		var events = new List<LocateScanDto>();
+
+		var start = data.StartLocateScan(Path.Combine(booksDirectory, "found"), e => events.Add(((LocateScanProgress)e).Scan));
+		Assert.AreEqual(LocateOutcome.Ok, start.Outcome);
+
+		for (var i = 0; i < 100 && data.GetLocateScan().State == "running"; i++)
+			await Task.Delay(100);
+
+		var scan = data.GetLocateScan();
+		Assert.AreEqual("completed", scan.State);
+		Assert.AreEqual(2, scan.Found);
+		Assert.AreEqual(1, scan.Matched);
+		Assert.AreEqual(1, scan.Updated);
+		Assert.AreEqual("running", events[0].State);
+		Assert.AreEqual("completed", events[^1].State);
+		Assert.AreEqual("Liberated", data.GetBook("B0PLAIN0001")!.BookStatus);
+		Assert.AreEqual("NotLiberated", data.GetBook("B0PDF000001")!.BookStatus);
+	}
+
+	[TestMethod]
+	public void LocateScan_rejects_folders_outside_Books()
+	{
+		var elsewhere = Path.Combine(directory, "elsewhere");
+		Directory.CreateDirectory(elsewhere);
+
+		Assert.AreEqual(LocateOutcome.Invalid, data.StartLocateScan(elsewhere, _ => { }).Outcome);
+		Assert.AreEqual(LocateOutcome.Invalid, data.StartLocateScan(Path.Combine(booksDirectory, "missing"), _ => { }).Outcome);
+		Assert.AreEqual(LocateOutcome.Invalid, data.StartLocateScan("", _ => { }).Outcome);
+		Assert.AreEqual("idle", data.GetLocateScan().State);
+	}
+
+	[TestMethod]
+	public async Task A_located_book_is_not_selected_for_download_and_survives_reconcile()
+	{
+		var path = WriteFile(booksDirectory, "plain.m4b");
+		await data.LocateFile("B0PLAIN0001", path);
+		File.Delete(path);
+
+		var books = DbContexts.GetLibrary_Flat_NoTracking();
+		Assert.IsTrue(books.Single(b => b.Book.AudibleProductId == "B0PLAIN0001").Book.AudioExists);
+		var reconcile = new BulkSetDownloadStatus(books, setDownloaded: true, setNotDownloaded: false);
+		reconcile.Discover();
+		await reconcile.ExecuteAsync();
+		Assert.AreEqual("Liberated", data.GetBook("B0PLAIN0001")!.BookStatus);
+	}
 }

@@ -178,6 +178,30 @@ public sealed class DbEngineData : IEngineData
 
 	public SettingsDto GetSettings() => SettingsMapper.From(LibationFileManager.Configuration.Instance);
 
+	private readonly LocateScanner locateScanner = new();
+
+	public async Task<LocateResult> LocateFile(string asin, string path)
+	{
+		if (Find(asin) is not { } lb)
+			return new(LocateOutcome.NoSuchBook);
+		if (!LocatePaths.TryResolveAudioFile(path, LibationFileManager.Configuration.Instance.Books?.PathWithoutPrefix, out var full, out var error))
+			return new(LocateOutcome.Invalid, Error: error);
+
+		FilePathCache.Insert(lb.Book.AudibleProductId, full);
+		if (lb.Book.UserDefinedItem.BookStatus is not LiberatedStatus.Liberated)
+			await lb.UpdateBookStatusAsync(LiberatedStatus.Liberated);
+		return new(LocateOutcome.Ok, GetBookDetail(asin));
+	}
+
+	public LocateScanStart StartLocateScan(string folder, Action<EngineEvent> publish)
+	{
+		if (!LocatePaths.TryResolveFolder(folder, LibationFileManager.Configuration.Instance.Books?.PathWithoutPrefix, out var full, out var error))
+			return new(LocateOutcome.Invalid, Error: error);
+		return locateScanner.TryStart(full, publish) ? new(LocateOutcome.Ok, locateScanner.Current) : new(LocateOutcome.Busy);
+	}
+
+	public LocateScanDto GetLocateScan() => locateScanner.Current;
+
 	private static LibraryBook? Find(string asin)
 		=> DbContexts.GetLibraryBook_Flat_NoTracking(asin)
 			?? DbContexts.GetDeletedLibraryBooks().FirstOrDefault(lb => lb.IsDeleted && lb.Book.AudibleProductId == asin);

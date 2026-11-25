@@ -130,6 +130,29 @@ public class ApiTests
 		public SettingsDto GetSettings()
 			=> SettingsMapper.From(Configuration.Instance);
 
+		public Task<LocateResult> LocateFile(string asin, string path)
+		{
+			Calls.Add($"locate:{asin}:{path}");
+			return Task.FromResult(
+				GetBookDetail(asin) is not { } book ? new LocateResult(LocateOutcome.NoSuchBook)
+				: path == "/books/a.m4b" ? new LocateResult(LocateOutcome.Ok, book with { BookStatus = "Liberated" })
+				: new LocateResult(LocateOutcome.Invalid, Error: "path must be inside the Books folder."));
+		}
+
+		public LocateScanStart StartLocateScan(string folder, Action<EngineEvent> publish)
+		{
+			Calls.Add($"locatescan:{folder}");
+			if (folder == "/busy")
+				return new(LocateOutcome.Busy);
+			if (folder != "/books")
+				return new(LocateOutcome.Invalid, Error: "path must be inside the Books folder.");
+			var scan = new LocateScanDto("running", folder, 0, 0, 0, null, DateTimeOffset.UnixEpoch, null);
+			publish(new LocateScanProgress(scan));
+			return new(LocateOutcome.Ok, scan);
+		}
+
+		public LocateScanDto GetLocateScan() => new("idle", null, 0, 0, 0, null, null, null);
+
 		private static BookDto Book(string asin)
 			=> new(asin, "Title", null, ["Author"], ["Narrator"], [], 60, "NotLiberated", null, DateTime.UnixEpoch, "a@example.com", "us", "Product", false, "", false,
 				["Mystery"], new(4.5f, 4f, 5f), new(0, 0, 0), false, false, null, null, null, null, false, "PIC1", null, false);
@@ -655,6 +678,61 @@ public class ApiTests
 		release.SetResult();
 		await h.Queue.Runner!;
 		Assert.AreEqual(HttpStatusCode.Accepted, (await h.Http.PostAsync(h.Base + "/api/library/B000000001/liberate", null)).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Locating_a_file_returns_the_book_detail_and_maps_failures()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var ok = await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/library/B000000001/locate", "{\"path\":\"/books/a.m4b\"}"));
+		Assert.AreEqual(HttpStatusCode.OK, ok.StatusCode);
+		using (var doc = JsonDocument.Parse(await ok.Content.ReadAsStringAsync()))
+		{
+			Assert.AreEqual("Liberated", doc.RootElement.GetProperty("bookStatus").GetString());
+			Assert.IsTrue(doc.RootElement.GetProperty("audioFileExists").GetBoolean());
+		}
+
+		foreach (var body in new[] { "{\"path\":\"/etc/passwd\"}", "{}", null })
+			Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/library/B000000001/locate", body))).StatusCode, body);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/library/nope/locate", "{\"path\":\"/books/a.m4b\"}"))).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Locate_scan_starts_in_the_background_and_streams_progress()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		using var request = new HttpRequestMessage(HttpMethod.Get, h.Base + "/api/events");
+		using var response = await h.Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+		using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+
+		var started = await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/library/locate-scan", "{\"folder\":\"/books\"}"));
+		Assert.AreEqual(HttpStatusCode.Accepted, started.StatusCode);
+		using (var doc = JsonDocument.Parse(await started.Content.ReadAsStringAsync()))
+			Assert.AreEqual("running", doc.RootElement.GetProperty("state").GetString());
+
+		string? current = null, progress = null;
+		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+		while (progress is null)
+		{
+			var line = await reader.ReadLineAsync(timeout.Token);
+			Assert.IsNotNull(line);
+			if (line.StartsWith("event: "))
+				current = line[7..];
+			else if (line.StartsWith("data: ") && current == nameof(LocateScanProgress))
+				progress = line[6..];
+		}
+		Assert.AreEqual("/books", JsonDocument.Parse(progress).RootElement.GetProperty("scan").GetProperty("folder").GetString());
+
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/library/locate-scan", "{\"folder\":\"/etc\"}"))).StatusCode);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/library/locate-scan"))).StatusCode);
+		Assert.AreEqual(HttpStatusCode.Conflict, (await h.Http.SendAsync(Send(HttpMethod.Post, h.Base + "/api/library/locate-scan", "{\"folder\":\"/busy\"}"))).StatusCode);
+
+		using var status = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/library/locate-scan"));
+		Assert.AreEqual("idle", status.RootElement.GetProperty("state").GetString());
 	}
 
 	[TestMethod]

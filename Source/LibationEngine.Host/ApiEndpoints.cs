@@ -224,6 +224,41 @@ public static class ApiEndpoints
 			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
 			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
+		api.MapPost("/library/{asin}/locate", async (string asin, LocateRequest? body) =>
+		{
+			var result = await data.LocateFile(asin, body?.Path ?? "");
+			return result.Outcome switch
+			{
+				LocateOutcome.NoSuchBook => NoSuchBook(),
+				LocateOutcome.Invalid => Error(result.Error!, StatusCodes.Status400BadRequest),
+				_ => Results.Json(result.Book)
+			};
+		}).WithSummary("Records an existing audio file for a book, as desktop's Locate file, and marks it liberated. The path must be an absolute audio file under the Books folder. 200 with the book, 400 bad path, 404 unknown ASIN.")
+			.WithName("locateBookFile").WithTags("library")
+			.Produces<BookDetailDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
+
+		api.MapPost("/library/locate-scan", (LocateScanRequest? body) =>
+		{
+			var start = data.StartLocateScan(body?.Folder ?? "", scheduler.Events.Publish);
+			return start.Outcome switch
+			{
+				LocateOutcome.Invalid => Error(start.Error!, StatusCodes.Status400BadRequest),
+				LocateOutcome.Busy => Error("A locate scan is already running.", StatusCodes.Status409Conflict),
+				_ => Results.Json(start.Scan, statusCode: StatusCodes.Status202Accepted)
+			};
+		}).WithSummary("Scans a folder under the Books folder in the background for audio files carrying an ASIN, as desktop's Locate audiobooks; matches are recorded and marked liberated. Progress arrives as LocateScanProgress events. 202, 400 bad folder, 409 already running.")
+			.WithName("startLocateScan").WithTags("library")
+			.Produces<LocateScanDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapGet("/library/locate-scan", () => Results.Json(data.GetLocateScan()))
+			.WithSummary("State of the last or running locate scan.")
+			.WithName("getLocateScan").WithTags("library")
+			.Produces<LocateScanDto>(StatusCodes.Status200OK);
+
 		api.MapPut("/library/tags", async (BulkTagsRequest? body) =>
 		{
 			if (Validate(body?.Asins) is { } invalid)
