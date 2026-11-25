@@ -996,7 +996,7 @@ public class ApiTests
 		await h.WaitIdleAfterFirstCycle();
 
 		using var doc = await h.QueueJson();
-		Assert.AreEqual("{\"running\":false,\"jobs\":[],\"pending\":[],\"waiting\":null}", doc.RootElement.GetRawText());
+		Assert.AreEqual("{\"running\":false,\"jobs\":[],\"pending\":[],\"waiting\":null,\"paused\":false,\"stats\":{\"queued\":0,\"completed\":0,\"errors\":0,\"runningSince\":null}}", doc.RootElement.GetRawText());
 	}
 
 	[TestMethod]
@@ -1133,5 +1133,236 @@ public class ApiTests
 		Assert.AreEqual("failed", finished.RootElement.GetProperty("status").GetString());
 		Assert.IsTrue(data.ContainsKey(nameof(QueueResumed)));
 		Assert.IsFalse(data.Values.Any(v => v.Contains("token", StringComparison.OrdinalIgnoreCase)));
+	}
+
+	private static StringContent Body(string json) => new(json, System.Text.Encoding.UTF8, "application/json");
+
+	private async Task<(HttpStatusCode Status, JsonDocument Body)> Call(Harness h, HttpMethod method, string path, string? json = null)
+	{
+		using var request = new HttpRequestMessage(method, h.Base + path) { Content = json is null ? null : Body(json) };
+		using var response = await h.Http.SendAsync(request);
+		return (response.StatusCode, JsonDocument.Parse(await response.Content.ReadAsStringAsync()));
+	}
+
+	private static async Task<string> FirstWorkingJobId(Harness h)
+	{
+		string? id = null;
+		await Eventually(async () =>
+		{
+			using var doc = await h.QueueJson();
+			id = doc.RootElement.GetProperty("jobs").EnumerateArray().FirstOrDefault(j => j.GetProperty("state").GetString() == "working").ValueKind == JsonValueKind.Object
+				? doc.RootElement.GetProperty("jobs").EnumerateArray().First(j => j.GetProperty("state").GetString() == "working").GetProperty("id").GetString()
+				: null;
+			return id is not null;
+		});
+		return id!;
+	}
+
+	[TestMethod]
+	public async Task Cancelling_a_queued_job_removes_it_and_a_running_one_ends_cancelled()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		h.Outcome = async job =>
+		{
+			while (!job.CancellationRequested)
+				await Task.Delay(5);
+			return ProcessBookResult.Cancelled;
+		};
+		LiberationJob a = h.Job("A"), b = h.Job("B");
+		h.Enqueue(a, b);
+		await FirstWorkingJobId(h);
+
+		var (removed, removedBody) = await Call(h, HttpMethod.Delete, $"/api/queue/jobs/{b.Id.Value}");
+		Assert.AreEqual(HttpStatusCode.OK, removed);
+		Assert.AreEqual("removed", removedBody.RootElement.GetProperty("outcome").GetString());
+
+		var (cancelling, cancellingBody) = await Call(h, HttpMethod.Delete, $"/api/queue/jobs/{a.Id.Value}");
+		Assert.AreEqual(HttpStatusCode.OK, cancelling);
+		Assert.AreEqual("cancelling", cancellingBody.RootElement.GetProperty("outcome").GetString());
+		await h.Queue.Runner!.WaitAsync(TimeSpan.FromSeconds(10));
+
+		Assert.AreEqual(ProcessBookResult.Cancelled, a.Result);
+		var (finished, _) = await Call(h, HttpMethod.Delete, $"/api/queue/jobs/{a.Id.Value}");
+		Assert.AreEqual(HttpStatusCode.NotFound, finished);
+		var (unknown, _) = await Call(h, HttpMethod.Delete, "/api/queue/jobs/nope");
+		Assert.AreEqual(HttpStatusCode.NotFound, unknown);
+	}
+
+	[TestMethod]
+	public async Task Cancel_all_clears_the_queue_and_cancels_what_is_running()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		h.Outcome = async job =>
+		{
+			while (!job.CancellationRequested)
+				await Task.Delay(5);
+			return ProcessBookResult.Cancelled;
+		};
+		LiberationJob a = h.Job("A");
+		h.Enqueue(a, h.Job("B"), h.Job("C"));
+		await FirstWorkingJobId(h);
+
+		var (status, body) = await Call(h, HttpMethod.Post, "/api/queue/cancel");
+		await h.Queue.Runner!.WaitAsync(TimeSpan.FromSeconds(10));
+
+		Assert.AreEqual(HttpStatusCode.OK, status);
+		Assert.IsFalse(body.RootElement.GetProperty("jobs").EnumerateArray().Any(j => j.GetProperty("state").GetString() == "queued"));
+		Assert.AreEqual(ProcessBookResult.Cancelled, a.Result);
+		using var after = await h.QueueJson();
+		Assert.AreEqual(0, after.RootElement.GetProperty("jobs").GetArrayLength());
+	}
+
+	[TestMethod]
+	public async Task Moving_a_job_reorders_the_queue_and_refuses_what_it_cannot_move()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		var gate = new TaskCompletionSource();
+		h.Outcome = async _ => { await gate.Task; return ProcessBookResult.Success; };
+		LiberationJob a = h.Job("A"), b = h.Job("B"), c = h.Job("C");
+		h.Enqueue(a, b, c);
+		await FirstWorkingJobId(h);
+
+		var (ok, body) = await Call(h, HttpMethod.Post, $"/api/queue/jobs/{c.Id.Value}/move", "{\"to\":\"top\"}");
+		Assert.AreEqual(HttpStatusCode.OK, ok);
+		CollectionAssert.AreEqual(new[] { "A", "C", "B" }, body.RootElement.GetProperty("jobs").EnumerateArray().Select(j => j.GetProperty("asin").GetString()).ToArray());
+
+		Assert.AreEqual(HttpStatusCode.Conflict, (await Call(h, HttpMethod.Post, $"/api/queue/jobs/{a.Id.Value}/move", "{\"to\":\"top\"}")).Status);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await Call(h, HttpMethod.Post, "/api/queue/jobs/nope/move", "{\"to\":\"top\"}")).Status);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await Call(h, HttpMethod.Post, $"/api/queue/jobs/{b.Id.Value}/move", "{\"to\":\"left\"}")).Status);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await Call(h, HttpMethod.Post, $"/api/queue/jobs/{b.Id.Value}/move")).Status);
+
+		gate.SetResult();
+		await h.Queue.Runner!.WaitAsync(TimeSpan.FromSeconds(10));
+	}
+
+	[TestMethod]
+	public async Task Pause_holds_new_jobs_until_resume_and_shows_in_the_queue()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var (paused, pausedBody) = await Call(h, HttpMethod.Post, "/api/queue/pause");
+		Assert.IsTrue(pausedBody.RootElement.GetProperty("paused").GetBoolean());
+		Assert.AreEqual(HttpStatusCode.OK, paused);
+		var started = new List<string>();
+		h.Outcome = job => { lock (started) started.Add(job.LibraryBook.Book.AudibleProductId); return Task.FromResult(ProcessBookResult.Success); };
+		h.Enqueue(h.Job("A"));
+		await Task.Delay(150);
+
+		using (var doc = await h.QueueJson())
+		{
+			Assert.IsTrue(doc.RootElement.GetProperty("paused").GetBoolean());
+			Assert.AreEqual(1, doc.RootElement.GetProperty("stats").GetProperty("queued").GetInt32());
+		}
+		Assert.AreEqual(0, started.Count);
+
+		var (resumed, resumedBody) = await Call(h, HttpMethod.Post, "/api/queue/resume");
+		Assert.AreEqual(HttpStatusCode.OK, resumed);
+		Assert.IsFalse(resumedBody.RootElement.GetProperty("paused").GetBoolean());
+		await h.Queue.Runner!.WaitAsync(TimeSpan.FromSeconds(10));
+		CollectionAssert.AreEqual(new[] { "A" }, started);
+	}
+
+	[TestMethod]
+	public async Task History_lists_finished_jobs_and_delete_clears_it_with_the_counters()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		h.Outcome = job => Task.FromResult(job.LibraryBook.Book.AudibleProductId == "B" ? ProcessBookResult.FailedRetry : ProcessBookResult.Success);
+		h.Enqueue(h.Job("A"), h.Job("B"));
+		await h.Queue.Runner!.WaitAsync(TimeSpan.FromSeconds(10));
+
+		var (status, history) = await Call(h, HttpMethod.Get, "/api/queue/history");
+		Assert.AreEqual(HttpStatusCode.OK, status);
+		var items = history.RootElement.EnumerateArray().ToList();
+		CollectionAssert.AreEqual(new[] { "B", "A" }, items.Select(j => j.GetProperty("asin").GetString()).ToArray());
+		Assert.AreEqual("failedRetry", items[0].GetProperty("result").GetString());
+		Assert.AreEqual("failed", items[0].GetProperty("status").GetString());
+		Assert.AreEqual(JsonValueKind.String, items[0].GetProperty("finishedAt").ValueKind);
+		using (var doc = await h.QueueJson())
+		{
+			var stats = doc.RootElement.GetProperty("stats");
+			Assert.AreEqual((1, 1), (stats.GetProperty("completed").GetInt32(), stats.GetProperty("errors").GetInt32()));
+		}
+
+		var (cleared, _) = await Call(h, HttpMethod.Delete, "/api/queue/history");
+		Assert.AreEqual(HttpStatusCode.OK, cleared);
+		var (_, empty) = await Call(h, HttpMethod.Get, "/api/queue/history");
+		Assert.AreEqual(0, empty.RootElement.GetArrayLength());
+		using var after = await h.QueueJson();
+		Assert.AreEqual(0, after.RootElement.GetProperty("stats").GetProperty("completed").GetInt32());
+	}
+
+	[TestMethod]
+	public async Task A_job_log_is_served_while_running_and_after_it_finishes_without_secrets()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		var gate = new TaskCompletionSource();
+		h.Outcome = async job =>
+		{
+			job.Emit(JobLogLevel.Info, "start https://cdn.example.com/x.aax?token=SECRET123");
+			await gate.Task;
+			job.Emit(JobLogLevel.Error, "failed: access_token=SECRET456");
+			return ProcessBookResult.Success;
+		};
+		LiberationJob a = h.Job("A");
+		h.Enqueue(a);
+		await FirstWorkingJobId(h);
+
+		await Eventually(async () => (await Call(h, HttpMethod.Get, $"/api/queue/jobs/{a.Id.Value}/log")).Body.RootElement.GetProperty("lines").GetArrayLength() == 1);
+		gate.SetResult();
+		await h.Queue.Runner!.WaitAsync(TimeSpan.FromSeconds(10));
+		h.Queue.Jobs.ClearCompleted();
+
+		var (finished, body) = await Call(h, HttpMethod.Get, $"/api/queue/jobs/{a.Id.Value}/log");
+		Assert.AreEqual(HttpStatusCode.OK, finished);
+		var lines = body.RootElement.GetProperty("lines").EnumerateArray().ToList();
+		CollectionAssert.AreEqual(new[] { "info", "error" }, lines.Select(l => l.GetProperty("level").GetString()).ToArray());
+		Assert.AreEqual(0, body.RootElement.GetProperty("dropped").GetInt32());
+		Assert.AreEqual(a.Id.Value, body.RootElement.GetProperty("jobId").GetString());
+		Assert.IsFalse(body.RootElement.GetRawText().Contains("SECRET", StringComparison.Ordinal));
+
+		Assert.AreEqual(HttpStatusCode.NotFound, (await Call(h, HttpMethod.Get, "/api/queue/jobs/nope/log")).Status);
+	}
+
+	[TestMethod]
+	public async Task Events_stream_delivers_book_log_and_pause_events()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		using var request = new HttpRequestMessage(HttpMethod.Get, h.Base + "/api/events");
+		using var response = await h.Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+		using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+
+		h.Outcome = job => { job.Emit(JobLogLevel.Warning, "heads up"); return Task.FromResult(ProcessBookResult.Success); };
+		h.Queue.SetDispatchPaused(true);
+		h.Queue.SetDispatchPaused(false);
+		var job = h.Job("B000000001");
+		h.Enqueue(job);
+
+		var data = new Dictionary<string, string>();
+		string? current = null;
+		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+		while (!data.ContainsKey(nameof(BookLog)) || !data.ContainsKey(nameof(QueueDispatchResumed)))
+		{
+			var line = await reader.ReadLineAsync(timeout.Token);
+			Assert.IsNotNull(line);
+			if (line.StartsWith("event: "))
+				current = line[7..];
+			else if (line.StartsWith("data: ") && current is not null)
+				data[current] = line[6..];
+		}
+
+		using var log = JsonDocument.Parse(data[nameof(BookLog)]);
+		Assert.AreEqual(job.Id.Value, log.RootElement.GetProperty("jobId").GetString());
+		Assert.AreEqual("warning", log.RootElement.GetProperty("level").GetString());
+		Assert.AreEqual("heads up", log.RootElement.GetProperty("message").GetString());
+		Assert.AreEqual(JsonValueKind.String, log.RootElement.GetProperty("at").ValueKind);
+		Assert.IsTrue(data.ContainsKey(nameof(QueueDispatchPaused)));
 	}
 }

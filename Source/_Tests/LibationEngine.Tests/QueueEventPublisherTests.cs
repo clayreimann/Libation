@@ -229,4 +229,104 @@ public class QueueEventPublisherTests
 		Assert.IsFalse(QueueMapper.TryParse(new DecisionRequest(decision, action), out _, out var error));
 		Assert.IsFalse(string.IsNullOrEmpty(error));
 	}
+
+	[TestMethod]
+	public void pausing_and_resuming_dispatch_publish_once_per_change()
+	{
+		var h = new Harness();
+
+		h.Queue.SetDispatchPaused(true);
+		h.Queue.SetDispatchPaused(true);
+		h.Queue.SetDispatchPaused(false);
+
+		CollectionAssert.AreEqual(new[] { typeof(QueueDispatchPaused), typeof(QueueDispatchResumed) }, h.Drain().Select(e => e.GetType()).ToArray());
+	}
+
+	[TestMethod]
+	public async Task log_lines_are_published_with_their_time_level_and_redacted_text()
+	{
+		var h = new Harness();
+		h.Outcome = j =>
+		{
+			j.Emit(JobLogLevel.Info, "fetching https://cdn.example.com/a?token=abc");
+			j.Emit(JobLogLevel.Error, "boom");
+			return Task.FromResult(ProcessBookResult.Success);
+		};
+		var job = h.Job("B000000001");
+
+		await h.RunAsync(job);
+
+		var logs = h.Drain().OfType<BookLog>().ToList();
+		CollectionAssert.AreEqual(new[] { "info", "error" }, logs.Select(l => l.Level).ToArray());
+		Assert.AreEqual("fetching https://cdn.example.com/a", logs[0].Message);
+		Assert.AreEqual(job.Log.Snapshot()[0].At, logs[0].At);
+		Assert.AreEqual(job.Id.Value, logs[0].JobId);
+	}
+
+	[TestMethod]
+	public async Task a_burst_of_info_lines_is_throttled_but_errors_always_get_through()
+	{
+		var h = new Harness();
+		h.Outcome = j =>
+		{
+			for (var i = 0; i < 100; i++)
+				j.Emit(JobLogLevel.Info, $"info {i}");
+			j.Emit(JobLogLevel.Error, "late error");
+			h.Clock.Advance(TimeSpan.FromSeconds(1.5));
+			j.Emit(JobLogLevel.Info, "next window");
+			return Task.FromResult(ProcessBookResult.Success);
+		};
+		var job = h.Job("B000000001");
+
+		await h.RunAsync(job);
+
+		var logs = h.Drain().OfType<BookLog>().ToList();
+		Assert.AreEqual(QueueEventPublisher.InfoLinesPerSecond, logs.Count(l => l.Level == "info" && l.Message.StartsWith("info ")));
+		Assert.IsTrue(logs.Any(l => l.Message == "late error"));
+		Assert.IsTrue(logs.Any(l => l.Message == "next window"));
+		Assert.AreEqual(100, job.Log.Snapshot().Count(l => l.Message.StartsWith("info ")));
+	}
+
+	[TestMethod]
+	public async Task lines_after_a_job_has_ended_are_not_published()
+	{
+		var h = new Harness();
+		var job = h.Job("B000000001");
+		await h.RunAsync(job);
+		h.Drain();
+
+		job.Emit(JobLogLevel.Error, "after");
+
+		Assert.AreEqual(0, h.Drain().OfType<BookLog>().Count());
+	}
+
+	[TestMethod]
+	public void the_snapshot_carries_the_pause_flag_and_counters()
+	{
+		var h = new Harness();
+		h.Queue.SetDispatchPaused(true);
+		h.Queue.Jobs.Enqueue([h.Job("A"), h.Job("B")]);
+
+		var snapshot = QueueMapper.Snapshot(h.Queue);
+
+		Assert.IsTrue(snapshot.Paused);
+		Assert.AreEqual(new QueueStatsDto(2, 0, 0, null), snapshot.Stats);
+	}
+
+	[TestMethod]
+	[DataRow("top", QueuePosition.First)]
+	[DataRow("Up", QueuePosition.OneUp)]
+	[DataRow("down", QueuePosition.OneDown)]
+	[DataRow(" bottom ", QueuePosition.Last)]
+	public void move_bodies_parse(string to, QueuePosition expected)
+	{
+		Assert.IsTrue(QueueMapper.TryParse(new MoveRequest(to), out var position));
+		Assert.AreEqual(expected, position);
+	}
+
+	[TestMethod]
+	[DataRow(null)]
+	[DataRow("sideways")]
+	public void malformed_move_bodies_are_refused(string? to)
+		=> Assert.IsFalse(QueueMapper.TryParse(to is null ? null : new MoveRequest(to), out _));
 }

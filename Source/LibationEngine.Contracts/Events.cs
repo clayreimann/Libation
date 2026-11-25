@@ -20,5 +20,8 @@ public sealed record QueuePaused(PendingDecisionDto Pause) : EngineEvent;
 public sealed record QueueResumed(long PauseId, string Decision) : EngineEvent;
 public sealed record QueueWaiting(QueueWaitDto Wait) : EngineEvent;
 public sealed record QueueWaitEnded(long PauseId, string Reason) : EngineEvent;
+public sealed record QueueDispatchPaused : EngineEvent;
+public sealed record QueueDispatchResumed : EngineEvent;
+public sealed record BookLog(string JobId, string Level, string Message) : EngineEvent;
 
 public sealed record LocateScanProgress(LocateScanDto Scan) : EngineEvent;

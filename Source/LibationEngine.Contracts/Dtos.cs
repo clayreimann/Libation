@@ -97,11 +97,30 @@ public sealed record QueueWaitDto(
 	IReadOnlyList<string> Allowed,
 	IReadOnlyList<VolumeDto>? Volumes);
 
+/// <summary>Queued waiting, completed and errors count as the desktop queue's do; RunningSince is null when no run is in progress.</summary>
+public sealed record QueueStatsDto(int Queued, int Completed, int Errors, DateTimeOffset? RunningSince);
+
+/// <summary>Paused is the user's hold on starting new books, separate from <see cref="Pending"/> and <see cref="Waiting"/>.</summary>
 public sealed record QueueDto(
 	bool Running,
 	IReadOnlyList<QueueJobDto> Jobs,
 	IReadOnlyList<PendingDecisionDto> Pending,
-	QueueWaitDto? Waiting);
+	QueueWaitDto? Waiting,
+	bool Paused,
+	QueueStatsDto Stats);
+
+/// <summary>Outcome is removed for a queued job and cancelling for a running one, which finishes as cancelled.</summary>
+public sealed record CancelJobDto(string Id, string Outcome);
+
+/// <summary>Body of <c>POST /api/queue/jobs/{id}/move</c>; To is top, up, down or bottom.</summary>
+public sealed record MoveRequest(string? To);
+
+public sealed record FinishedJobDto(string Id, string Asin, string Title, string Result, string Status, DateTimeOffset FinishedAt);
+
+public sealed record JobLogLineDto(DateTimeOffset At, string Level, string Message);
+
+/// <summary>Dropped counts older lines pushed out of the bounded log.</summary>
+public sealed record JobLogDto(string JobId, int Dropped, IReadOnlyList<JobLogLineDto> Lines);
 
 /// <summary>Body of a decision POST; <see cref="Action"/>, <see cref="ApplyToAll"/> and <see cref="Remember"/> apply to badBook only.</summary>
 public sealed record DecisionRequest(string? Decision, string? Action = null, bool ApplyToAll = false, bool Remember = false);

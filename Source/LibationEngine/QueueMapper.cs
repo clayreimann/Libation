@@ -31,7 +31,7 @@ public static class QueueMapper
 	public static QueueDto Snapshot(LiberationQueue queue)
 	{
 		var active = queue.Jobs.GetActive();
-		var finished = queue.Jobs.Completed.ToHashSet();
+		var finished = queue.Jobs.GetCompleted().ToHashSet();
 		var jobs = active.Select(j => ToDto(j, "working"))
 			.Concat(queue.Jobs.GetAllItems()
 				.Where(j => !finished.Contains(j) && !active.Contains(j))
@@ -42,7 +42,32 @@ public static class QueueMapper
 			queue.Running,
 			jobs,
 			queue.Pending.Select(ToDto).ToList(),
-			queue.Waiting is { } wait ? ToDto(wait) : null);
+			queue.Waiting is { } wait ? ToDto(wait) : null,
+			queue.DispatchPaused,
+			ToDto(queue.Stats()));
+	}
+
+	public static QueueStatsDto ToDto(QueueStats stats) => new(stats.Queued, stats.Completed, stats.Errors, stats.RunningSince);
+
+	public static FinishedJobDto ToDto(FinishedJob job)
+		=> new(job.Id.Value, job.Asin, job.Title, Name(job.Result), Name(job.Status), job.FinishedAt);
+
+	public static JobLogLineDto ToDto(JobLogLine line) => new(line.At, Name(line.Level), line.Message);
+
+	public static JobLogDto ToDto(JobId id, JobLog log)
+		=> new(id.Value, log.Dropped, log.Snapshot().Select(ToDto).ToList());
+
+	public static bool TryParse(MoveRequest? request, out QueuePosition position)
+	{
+		position = default;
+		switch (request?.To?.Trim().ToLowerInvariant())
+		{
+			case "top": position = QueuePosition.First; return true;
+			case "up": position = QueuePosition.OneUp; return true;
+			case "down": position = QueuePosition.OneDown; return true;
+			case "bottom": position = QueuePosition.Last; return true;
+			default: return false;
+		}
 	}
 
 	/// <summary>Parses a decision body; <paramref name="error"/> says what was wrong when it returns false.</summary>

@@ -363,7 +363,7 @@ public static class ApiEndpoints
 			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapGet("/queue", () => QueueMapper.Snapshot(queue))
-			.WithSummary("Working and queued jobs, pending decisions and the current wait, if any.")
+			.WithSummary("Working and queued jobs, pending decisions, the current wait if any, whether the user has paused dispatch, and the desktop's counters: queued, completed, errors and when the run began.")
 			.WithName("getQueue").WithTags("queue")
 			.Produces<QueueDto>(StatusCodes.Status200OK);
 
@@ -374,6 +374,82 @@ public static class ApiEndpoints
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
 			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
 			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapDelete("/queue/jobs/{id}", async (string id) =>
+			await queue.CancelJobAsync(new JobId(id)) switch
+			{
+				CancelJobOutcome.Removed => Results.Json(new CancelJobDto(id, "removed")),
+				CancelJobOutcome.Cancelling => Results.Json(new CancelJobDto(id, "cancelling")),
+				_ => NoSuchJob()
+			})
+			.WithSummary("Removes a queued job, or cancels a running one, which then finishes as cancelled. 200 with the outcome, removed or cancelling; 404 unknown or finished job.")
+			.WithName("cancelJob").WithTags("queue")
+			.Produces<CancelJobDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
+
+		api.MapPost("/queue/cancel", async () =>
+		{
+			await queue.CancelAllAsync();
+			return Results.Json(QueueMapper.Snapshot(queue));
+		}).WithSummary("Clears the queue and cancels every running job, as desktop's Cancel All. 200 with the queue.")
+			.WithName("cancelAll").WithTags("queue")
+			.Produces<QueueDto>(StatusCodes.Status200OK);
+
+		api.MapPost("/queue/jobs/{id}/move", (string id, MoveRequest? body) =>
+		{
+			if (!QueueMapper.TryParse(body, out var position))
+				return Error("to must be one of top, up, down, bottom.", StatusCodes.Status400BadRequest);
+			return queue.MoveJob(new JobId(id), position) switch
+			{
+				MoveJobOutcome.Moved => Results.Json(QueueMapper.Snapshot(queue)),
+				MoveJobOutcome.NotQueued => Error("Only a queued job can be moved.", StatusCodes.Status409Conflict),
+				_ => NoSuchJob()
+			};
+		}).WithSummary("Moves a queued job to the top, up one, down one or the bottom. 200 with the queue, 400 bad body, 404 unknown job, 409 job not queued.")
+			.WithName("moveJob").WithTags("queue")
+			.Produces<QueueDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapPost("/queue/pause", () =>
+		{
+			queue.SetDispatchPaused(true);
+			return Results.Json(QueueMapper.Snapshot(queue));
+		}).WithSummary("Stops starting new jobs; running ones finish. Held until resumed, across runs. 200 with the queue, also when already paused.")
+			.WithName("pauseQueue").WithTags("queue")
+			.Produces<QueueDto>(StatusCodes.Status200OK);
+
+		api.MapPost("/queue/resume", () =>
+		{
+			queue.SetDispatchPaused(false);
+			return Results.Json(QueueMapper.Snapshot(queue));
+		}).WithSummary("Resumes starting jobs after a pause. 200 with the queue, also when not paused.")
+			.WithName("resumeQueue").WithTags("queue")
+			.Produces<QueueDto>(StatusCodes.Status200OK);
+
+		api.MapGet("/queue/history", () => queue.History.Snapshot().Select(QueueMapper.ToDto).ToList())
+			.WithSummary("The last 200 finished jobs, newest first, with result, status and finish time.")
+			.WithName("getQueueHistory").WithTags("queue")
+			.Produces<IReadOnlyList<FinishedJobDto>>(StatusCodes.Status200OK);
+
+		api.MapDelete("/queue/history", () =>
+		{
+			queue.ClearFinished();
+			return Results.Json(QueueMapper.Snapshot(queue));
+		}).WithSummary("Forgets finished jobs, their logs and the completed and error counts, as desktop's Clear Finished. 200 with the queue.")
+			.WithName("clearQueueHistory").WithTags("queue")
+			.Produces<QueueDto>(StatusCodes.Status200OK);
+
+		api.MapGet("/queue/jobs/{id}/log", (string id) =>
+		{
+			var jobId = new JobId(id);
+			var log = queue.FindJob(jobId)?.Log ?? queue.History.Find(jobId)?.Log;
+			return log is null ? NoSuchJob() : Results.Json(QueueMapper.ToDto(jobId, log));
+		}).WithSummary("A job's last 500 log lines, oldest first, with secrets and URL queries removed; works for queued, running and finished jobs. 404 unknown job.")
+			.WithName("getJobLog").WithTags("queue")
+			.Produces<JobLogDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
 		api.MapGet("/events", async (HttpContext context) =>
 		{
@@ -397,6 +473,8 @@ public static class ApiEndpoints
 		: null;
 
 	private static IResult NoSuchBook() => Error("No such book.", StatusCodes.Status404NotFound);
+
+	private static IResult NoSuchJob() => Error("No such job.", StatusCodes.Status404NotFound);
 
 	private static bool TryParseStatus(string? text, out LiberatedStatus status)
 	{
