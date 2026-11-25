@@ -21,9 +21,14 @@ function currentTab(): Tab {
 export function App() {
   const [tab, setTab] = useState<Tab>(currentTab);
   const { queue } = useLive();
+  const [handoff, setHandoff] = useState<string | undefined>();
 
   useEffect(() => {
-    const onHash = () => setTab(currentTab());
+    const onHash = () => {
+      const next = currentTab();
+      if (next !== "library") setHandoff(undefined);
+      setTab(next);
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -50,8 +55,15 @@ export function App() {
       </header>
       <StatusBar />
       <main>
-        {tab === "library" && <LibraryPage />}
-        {tab === "queue" && <QueuePage />}
+        {tab === "library" && <LibraryPage initialQuery={handoff} />}
+        {tab === "queue" && (
+          <QueuePage
+            onSearch={(q) => {
+              setHandoff(q);
+              window.location.hash = "#/library";
+            }}
+          />
+        )}
         {tab === "settings" && <SettingsPage />}
       </main>
     </>

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api/client";
+import { api, type ExportFormat } from "../api/client";
 import type { Book, LibraryPage as Page } from "../api/types";
 import { notOk, type BulkSummary } from "../bulk";
 import { columns, loadVisible, saveVisible, toggleColumn, type ColumnId } from "../columns";
 import { seriesQuery, withHideEpisodes } from "../filters";
 import { formatDate, formatLength, stars } from "../format";
+import { groupPodcasts, needsParents, type ParentRow } from "../podcasts";
+import { defaultQuery } from "../quickFilters";
+import { useQuickFilters } from "../useQuickFilters";
 import { loadSort, saveSort, toggleSort, type SortKey, type SortState } from "../sort";
 import { useLive } from "../live";
 import { BookDetails } from "./BookDetails";
@@ -17,6 +20,13 @@ import { QuickFilters } from "./QuickFilters";
 import { SyntaxHelp } from "./SyntaxHelp";
 
 const PAGE_SIZE = 50;
+const exportFormats: { id: ExportFormat; label: string }[] = [
+  { id: "csv", label: "CSV" },
+  { id: "xlsx", label: "Excel (XLSX)" },
+  { id: "json", label: "JSON" },
+];
+
+let defaultFilterHandled = false;
 
 interface BulkState {
   label: string;
@@ -36,10 +46,13 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
-export function LibraryPage() {
+export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
   const { onBookEvent } = useLive();
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialQuery ?? "");
   const q = useDebounced(input, 300);
+  const qf = useQuickFilters();
+  const [parents, setParents] = useState<Book[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [trash, setTrash] = useState(false);
   const [offset, setOffset] = useState(0);
   const [page, setPage] = useState<Page | null>(null);
@@ -57,6 +70,13 @@ export function LibraryPage() {
   const abort = useRef<AbortController | null>(null);
 
   const effectiveQ = withHideEpisodes(q, hideEpisodes);
+
+  useEffect(() => {
+    if (defaultFilterHandled || !qf.saved) return;
+    defaultFilterHandled = true;
+    const dq = defaultQuery(qf.saved);
+    if (dq && !initialQuery) setInput((cur) => cur || dq);
+  }, [qf.saved, initialQuery]);
   const show = (id: ColumnId) => visible.includes(id);
 
   useEffect(() => {
@@ -77,6 +97,18 @@ export function LibraryPage() {
     return () => ctl.abort();
   }, [offset, effectiveQ, trash, sort, reload]);
 
+  const items = page?.items ?? [];
+  const hasEpisodes = needsParents(items);
+  useEffect(() => {
+    if (!hasEpisodes) {
+      setParents([]);
+      return;
+    }
+    const ctl = new AbortController();
+    api.podcasts({ q: effectiveQ, trash }, ctl.signal).then(setParents, () => undefined);
+    return () => ctl.abort();
+  }, [hasEpisodes, effectiveQ, trash, reload]);
+
   const patchRow = (b: Book) => {
     setDetail((d) => (d?.asin === b.asin ? b : d));
     setPage((p) => (p ? { ...p, items: p.items.map((i) => (i.asin === b.asin ? b : i)) } : p));
@@ -90,7 +122,7 @@ export function LibraryPage() {
     setSelected(new Set());
   };
 
-  const items = page?.items ?? [];
+  const rows = groupPodcasts(items, parents);
   const total = page?.total ?? 0;
   const pageAsins = items.map((b) => b.asin);
   const allOnPage = pageAsins.length > 0 && pageAsins.every((a) => selected.has(a));
@@ -196,6 +228,96 @@ export function LibraryPage() {
     resetView();
   };
 
+  const bookRow = (b: Book, nested = false) => (
+      <tr key={b.asin} className={`clickable ${nested ? "episode" : ""} ${selected.has(b.asin) ? "selected" : ""} ${b.absentFromLastScan ? "absent" : ""}`} onClick={() => setDetail(b)}>
+        <td className="check" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={selected.has(b.asin)} onChange={() => toggle(b.asin)} disabled={busy} aria-label={`Select ${b.title}`} />
+        </td>
+        <td className="cover-col">
+          <Cover asin={b.asin} pictureId={b.pictureId} size="small" />
+        </td>
+        <td>
+          <button
+            className="linklike title"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDetail(b);
+            }}
+          >
+            {b.title}
+          </button>
+          {b.isAudiblePlus && <span className="pill plus" title={b.includedUntil ? `Included until ${formatDate(b.includedUntil)}` : "Audible Plus"}>Plus</span>}
+          {b.subtitle && <div className="muted small">{b.subtitle}</div>}
+          <div className="show-sm muted small">{[...b.authors, formatLength(b.lengthInMinutes)].join(" \u00b7 ")}</div>
+        </td>
+        {visible.map((id) => (
+          <td key={id} className={`hide-sm ${id === "length" || id === "purchased" || id === "lastDownload" || id === "myRating" || id === "rating" ? "nowrap" : ""}`}>
+            {cell(id, b, setInputQuery)}
+          </td>
+        ))}
+        <td className="actions" onClick={(e) => e.stopPropagation()}>
+          {!b.inTrash && (
+            <button onClick={() => rowAction("Liberate", () => api.liberateBook(b.asin))} disabled={busy}>
+              Liberate
+            </button>
+          )}
+          <button onClick={() => rowAction(b.inTrash ? "Restore" : "Trash", () => (b.inTrash ? api.restore(b.asin) : api.trash(b.asin)))} disabled={busy}>
+            {b.inTrash ? "Restore" : "Trash"}
+          </button>
+        </td>
+      </tr>
+  );
+
+  const toggleExpanded = (asin: string) =>
+    setExpanded((s) => {
+      const n = new Set(s);
+      if (!n.delete(asin)) n.add(asin);
+      return n;
+    });
+
+  const parentRows = ({ parent, episodes }: ParentRow) => {
+    const open = expanded.has(parent.asin);
+    const asins = episodes.map((e) => e.asin);
+    const all = asins.every((a) => selected.has(a));
+    return [
+      <tr key={parent.asin} className="clickable parent" onClick={() => toggleExpanded(parent.asin)}>
+        <td className="check" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={all}
+            onChange={() =>
+              setSelected((s) => {
+                const n = new Set(s);
+                for (const a of asins) all ? n.delete(a) : n.add(a);
+                return n;
+              })
+            }
+            disabled={busy}
+            aria-label={`Select episodes of ${parent.title}`}
+          />
+        </td>
+        <td className="cover-col">
+          <Cover asin={parent.asin} pictureId={parent.pictureId} size="small" />
+        </td>
+        <td>
+          <button className="linklike title" aria-expanded={open} onClick={(e) => { e.stopPropagation(); toggleExpanded(parent.asin); }}>
+            <span aria-hidden="true">{open ? "\u25be " : "\u25b8 "}</span>
+            {parent.title}
+          </button>
+          <span className="pill">{episodes.length} {episodes.length === 1 ? "episode" : "episodes"}</span>
+          <div className="show-sm muted small">{parent.authors.join(", ")}</div>
+        </td>
+        {visible.map((id) => (
+          <td key={id} className="hide-sm">
+            {id === "authors" ? parent.authors.join(", ") : id === "narrators" ? parent.narrators.join(", ") : id === "category" ? parent.categories.join(", ") : null}
+          </td>
+        ))}
+        <td />
+      </tr>,
+      ...(open ? episodes.map((e) => bookRow(e, true)) : []),
+    ];
+  };
+
   const busy = bulk?.running === true;
   const end = Math.min(offset + PAGE_SIZE, total);
 
@@ -222,7 +344,7 @@ export function LibraryPage() {
           aria-label="Search library"
         />
         <SyntaxHelp onPick={pickSyntax} />
-        {!trash && <QuickFilters current={input} onApply={applyQuery} />}
+        {!trash && <QuickFilters current={input} qf={qf} onApply={applyQuery} />}
         <label className="check-label">
           <input
             type="checkbox"
@@ -234,6 +356,27 @@ export function LibraryPage() {
           />
           Hide podcast episodes
         </label>
+        <Popover label="Export...">
+          {(close) => (
+            <div className="menu-list">
+              <p className="muted small">{trash ? "Trash" : "Library"}{effectiveQ ? `, filtered by ${effectiveQ}` : ""}</p>
+              <ul className="plain">
+                {exportFormats.map((f) => (
+                  <li key={f.id}>
+                    {error ? (
+                      <span className="muted">{f.label}</span>
+                    ) : (
+                      <a className="menu-link" href={api.exportUrl(f.id, { q: effectiveQ, trash })} download onClick={close}>
+                        {f.label}
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {error && <p className="error small">Fix the search first.</p>}
+            </div>
+          )}
+        </Popover>
         <Popover label="Locate audiobooks" className="wide">{() => <LocatePanel />}</Popover>
         <Popover label="Columns">
           {() => (
@@ -302,45 +445,7 @@ export function LibraryPage() {
             </tr>
           </thead>
           <tbody>
-            {items.map((b) => (
-              <tr key={b.asin} className={`clickable ${selected.has(b.asin) ? "selected" : ""} ${b.absentFromLastScan ? "absent" : ""}`} onClick={() => setDetail(b)}>
-                <td className="check" onClick={(e) => e.stopPropagation()}>
-                  <input type="checkbox" checked={selected.has(b.asin)} onChange={() => toggle(b.asin)} disabled={busy} aria-label={`Select ${b.title}`} />
-                </td>
-                <td className="cover-col">
-                  <Cover asin={b.asin} pictureId={b.pictureId} size="small" />
-                </td>
-                <td>
-                  <button
-                    className="linklike title"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDetail(b);
-                    }}
-                  >
-                    {b.title}
-                  </button>
-                  {b.isAudiblePlus && <span className="pill plus" title={b.includedUntil ? `Included until ${formatDate(b.includedUntil)}` : "Audible Plus"}>Plus</span>}
-                  {b.subtitle && <div className="muted small">{b.subtitle}</div>}
-                  <div className="show-sm muted small">{[...b.authors, formatLength(b.lengthInMinutes)].join(" \u00b7 ")}</div>
-                </td>
-                {visible.map((id) => (
-                  <td key={id} className={`hide-sm ${id === "length" || id === "purchased" || id === "lastDownload" || id === "myRating" || id === "rating" ? "nowrap" : ""}`}>
-                    {cell(id, b, setInputQuery)}
-                  </td>
-                ))}
-                <td className="actions" onClick={(e) => e.stopPropagation()}>
-                  {!b.inTrash && (
-                    <button onClick={() => rowAction("Liberate", () => api.liberateBook(b.asin))} disabled={busy}>
-                      Liberate
-                    </button>
-                  )}
-                  <button onClick={() => rowAction(b.inTrash ? "Restore" : "Trash", () => (b.inTrash ? api.restore(b.asin) : api.trash(b.asin)))} disabled={busy}>
-                    {b.inTrash ? "Restore" : "Trash"}
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {rows.map((r) => (r.kind === "book" ? bookRow(r.book) : parentRows(r)))}
             {page && items.length === 0 && (
               <tr>
                 <td colSpan={visible.length + 4} className="muted">
@@ -438,6 +543,7 @@ function cell(id: ColumnId, b: Book, search: (q: string) => void) {
           <span className={`pill book-${b.bookStatus}`}>{b.bookStatus}</span>
           {b.absentFromLastScan && <span className="pill warn" title="Absent from the last scan">Unavailable</span>}
           {b.pdfStatus && <span className={`pill book-${b.pdfStatus}`} title="PDF status">PDF</span>}
+          {b.partialDownload && <span className="pill warn" title="Partly downloaded file on disk">Partial</span>}
         </>
       );
     case "myRating":

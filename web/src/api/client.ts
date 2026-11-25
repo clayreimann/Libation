@@ -1,6 +1,6 @@
 import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, MoveTo, Queue, LocateScan, Settings, Stats, Status } from "./types";
+import type { Account, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, MoveTo, QuickFilters, Queue, LocateScan, Settings, Stats, Status } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -32,6 +32,7 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   return json as T;
 }
 
+export type ExportFormat = "csv" | "xlsx" | "json";
 export type LiberatedChoice = "liberated" | "notLiberated";
 export type PdfChoice = LiberatedChoice;
 type BulkOpts = Omit<ChunkOptions, "chunkSize">;
@@ -59,6 +60,20 @@ export const api = {
     if (params.trash) qs.set("trash", "true");
     return request<AsinList>("GET", `/api/library/asins?${qs}`, undefined, signal);
   },
+  podcasts: (params: { q: string; trash: boolean }, signal?: AbortSignal) => {
+    const qs = new URLSearchParams();
+    if (params.q.trim()) qs.set("q", params.q.trim());
+    if (params.trash) qs.set("trash", "true");
+    return request<Book[]>("GET", `/api/library/podcasts?${qs}`, undefined, signal);
+  },
+  exportUrl: (format: ExportFormat, params: { q: string; trash: boolean }) => {
+    const qs = new URLSearchParams({ format });
+    if (params.q.trim()) qs.set("q", params.q.trim());
+    if (params.trash) qs.set("trash", "true");
+    return `/api/library/export?${qs}`;
+  },
+  quickFilters: () => request<QuickFilters>("GET", "/api/quick-filters"),
+  putQuickFilters: (body: QuickFilters) => request<QuickFilters>("PUT", "/api/quick-filters", body),
   stats: (signal?: AbortSignal) => request<Stats>("GET", "/api/library/stats", undefined, signal),
   coverUrl: (asin: string, size: "small" | "large") => `${book(asin)}/cover?size=${size}`,
   trash: (asin: string) => request<Book>("POST", `${book(asin)}/trash`),

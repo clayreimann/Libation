@@ -183,3 +183,11 @@ tr.absent td:not(.check):not(.actions) { opacity: 0.6; }
 .log-time { color: var(--muted); }
 .log-line.level-warning { color: var(--warn); }
 .log-line.level-error { color: var(--bad); }
+.qf-item { padding: 3px 0 !important; border: 0 !important; }
+.qf-item .qf-row { padding: 0 !important; }
+.qf-name, .qf-filter { flex: 1; min-width: 0; }
+.qf-filter { width: 100%; margin-top: 2px; font-family: monospace; }
+tr.parent td { background: var(--panel); }
+tr.episode td:nth-child(3) { padding-left: 28px; }
+.menu-link { display: block; padding: 4px 8px; color: var(--text); text-decoration: none; border-radius: 6px; }
+.menu-link:hover { background: var(--bg); }

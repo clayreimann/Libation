@@ -175,7 +175,7 @@ function HistoryRow({ item, onOpen }: { item: FinishedJob; onOpen: (asin: string
   );
 }
 
-export function QueuePage() {
+export function QueuePage({ onSearch }: { onSearch: (q: string) => void }) {
   const { queue, connected, onBookEvent } = useLive();
   const { jobs, progress, pending, waiting, running, paused, stats, logs } = queue;
   const [error, setError] = useState<string | null>(null);
@@ -293,9 +293,9 @@ export function QueuePage() {
           book={opened}
           onChange={setOpened}
           onClose={() => setOpened(null)}
-          onSearch={() => {
+          onSearch={(q) => {
             setOpened(null);
-            window.location.hash = "#/library";
+            onSearch(q);
           }}
         />
       )}
