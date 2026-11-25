@@ -299,6 +299,23 @@ public class DbEngineDataTests
 	}
 
 	[TestMethod]
+	public async Task LocateScan_reads_the_asin_from_an_mp3_tagged_by_ffmpeg()
+	{
+		var folder = Path.Combine(booksDirectory, "real");
+		Directory.CreateDirectory(folder);
+		File.Copy(Path.Combine(AppContext.BaseDirectory, "Fixtures", "tagged-by-ffmpeg.mp3"), Path.Combine(folder, "book.mp3"));
+
+		Assert.AreEqual(LocateOutcome.Ok, data.StartLocateScan(folder, _ => { }).Outcome);
+		for (var i = 0; i < 100 && data.GetLocateScan().State == "running"; i++)
+			await Task.Delay(100);
+
+		var scan = data.GetLocateScan();
+		Assert.AreEqual(1, scan.Found);
+		Assert.AreEqual(1, scan.Matched);
+		Assert.AreEqual("Liberated", data.GetBook("B0PLAIN0001")!.BookStatus);
+	}
+
+	[TestMethod]
 	public void LocateScan_rejects_folders_outside_Books()
 	{
 		var elsewhere = Path.Combine(directory, "elsewhere");

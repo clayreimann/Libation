@@ -311,7 +311,7 @@ public class AudioFileStorage : AudibleFileStorage
 					var asin = id3?.Children
 						.OfType<Mpeg4Lib.ID3.TXXXFrame>()
 						.FirstOrDefault(f => f.FieldName == "AUDIBLE_ASIN")
-						?.FieldValue;
+						?.FieldValue?.Trim('\0', ' ');
 
 					if (!string.IsNullOrWhiteSpace(asin))
 						audioFile = new FilePathCache.CacheEntry(asin, FileType.Audio, path);
