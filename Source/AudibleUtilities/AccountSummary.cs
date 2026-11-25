@@ -26,6 +26,9 @@ public sealed class AccountSummary
 	/// </summary>
 	public bool RequiresReRegistration { get; }
 
+	/// <summary>The marketplace name, such as us or uk; not a secret.</summary>
+	public string? LocaleName { get; }
+
 	private readonly string ownerFacingLabel;
 	private readonly string accountId;
 
@@ -36,6 +39,7 @@ public sealed class AccountSummary
 		RequiresReRegistration = account.RequiresReRegistration;
 		ownerFacingLabel = AccountCredentialStatus.FormatAccountLabel(account);
 		accountId = account.AccountId;
+		LocaleName = account.Locale?.Name;
 	}
 
 	/// <summary>The login id, for the account's owner and authenticated clients; a method so reflection cannot reach it.</summary>

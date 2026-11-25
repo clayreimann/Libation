@@ -303,7 +303,7 @@ public static class ApiEndpoints
 			var target = await logins.CompleteAsync(loginId, body?.ResponseUrl, ct);
 			if (target is null)
 				return Error("No such pending login: it was already used, cancelled or has expired.", StatusCodes.Status404NotFound);
-			authMonitor?.Clear(target.AccountId);
+			authMonitor?.SignedIn(target.AccountId, target.LocaleName);
 			var account = data.GetAccounts().FirstOrDefault(a => a.AccountId.Equals(target.AccountId, StringComparison.OrdinalIgnoreCase) && a.Locale == target.LocaleName);
 			return account is null
 				? Error("Signed in, but the account could not be read back.", StatusCodes.Status500InternalServerError)

@@ -45,6 +45,39 @@ public class AccountAuthMonitorTests
 	}
 
 	[TestMethod]
+	public async Task A_successful_scan_publishes_signed_in_for_each_flagged_account_once()
+	{
+		var events = new EventBroadcaster();
+		using var sub = events.Subscribe();
+		using var monitor = new AccountAuthMonitor(events);
+		var id = $"{Guid.NewGuid():N}@example.com";
+		await Fail(NeedsReRegistration(id));
+
+		monitor.ClearAll();
+		monitor.ClearAll();
+
+		var signedIn = new List<AccountSignedIn>();
+		while (sub.Reader.TryRead(out var evt))
+			if (evt is AccountSignedIn s && s.AccountId == id)
+				signedIn.Add(s);
+		Assert.AreEqual(1, signedIn.Count);
+		Assert.AreEqual("us", signedIn[0].Locale);
+	}
+
+	[TestMethod]
+	public void SignedIn_publishes_even_when_the_account_was_not_flagged()
+	{
+		var events = new EventBroadcaster();
+		using var sub = events.Subscribe();
+		using var monitor = new AccountAuthMonitor(events);
+
+		monitor.SignedIn("a@example.com", "uk");
+
+		Assert.IsTrue(sub.Reader.TryRead(out var evt));
+		Assert.AreEqual(new AccountSignedIn("a@example.com", "uk") { At = evt!.At }, evt);
+	}
+
+	[TestMethod]
 	public async Task Clear_unflags_one_account_and_dispose_stops_listening()
 	{
 		var events = new EventBroadcaster();

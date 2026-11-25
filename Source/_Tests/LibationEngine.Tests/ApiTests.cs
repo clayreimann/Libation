@@ -1507,6 +1507,34 @@ public class ApiTests
 	}
 
 	[TestMethod]
+	public async Task A_completed_login_publishes_account_signed_in()
+	{
+		await using var rig = await LoginRig.Create();
+		using var request = Authed(HttpMethod.Get, rig.Base + "/api/events");
+		using var response = await rig.Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+		using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+
+		var id = await rig.Start("a@example.com");
+		Assert.AreEqual(HttpStatusCode.OK, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete())).Status);
+
+		string? current = null, data = null;
+		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+		while (data is null)
+		{
+			var line = await reader.ReadLineAsync(timeout.Token);
+			Assert.IsNotNull(line);
+			if (line.StartsWith("event: "))
+				current = line[7..];
+			else if (line.StartsWith("data: ") && current == nameof(AccountSignedIn))
+				data = line[6..];
+		}
+		var evt = JsonDocument.Parse(data).RootElement;
+		Assert.AreEqual("a@example.com", evt.GetProperty("accountId").GetString());
+		Assert.AreEqual("us", evt.GetProperty("locale").GetString());
+		Assert.IsTrue(evt.TryGetProperty("at", out _));
+	}
+
+	[TestMethod]
 	public async Task Login_with_a_bad_response_url_is_400_and_stays_usable()
 	{
 		await using var rig = await LoginRig.Create();
