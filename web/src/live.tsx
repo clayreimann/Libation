@@ -87,7 +87,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         dispatch({ kind: "event", evt });
         if (needsQueueRefetch(evt)) scheduleQueueRefetch();
         if (needsStatusRefetch(evt)) refreshStatus();
-        if (evt.type === "BookFinished") bookListeners.current.forEach((fn) => fn());
+        if (evt.type === "BookFinished" || evt.type === "CycleFinished") bookListeners.current.forEach((fn) => fn());
       });
     }
 

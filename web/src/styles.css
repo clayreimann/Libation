@@ -130,3 +130,39 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .actions { white-space: normal; }
   .actions button { display: block; margin: 0 0 4px auto; }
 }
+
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row input:not([type]), .row input[type="text"] { flex: 1; min-width: 160px; }
+input:not([type]), input[type="text"], select {
+  font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px;
+}
+.check-label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+tr.clickable { cursor: pointer; }
+button.linklike { border: 0; background: none; padding: 0; text-align: left; color: var(--text); }
+button.linklike:hover:not(:disabled) { color: var(--accent); text-decoration: underline; }
+
+.popover { position: relative; display: inline-block; }
+.popover-panel { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; min-width: 200px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); }
+.popover.wide .popover-panel { width: min(520px, 90vw); max-height: 70vh; overflow: auto; }
+.menu-list li { padding: 0; border: 0; }
+.menu-list button { width: 100%; text-align: left; border: 0; }
+.qf-row { display: flex; gap: 4px; padding: 3px 0 !important; border: 0 !important; }
+.qf-apply { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qf-foot { display: flex; gap: 8px; margin-top: 8px; }
+.syntax h4 { margin: 12px 0 4px; }
+.syntax pre { margin: 0 0 6px; padding: 6px 8px; background: var(--bg); border-radius: 6px; font-size: 12px; overflow-x: auto; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { padding: 1px 8px; font-size: 12px; border-radius: 10px; }
+
+.counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.count { border-radius: 16px; }
+.count.ok strong { color: var(--ok); }
+.count.bad strong { color: var(--bad); }
+.count.warn strong { color: var(--warn); }
+
+.backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 19; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100vw); z-index: 20; overflow-y: auto; background: var(--panel); border-left: 1px solid var(--border); padding: 16px; box-shadow: -6px 0 24px rgba(0, 0, 0, 0.25); }
+.drawer h2 { margin: 0 0 4px; font-size: 18px; overflow-wrap: anywhere; }
+.drawer-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+.drawer-dl { grid-template-columns: 1fr 1fr; }
+.drawer-actions { margin-top: 16px; }

@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { Book, LibraryPage as Page } from "../api/types";
-import { runBulk } from "../bulk";
+import type { BulkResult } from "../bulk";
+import { withHideEpisodes } from "../filters";
 import { formatLength } from "../format";
 import { useLive } from "../live";
+import { BookDetails } from "./BookDetails";
+import { BulkMenu, type BulkOp } from "./BulkMenu";
+import { CountsBar } from "./CountsBar";
+import { QuickFilters } from "./QuickFilters";
+import { SyntaxHelp } from "./SyntaxHelp";
 
 const PAGE_SIZE = 50;
 const ALL_PAGE = 1000;
@@ -11,6 +17,7 @@ const ALL_PAGE = 1000;
 interface BulkState {
   label: string;
   done: number;
+  skipped: number;
   total: number;
   running: boolean;
   failed: { item: string; error: string }[];
@@ -44,9 +51,11 @@ export function LibraryPage() {
   const [bulk, setBulk] = useState<BulkState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [gathering, setGathering] = useState(false);
+  const [hideEpisodes, setHideEpisodes] = useState(false);
+  const [detail, setDetail] = useState<Book | null>(null);
   const abort = useRef<AbortController | null>(null);
 
-  const effectiveQ = trash ? "" : q;
+  const effectiveQ = trash ? "" : withHideEpisodes(q, hideEpisodes);
 
   useEffect(() => {
     const ctl = new AbortController();
@@ -65,6 +74,12 @@ export function LibraryPage() {
     );
     return () => ctl.abort();
   }, [offset, effectiveQ, trash, reload]);
+
+  const patchRow = (b: Book) => {
+    setDetail((d) => (d?.asin === b.asin ? b : d));
+    setPage((p) => (p ? { ...p, items: p.items.map((i) => (i.asin === b.asin ? b : i)) } : p));
+    setReload((n) => n + 1);
+  };
 
   useEffect(() => onBookEvent(() => setReload((n) => n + 1)), [onBookEvent]);
 
@@ -110,19 +125,18 @@ export function LibraryPage() {
     }
   };
 
-  const runAction = useCallback(async (label: string, asins: string[], worker: (asin: string) => Promise<unknown>) => {
+  const runAction = useCallback(async (label: string, asins: string[], run: (o: { signal: AbortSignal; onProgress: (d: number, t: number) => void }) => Promise<BulkResult<string>>) => {
     const ctl = new AbortController();
     abort.current = ctl;
-    setBulk({ label, done: 0, total: asins.length, running: true, failed: [], cancelled: false });
-    const res = await runBulk(asins, {
-      concurrency: 4,
+    setBulk({ label, done: 0, skipped: 0, total: asins.length, running: true, failed: [], cancelled: false });
+    const res = await run({
       signal: ctl.signal,
-      worker,
       onProgress: (done, total) => setBulk((b) => (b ? { ...b, done, total } : b)),
     });
     setBulk({
       label,
-      done: res.ok + res.failed.length,
+      done: res.ok + res.skipped + res.failed.length,
+      skipped: res.skipped,
       total: asins.length,
       running: false,
       failed: res.failed.map((f) => ({ item: f.item, error: f.error })),
@@ -132,7 +146,32 @@ export function LibraryPage() {
     setReload((n) => n + 1);
   }, []);
 
-  const bulkTrash = () => runAction(trash ? "Restoring" : "Trashing", [...selected], trash ? api.restore : api.trash);
+  const runBulkOp = (op: BulkOp) => {
+    const asins = [...selected];
+    switch (op.kind) {
+      case "liberate":
+        return runAction("Queueing", asins, (o) => api.bulkLiberate(asins, o));
+      case "trash":
+        return runAction(trash ? "Restoring" : "Trashing", asins, (o) => (trash ? api.bulkRestore(asins, o) : api.bulkTrash(asins, o)));
+      case "status":
+        return runAction("Setting status", asins, (o) => api.bulkSetStatus(asins, op.status, o));
+      case "tags":
+        return runAction(op.mode === "add" ? "Adding tags" : "Removing tags", asins, (o) =>
+          op.mode === "add" ? api.bulkAddTags(asins, op.tags, o) : api.bulkRemoveTags(asins, op.tags, o),
+        );
+    }
+  };
+
+  const applyQuery = (next: string) => {
+    setTrash(false);
+    setInput(next);
+    resetView();
+  };
+
+  const pickSyntax = (text: string) => {
+    setInput((cur) => `${cur.trim()} ${text}`.trim());
+    resetView();
+  };
 
   const rowAction = async (label: string, fn: () => Promise<unknown>) => {
     setNotice(null);
@@ -170,7 +209,22 @@ export function LibraryPage() {
           }}
           aria-label="Search library"
         />
+        {!trash && <SyntaxHelp onPick={pickSyntax} />}
+        {!trash && <QuickFilters current={input} onApply={applyQuery} />}
+        <label className="check-label">
+          <input
+            type="checkbox"
+            checked={hideEpisodes}
+            disabled={trash}
+            onChange={(e) => {
+              setHideEpisodes(e.target.checked);
+              resetView();
+            }}
+          />
+          Hide podcast episodes
+        </label>
       </div>
+      {!trash && <CountsBar refreshKey={reload} onApply={applyQuery} />}
       {error && <p className="error">{error}</p>}
       {notice && <p className="error">{notice}</p>}
 
@@ -185,9 +239,7 @@ export function LibraryPage() {
           <button onClick={() => setSelected(new Set())} disabled={busy}>
             Clear
           </button>
-          <button className="primary" onClick={bulkTrash} disabled={busy}>
-            {trash ? "Restore" : "Move to trash"} ({selected.size})
-          </button>
+          <BulkMenu count={selected.size} trash={trash} disabled={busy} onRun={runBulkOp} />
         </div>
       )}
 
@@ -196,6 +248,7 @@ export function LibraryPage() {
           <div className="job-head">
             <span>
               {bulk.running ? `${bulk.label}...` : bulk.cancelled ? "Cancelled" : "Done"} {bulk.done} / {bulk.total}
+              {bulk.skipped > 0 && ` (${bulk.skipped} skipped)`}
             </span>
             {bulk.running ? (
               <button onClick={() => abort.current?.abort()}>Cancel</button>
@@ -239,12 +292,20 @@ export function LibraryPage() {
           </thead>
           <tbody>
             {items.map((b) => (
-              <tr key={b.asin} className={selected.has(b.asin) ? "selected" : ""}>
-                <td className="check">
+              <tr key={b.asin} className={`clickable ${selected.has(b.asin) ? "selected" : ""}`} onClick={() => setDetail(b)}>
+                <td className="check" onClick={(e) => e.stopPropagation()}>
                   <input type="checkbox" checked={selected.has(b.asin)} onChange={() => toggle(b.asin)} disabled={busy} aria-label={`Select ${b.title}`} />
                 </td>
                 <td>
-                  <div className="title">{b.title}</div>
+                  <button
+                    className="linklike title"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDetail(b);
+                    }}
+                  >
+                    {b.title}
+                  </button>
                   {b.subtitle && <div className="muted small">{b.subtitle}</div>}
                   <div className="show-sm muted small">{[...b.authors, formatLength(b.lengthInMinutes)].join(" \u00b7 ")}</div>
                 </td>
@@ -255,7 +316,7 @@ export function LibraryPage() {
                   <span className={`pill book-${b.bookStatus}`}>{b.bookStatus}</span>
                 </td>
                 <td className="hide-sm">{b.tags}</td>
-                <td className="actions">
+                <td className="actions" onClick={(e) => e.stopPropagation()}>
                   {!b.inTrash && (
                     <button onClick={() => rowAction("Liberate", () => api.liberateBook(b.asin))} disabled={busy}>
                       Liberate
@@ -287,6 +348,7 @@ export function LibraryPage() {
           Next
         </button>
       </div>
+      {detail && <BookDetails book={detail} onChange={patchRow} onClose={() => setDetail(null)} />}
     </div>
   );
 }
