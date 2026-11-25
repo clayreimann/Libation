@@ -70,3 +70,12 @@ describe("status and parsing", () => {
     expect(needsQueueRefetch(started)).toBe(true);
   });
 });
+
+describe("locate scan event", () => {
+  it("is subscribed and parsed", async () => {
+    const { eventTypes } = await import("./api/types");
+    expect(eventTypes).toContain("LocateScanProgress");
+    const evt = parseEvent("LocateScanProgress", '{"scan":{"state":"running","found":2}}');
+    expect(evt).toMatchObject({ type: "LocateScanProgress", scan: { found: 2 } });
+  });
+});

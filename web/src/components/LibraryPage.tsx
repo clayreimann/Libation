@@ -11,6 +11,7 @@ import { BookDetails } from "./BookDetails";
 import { BulkMenu, type BulkOp } from "./BulkMenu";
 import { CountsBar } from "./CountsBar";
 import { Cover } from "./Cover";
+import { LocatePanel } from "./LocatePanel";
 import { Popover } from "./Popover";
 import { QuickFilters } from "./QuickFilters";
 import { SyntaxHelp } from "./SyntaxHelp";
@@ -233,6 +234,7 @@ export function LibraryPage() {
           />
           Hide podcast episodes
         </label>
+        <Popover label="Locate audiobooks" className="wide">{() => <LocatePanel />}</Popover>
         <Popover label="Columns">
           {() => (
             <div className="menu-list">

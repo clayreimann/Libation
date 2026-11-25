@@ -5,6 +5,7 @@ import { descriptionText } from "../description";
 import { audibleUrl, seriesQuery } from "../filters";
 import { formatDate, formatLength, formatTime, humanize, stars } from "../format";
 import { normalizeTags } from "../tags";
+import { booksFolder } from "../booksFolder";
 import { Cover } from "./Cover";
 
 interface Props {
@@ -24,6 +25,12 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
   const [detail, setDetail] = useState<BookDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [books, setBooks] = useState("");
+  const [locatePath, setLocatePath] = useState("");
+
+  useEffect(() => {
+    void booksFolder().then(setBooks);
+  }, []);
   const [tags, setTags] = useState(book.tags);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; bad: boolean } | null>(null);
@@ -31,6 +38,7 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
   useEffect(() => {
     setTags(book.tags);
     setMsg(null);
+    setLocatePath("");
   }, [book.asin]);
 
   useEffect(() => {
@@ -205,6 +213,21 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
             </option>
           )}
         </select>
+
+        <h3>Locate file</h3>
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (locatePath.trim()) void run("Locate file", () => api.locateFile(book.asin, locatePath.trim()), "File located; marked liberated.");
+          }}
+        >
+          <input value={locatePath} onChange={(e) => setLocatePath(e.target.value)} placeholder={books ? `${books.replace(/\/$/, "")}/Author/Book.m4b` : "/absolute/path/book.m4b"} aria-label="Path of an existing audio file on the server" disabled={busy} />
+          <button type="submit" disabled={busy || !locatePath.trim()}>
+            Locate
+          </button>
+        </form>
+        <p className="muted small">An existing audio file on the server{books ? <>, inside <code>{books}</code></> : ""}.</p>
 
         <div className="row drawer-actions">
           {!book.inTrash && (

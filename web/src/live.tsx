@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { api } from "./api/client";
-import { eventTypes, type Status } from "./api/types";
+import { eventTypes, type LocateScan, type Status } from "./api/types";
 import {
   applyQueueEvent,
   applySnapshot,
@@ -17,6 +17,7 @@ interface Live {
   status: Status | null;
   statusError: string | null;
   queue: QueueView;
+  locateScan: LocateScan | null;
   refreshQueue: () => void;
   refreshStatus: () => void;
   setStatus: (s: Status) => void;
@@ -41,6 +42,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [locateScan, setLocateScan] = useState<LocateScan | null>(null);
   const [queue, dispatch] = useReducer(reduce, emptyQueue);
   const bookListeners = useRef(new Set<() => void>());
 
@@ -64,6 +66,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     refreshStatus();
     refreshQueue();
+    api.locateScan().then(setLocateScan, () => undefined);
 
     let queueTimer: number | undefined;
     const scheduleQueueRefetch = () => {
@@ -87,6 +90,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         dispatch({ kind: "event", evt });
         if (needsQueueRefetch(evt)) scheduleQueueRefetch();
         if (needsStatusRefetch(evt)) refreshStatus();
+        if (evt.type === "LocateScanProgress") {
+          setLocateScan(evt.scan);
+          if (evt.scan.state !== "running") bookListeners.current.forEach((fn) => fn());
+        }
         if (evt.type === "BookFinished" || evt.type === "CycleFinished") bookListeners.current.forEach((fn) => fn());
       });
     }
@@ -103,8 +110,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ connected, status, statusError, queue, refreshQueue, refreshStatus, setStatus, onBookEvent }),
-    [connected, status, statusError, queue, refreshQueue, refreshStatus, onBookEvent],
+    () => ({ connected, status, statusError, queue, locateScan, refreshQueue, refreshStatus, setStatus, onBookEvent }),
+    [connected, status, statusError, queue, locateScan, refreshQueue, refreshStatus, onBookEvent],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

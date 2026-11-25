@@ -1,6 +1,6 @@
 import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, AsinList, BulkResult, Book, BookDetail, DecisionRequest, LibraryPage, Queue, Settings, Stats, Status } from "./types";
+import type { Account, AsinList, BulkResult, Book, BookDetail, DecisionRequest, LibraryPage, Queue, LocateScan, Settings, Stats, Status } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -67,6 +67,9 @@ export const api = {
   getBook: (asin: string, signal?: AbortSignal) => request<BookDetail>("GET", book(asin), undefined, signal),
   setTags: (asin: string, tags: string) => request<Book>("PUT", `${book(asin)}/tags`, { tags }),
   setStatus: (asin: string, status: LiberatedChoice) => request<Book>("PUT", `${book(asin)}/status`, { status }),
+  locateFile: (asin: string, path: string) => request<BookDetail>("POST", `${book(asin)}/locate`, { path }),
+  startLocateScan: (folder: string) => request<LocateScan>("POST", "/api/library/locate-scan", { folder }),
+  locateScan: () => request<LocateScan>("GET", "/api/library/locate-scan"),
   scan: () => request<Status>("POST", "/api/scan"),
   liberate: () => request<Status>("POST", "/api/liberate"),
   decide: (id: number, body: DecisionRequest) => request<Queue>("POST", `/api/queue/decisions/${id}`, body),

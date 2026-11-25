@@ -16,6 +16,7 @@ export type Status = Fix<S["StatusDto"]>;
 export type Account = Fix<S["AccountDto"]>;
 export type Book = Fix<S["BookDto"]>;
 export type BookDetail = Book & Required<Pick<Fix<S["BookDetailDto"]>, "description" | "publisher" | "language" | "copyright" | "isAbridged" | "datePublished" | "categoryLadders" | "audioFileExists" | "partialDownload">>;
+export type LocateScan = Fix<S["LocateScanDto"]>;
 export type Stats = Fix<S["BackupCountsDto"]>;
 export type AsinList = Fix<S["LibraryAsinsDto"]>;
 export type LibraryPage = Fix<S["LibraryPageDto"]>;
@@ -47,10 +48,11 @@ export type EngineEvent = { at?: string } & (
   | { type: "QueueResumed"; pauseId: number; decision: string }
   | { type: "QueueWaiting"; wait: QueueWait }
   | { type: "QueueWaitEnded"; pauseId: number; reason: string }
+  | { type: "LocateScanProgress"; scan: LocateScan }
 );
 
 export const eventTypes = [
   "StateChanged", "ScanStarted", "ScanFinished", "LiberateStarted", "LiberateFinished", "CycleFinished",
   "NextRunScheduled", "BookStarted", "BookProgress", "BookFinished", "QueuePaused", "QueueResumed",
-  "QueueWaiting", "QueueWaitEnded",
+  "QueueWaiting", "QueueWaitEnded", "LocateScanProgress",
 ] as const satisfies readonly EngineEvent["type"][];
