@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace ApplicationServices;
 
@@ -108,7 +109,12 @@ public static class SearchEngineCommands
 
 	/// <summary>Updates the index after books were added to or removed from the library.</summary>
 	public static void OnLibrarySizeChanged(List<LibraryBook> libraryBooks)
-		=> tryUpdate(() => FullReIndex(libraryBooks));
+	{
+		if (DeferFullReIndex)
+			ReIndexSoon();
+		else
+			tryUpdate(() => FullReIndex(libraryBooks));
+	}
 
 	/// <summary>Updates the index after book details, tags or statuses were committed.</summary>
 	public static void OnBookUserDefinedItemCommitted(IEnumerable<LibraryBook> books)
@@ -138,12 +144,49 @@ public static class SearchEngineCommands
 		// Semi-arbitrary. At some point it's more worth it to do a full re-index than to do one offs.
 		// I did not benchmark before choosing the number here
 		if (books.Count() > 15)
-			FullReIndex();
+		{
+			if (DeferFullReIndex)
+				ReIndexSoon();
+			else
+				FullReIndex();
+		}
 		else
 		{
 			foreach (var book in books)
 				UpdateUserDefinedItems(book);
 		}
+	}
+
+	/// <summary>Coalesces full rebuilds into one background run so a bulk change returns without waiting for it.</summary>
+	public static bool DeferFullReIndex { get; set; }
+
+	private static readonly object DeferLock = new();
+	private static Task pendingReIndex = Task.CompletedTask;
+	private static bool reIndexQueued;
+
+	private static void ReIndexSoon()
+	{
+		lock (DeferLock)
+		{
+			if (reIndexQueued)
+				return;
+			reIndexQueued = true;
+			pendingReIndex = pendingReIndex.ContinueWith(_ =>
+			{
+				lock (DeferLock)
+					reIndexQueued = false;
+				tryUpdate(FullReIndex);
+			}, TaskScheduler.Default);
+		}
+	}
+
+	/// <summary>Blocks until deferred rebuilds have finished.</summary>
+	public static void WaitForPendingIndex()
+	{
+		Task pending;
+		lock (DeferLock)
+			pending = pendingReIndex;
+		pending.Wait();
 	}
 
 	public static void FullReIndex() => performSafeCommand(e => fullReIndex(e));

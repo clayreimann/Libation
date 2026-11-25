@@ -12,9 +12,11 @@ public sealed record StatusDto(
 
 public sealed record AccountDto(string AccountId, string? AccountName, string? Locale, bool LibraryScan);
 
-public sealed record SeriesDto(string Name, string? Order, float Index);
+public sealed record SeriesDto(string Name, string? Order, float Index, string Asin);
 
-public sealed record BookDto(
+public sealed record RatingDto(float Overall, float Performance, float Story);
+
+public record BookDto(
 	string Asin,
 	string Title,
 	string? Subtitle,
@@ -30,9 +32,53 @@ public sealed record BookDto(
 	string ContentType,
 	bool IsPodcastEpisode,
 	string Tags,
-	bool InTrash);
+	bool InTrash,
+	IReadOnlyList<string> Categories,
+	RatingDto ProductRating,
+	RatingDto MyRating,
+	bool HasPdf,
+	bool IsAudiblePlus,
+	DateTime? IncludedUntil,
+	DateTime? LastDownloaded,
+	string? LastDownloadedVersion,
+	string? LastDownloadedFormat,
+	bool IsSpatial,
+	string? PictureId,
+	string? ParentAsin,
+	bool AbsentFromLastScan);
+
+/// <summary>A <see cref="BookDto"/> plus the fields too heavy for list payloads.</summary>
+public sealed record BookDetailDto : BookDto
+{
+	public BookDetailDto(BookDto book) : base(book) { }
+
+	public string? Description { get; init; }
+	public string? Publisher { get; init; }
+	public string? Language { get; init; }
+	public string? Copyright { get; init; }
+	public bool IsAbridged { get; init; }
+	public DateTime? DatePublished { get; init; }
+	public IReadOnlyList<IReadOnlyList<string>> CategoryLadders { get; init; } = [];
+	public bool AudioFileExists { get; init; }
+	public bool PartialDownload { get; init; }
+}
+
+/// <summary>Desktop status-bar counts; Partial has a half-downloaded file, Unavailable is absent from the last scan.</summary>
+public sealed record BackupCountsDto(
+	int Total,
+	int Liberated,
+	int Partial,
+	int NotLiberated,
+	int Error,
+	int Unavailable,
+	int PdfLiberated,
+	int PdfNotLiberated,
+	int PdfUnavailable);
 
 public sealed record LibraryPageDto(int Total, int Offset, int Limit, IReadOnlyList<BookDto> Items);
+
+/// <summary>Total counts every match; Asins is capped at 50000.</summary>
+public sealed record LibraryAsinsDto(int Total, IReadOnlyList<string> Asins);
 
 public sealed record ErrorDto(string Error);
 

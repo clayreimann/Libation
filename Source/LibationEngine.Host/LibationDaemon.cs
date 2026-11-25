@@ -42,6 +42,8 @@ public static class LibationDaemon
 			}
 		}
 
+		ApplicationServices.SearchEngineCommands.DeferFullReIndex = options.ApiEnabled && !options.Once;
+
 		using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 		using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context => { context.Cancel = true; cts.Cancel(); });
 		using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, context => { context.Cancel = true; cts.Cancel(); });

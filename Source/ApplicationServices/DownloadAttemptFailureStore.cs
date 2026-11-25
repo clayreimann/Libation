@@ -75,6 +75,26 @@ public static class DownloadAttemptFailureStore
 		Clear(libraryBook.Account, libraryBook.Book.AudibleProductId);
 	}
 
+	/// <summary>One context for the whole batch; opening one per title dominated bulk status changes.</summary>
+	public static void Clear(IReadOnlyCollection<LibraryBook> libraryBooks)
+	{
+		if (libraryBooks.Count == 0)
+			return;
+
+		try
+		{
+			using var context = DbContexts.GetContext();
+			foreach (var lb in libraryBooks)
+				context.DownloadAttemptFailures
+					.Where(f => f.Account == lb.Account && f.AudibleProductId == lb.Book.AudibleProductId)
+					.ExecuteDelete();
+		}
+		catch (Exception ex)
+		{
+			Serilog.Log.Logger.Error(ex, "Failed to clear the recorded download failures for {count} title(s)", libraryBooks.Count);
+		}
+	}
+
 	public static void Clear(string? account, string? audibleProductId)
 	{
 		if (string.IsNullOrWhiteSpace(account) || string.IsNullOrWhiteSpace(audibleProductId))

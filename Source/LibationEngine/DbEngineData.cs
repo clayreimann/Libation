@@ -2,6 +2,7 @@ using ApplicationServices;
 using AudibleUtilities;
 using DataLayer;
 using LibationEngine.Contracts;
+using LibationFileManager;
 
 namespace LibationEngine;
 
@@ -13,34 +14,63 @@ public sealed class DbEngineData : IEngineData
 		return persister.AccountsSettings.Accounts.Select(ToDto).ToList();
 	}
 
-	public LibraryPageDto GetLibrary(int offset, int limit, string? query = null, bool trash = false)
+	public LibraryPageDto GetLibrary(int offset, int limit, string? query = null, bool trash = false, LibrarySortKey? sort = null, bool descending = false)
+	{
+		var books = Matching(query, trash);
+		var ordered = sort is { } key ? LibrarySorting.Order(books, key, descending) : books
+			.OrderByDescending(lb => lb.DateAdded)
+			.ThenBy(lb => lb.Book.AudibleProductId, StringComparer.Ordinal);
+		var items = ordered.Skip(offset).Take(limit).Select(ToDto).ToList();
+		return new(books.Count, offset, limit, items);
+	}
+
+	public LibraryAsinsDto GetLibraryAsins(string? query = null, bool trash = false)
+	{
+		var books = Matching(query, trash);
+		var asins = books
+			.OrderByDescending(lb => lb.DateAdded)
+			.ThenBy(lb => lb.Book.AudibleProductId, StringComparer.Ordinal)
+			.Take(LibraryPaging.MaxAsins)
+			.Select(lb => lb.Book.AudibleProductId)
+			.ToList();
+		return new(books.Count, asins);
+	}
+
+	private static List<LibraryBook> Matching(string? query, bool trash)
 	{
 		var hasQuery = !string.IsNullOrWhiteSpace(query);
-		if (trash && hasQuery)
-			throw new SearchQueryException("A search query cannot be combined with the trash listing.");
-
 		var books = trash
 			? DbContexts.GetDeletedLibraryBooks().Where(lb => lb.IsDeleted).ToList()
 			: DbContexts.GetLibrary_Flat_NoTracking();
+		if (!hasQuery)
+			return books;
 
-		if (hasQuery)
+		var hits = trash ? SearchTrash(query!, books) : Search(query!);
+		return books.Where(lb => hits.Contains(lb.Book.AudibleProductId)).ToList();
+	}
+
+	private static readonly object TrashSearchLock = new();
+
+	private static HashSet<string> SearchTrash(string query, List<LibraryBook> trashed)
+	{
+		lock (TrashSearchLock)
 		{
-			var hits = Search(query!);
-			books = books.Where(lb => hits.Contains(lb.Book.AudibleProductId)).ToList();
+			try
+			{
+				var engine = new LibationSearchEngine.SearchEngine(TempSearchEngine.SearchEnginePath);
+				engine.CreateNewIndex(trashed, overwrite: true);
+				return engine.Search(query).Docs.Select(d => d.ProductId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+			}
+			catch (Lucene.Net.QueryParsers.ParseException ex)
+			{
+				throw new SearchQueryException($"Cannot parse the search query: {ex.Message.Split('\n')[0]}");
+			}
 		}
-
-		var items = books
-			.OrderByDescending(lb => lb.DateAdded)
-			.ThenBy(lb => lb.Book.AudibleProductId, StringComparer.Ordinal)
-			.Skip(offset)
-			.Take(limit)
-			.Select(ToDto)
-			.ToList();
-		return new(books.Count, offset, limit, items);
 	}
 
 	private static HashSet<string> Search(string query)
 	{
+		SearchEngineCommands.WaitForPendingIndex();
 		try
 		{
 			return SearchEngineCommands.Search(query).Docs.Select(d => d.ProductId).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -52,6 +82,27 @@ public sealed class DbEngineData : IEngineData
 	}
 
 	public BookDto? GetBook(string asin) => Find(asin) is { } lb ? ToDto(lb) : null;
+
+	public BookDetailDto? GetBookDetail(string asin) => Find(asin) is { } lb ? ToDetailDto(lb) : null;
+
+	public BackupCountsDto GetBackupCounts()
+	{
+		var counts = LibraryCommands.GetCounts(requestedBy: "api");
+		return new(
+			counts.booksFullyBackedUp + counts.booksDownloadedOnly + counts.booksNoProgress + counts.booksError + counts.booksUnavailable,
+			counts.booksFullyBackedUp, counts.booksDownloadedOnly, counts.booksNoProgress, counts.booksError, counts.booksUnavailable,
+			counts.pdfsDownloaded, counts.pdfsNotDownloaded, counts.pdfsUnavailable);
+	}
+
+	public CoverInfo? FindCover(string asin)
+		=> Find(asin) is { } lb ? new(lb.Book.PictureId ?? lb.Book.PictureLarge) : null;
+
+	public async Task<byte[]?> LoadCover(string pictureId, CoverSize size, CancellationToken ct)
+	{
+		var definition = new PictureDefinition(pictureId, size == CoverSize.Large ? PictureSize._500x500 : PictureSize._80x80);
+		var bytes = await Task.Run(() => PictureStorage.GetPictureSynchronously(definition, ct), ct);
+		return bytes.Length == 0 ? null : bytes;
+	}
 
 	public Task<BookDto?> SetTags(string asin, string tags)
 		=> Change(asin, lb => lb.UpdateTagsAsync(tags));
@@ -145,22 +196,58 @@ public sealed class DbEngineData : IEngineData
 	public static BookDto ToDto(LibraryBook lb)
 	{
 		var book = lb.Book;
+		var udi = book.UserDefinedItem;
 		return new(
 			book.AudibleProductId,
 			book.Title,
 			string.IsNullOrEmpty(book.Subtitle) ? null : book.Subtitle,
 			book.Authors.Select(a => a.Name).ToList(),
 			book.Narrators.Select(n => n.Name).ToList(),
-			book.SeriesLink.Select(s => new SeriesDto(s.Series.Name ?? "", s.Order, s.Index)).ToList(),
+			book.SeriesLink.Select(s => new SeriesDto(s.Series.Name ?? "", s.Order, s.Index, s.Series.AudibleSeriesId)).ToList(),
 			book.LengthInMinutes,
-			book.UserDefinedItem.BookStatus.ToString(),
-			book.UserDefinedItem.PdfStatus?.ToString(),
+			udi.BookStatus.ToString(),
+			udi.PdfStatus?.ToString(),
 			lb.DateAdded,
 			lb.Account,
 			book.Locale,
 			book.ContentType.ToString(),
 			book.ContentType == ContentType.Episode,
-			book.UserDefinedItem.Tags ?? "",
-			lb.IsDeleted);
+			udi.Tags ?? "",
+			lb.IsDeleted,
+			book.LowestCategoryNames(),
+			ToDto(book.Rating),
+			ToDto(udi.Rating),
+			book.HasPdf,
+			lb.IsAudiblePlus,
+			lb.IncludedUntil,
+			udi.LastDownloaded,
+			udi.LastDownloadedVersion?.ToString(),
+			udi.LastDownloadedFormat?.ToString(),
+			book.IsSpatial,
+			book.PictureId ?? book.PictureLarge,
+			book.IsEpisodeChild() ? book.SeriesLink.FirstOrDefault()?.Series.AudibleSeriesId : null,
+			lb.AbsentFromLastScan);
 	}
+
+	public static BookDetailDto ToDetailDto(LibraryBook lb)
+	{
+		var book = lb.Book;
+		return new(ToDto(lb))
+		{
+			Description = book.Description,
+			Publisher = book.Publisher,
+			Language = book.Language,
+			Copyright = book.Copyright,
+			IsAbridged = book.IsAbridged,
+			DatePublished = book.DatePublished,
+			CategoryLadders = book.Categories
+				.Select(c => (IReadOnlyList<string>)c.CategoryLadder.Categories.Select(x => x.Name).ToList())
+				.ToList(),
+			AudioFileExists = AudibleFileStorage.Audio.GetPath(book.AudibleProductId) is not null,
+			PartialDownload = !book.AudioExists && AudibleFileStorage.AaxcExists(book.AudibleProductId)
+		};
+	}
+
+	private static RatingDto ToDto(Rating? rating)
+		=> rating is null ? new(0, 0, 0) : new(rating.OverallRating, rating.PerformanceRating, rating.StoryRating);
 }

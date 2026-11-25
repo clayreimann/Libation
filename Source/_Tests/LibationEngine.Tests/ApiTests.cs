@@ -41,20 +41,50 @@ public class ApiTests
 	{
 		public (int Offset, int Limit)? LastPage;
 		public (string? Query, bool Trash)? LastFilter;
+		public (LibrarySortKey? Sort, bool Descending)? LastSort;
+		public (CoverSize Size, string PictureId)? LastCover;
 		public readonly List<string> Calls = [];
 
 		public IReadOnlyList<AccountDto> GetAccounts() => [new("a@example.com", "Main", "us", true)];
 
-		public LibraryPageDto GetLibrary(int offset, int limit, string? query = null, bool trash = false)
+		public LibraryPageDto GetLibrary(int offset, int limit, string? query = null, bool trash = false, LibrarySortKey? sort = null, bool descending = false)
 		{
 			LastPage = (offset, limit);
 			LastFilter = (query, trash);
+			LastSort = (sort, descending);
 			if (query == "bad[")
 				throw new SearchQueryException("Cannot parse the search query: bad[");
 			return new(7, offset, limit, [Book("B000000001")]);
 		}
 
+		public LibraryAsinsDto GetLibraryAsins(string? query = null, bool trash = false)
+		{
+			LastFilter = (query, trash);
+			if (query == "bad[")
+				throw new SearchQueryException("Cannot parse the search query: bad[");
+			return new(1, ["B000000001"]);
+		}
+
 		public BookDto? GetBook(string asin) => asin == "B000000001" ? Book(asin) : null;
+
+		public BookDetailDto? GetBookDetail(string asin)
+			=> GetBook(asin) is { } b ? new BookDetailDto(b) { Description = "About", CategoryLadders = [["Fiction", "Mystery"]], AudioFileExists = true } : null;
+
+		public BackupCountsDto GetBackupCounts() => new(10, 4, 1, 3, 1, 1, 2, 5, 3);
+
+		public CoverInfo? FindCover(string asin) => asin switch
+		{
+			"B000000001" => new("PIC1"),
+			"B000000002" => new(null),
+			"B000000003" => new("GONE"),
+			_ => null
+		};
+
+		public Task<byte[]?> LoadCover(string pictureId, CoverSize size, CancellationToken ct)
+		{
+			LastCover = (size, pictureId);
+			return Task.FromResult<byte[]?>(pictureId == "GONE" ? null : [0xFF, 0xD8, 0xFF, 0xD9]);
+		}
 
 		public Task<BookDto?> SetTags(string asin, string tags)
 		{
@@ -101,7 +131,8 @@ public class ApiTests
 			=> SettingsMapper.From(Configuration.Instance);
 
 		private static BookDto Book(string asin)
-			=> new(asin, "Title", null, ["Author"], ["Narrator"], [], 60, "NotLiberated", null, DateTime.UnixEpoch, "a@example.com", "us", "Product", false, "", false);
+			=> new(asin, "Title", null, ["Author"], ["Narrator"], [], 60, "NotLiberated", null, DateTime.UnixEpoch, "a@example.com", "us", "Product", false, "", false,
+				["Mystery"], new(4.5f, 4f, 5f), new(0, 0, 0), false, false, null, null, null, null, false, "PIC1", null, false);
 	}
 
 	private sealed class Harness : IAsyncDisposable
@@ -454,6 +485,77 @@ public class ApiTests
 	}
 
 	[TestMethod]
+	public async Task Library_passes_sort_and_direction_and_rejects_bad_values()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		await h.Http.GetStringAsync(h.Base + "/api/library?sort=lastDownload&dir=desc");
+		Assert.AreEqual((LibrarySortKey.LastDownload, true), h.Data.LastSort);
+		await h.Http.GetStringAsync(h.Base + "/api/library?sort=Title");
+		Assert.AreEqual((LibrarySortKey.Title, false), h.Data.LastSort);
+		await h.Http.GetStringAsync(h.Base + "/api/library");
+		Assert.AreEqual((null, false), h.Data.LastSort);
+
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync(h.Base + "/api/library?sort=bogus")).StatusCode);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync(h.Base + "/api/library?sort=title&dir=sideways")).StatusCode);
+	}
+
+	[TestMethod]
+	public async Task Library_asins_stats_and_detail_are_served()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		using var asins = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/library/asins?q=x&trash=true"));
+		Assert.AreEqual(("x", true), h.Data.LastFilter);
+		Assert.AreEqual(1, asins.RootElement.GetProperty("total").GetInt32());
+		Assert.AreEqual("B000000001", asins.RootElement.GetProperty("asins")[0].GetString());
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync(h.Base + "/api/library/asins?q=bad%5B")).StatusCode);
+
+		using var stats = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/library/stats"));
+		Assert.AreEqual(4, stats.RootElement.GetProperty("liberated").GetInt32());
+		Assert.AreEqual(5, stats.RootElement.GetProperty("pdfNotLiberated").GetInt32());
+
+		using var detail = JsonDocument.Parse(await h.Http.GetStringAsync(h.Base + "/api/library/B000000001"));
+		Assert.AreEqual("About", detail.RootElement.GetProperty("description").GetString());
+		Assert.AreEqual("Mystery", detail.RootElement.GetProperty("categoryLadders")[0][1].GetString());
+		Assert.IsTrue(detail.RootElement.GetProperty("audioFileExists").GetBoolean());
+		Assert.AreEqual("PIC1", detail.RootElement.GetProperty("pictureId").GetString());
+	}
+
+	[TestMethod]
+	public async Task Cover_serves_cacheable_jpeg_and_answers_304_400_404()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+
+		var ok = await h.Http.GetAsync(h.Base + "/api/library/B000000001/cover?size=large");
+		Assert.AreEqual(HttpStatusCode.OK, ok.StatusCode);
+		Assert.AreEqual("image/jpeg", ok.Content.Headers.ContentType?.MediaType);
+		Assert.AreEqual((CoverSize.Large, "PIC1"), h.Data.LastCover);
+		Assert.AreEqual(4, (await ok.Content.ReadAsByteArrayAsync()).Length);
+		StringAssert.Contains(ok.Headers.CacheControl!.ToString(), "immutable");
+		var etag = ok.Headers.ETag!.Tag;
+
+		var small = await h.Http.GetAsync(h.Base + "/api/library/B000000001/cover");
+		Assert.AreEqual(CoverSize.Small, h.Data.LastCover!.Value.Size);
+		Assert.AreNotEqual(etag, small.Headers.ETag!.Tag);
+
+		var request = new HttpRequestMessage(HttpMethod.Get, h.Base + "/api/library/B000000001/cover?size=large");
+		request.Headers.TryAddWithoutValidation("If-None-Match", etag);
+		var notModified = await h.Http.SendAsync(request);
+		Assert.AreEqual(HttpStatusCode.NotModified, notModified.StatusCode);
+
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await h.Http.GetAsync(h.Base + "/api/library/B000000001/cover?size=huge")).StatusCode);
+		var noCover = await h.Http.GetAsync(h.Base + "/api/library/B000000002/cover");
+		Assert.AreEqual(HttpStatusCode.NotFound, noCover.StatusCode);
+		Assert.IsNull(noCover.Headers.CacheControl);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.GetAsync(h.Base + "/api/library/B000000003/cover")).StatusCode);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await h.Http.GetAsync(h.Base + "/api/library/nope/cover")).StatusCode);
+	}
+
+	[TestMethod]
 	public async Task Library_rejects_an_unparseable_query_with_400()
 	{
 		await using var h = new Harness(api: true);
@@ -762,6 +864,11 @@ public class ApiTests
 
 		Assert.IsGreaterThan(10, routed.Count);
 		CollectionAssert.AreEqual(routed.ToList(), documented.ToList());
+
+		var paths = doc.RootElement.GetProperty("paths");
+		Assert.IsTrue(paths.GetProperty("/api/library/{asin}/cover").GetProperty("get").GetProperty("responses").GetProperty("200").GetProperty("content").TryGetProperty("image/jpeg", out _));
+		var sortParam = paths.GetProperty("/api/library").GetProperty("get").GetProperty("parameters").EnumerateArray().Single(p => p.GetProperty("name").GetString() == "sort");
+		Assert.AreEqual(10, sortParam.GetProperty("schema").GetProperty("enum").GetArrayLength());
 		Assert.AreEqual(operationIds.Count, operationIds.Distinct().Count());
 		await app.StopAsync();
 	}

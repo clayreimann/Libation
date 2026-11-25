@@ -5,6 +5,11 @@ namespace LibationEngine;
 
 public sealed class SearchQueryException(string message) : Exception(message);
 
+/// <summary>PictureId is null when the book has no cover.</summary>
+public sealed record CoverInfo(string? PictureId);
+
+public enum CoverSize { Small, Large }
+
 /// <summary>Library reads and per-book changes; ASIN lookups return null when no such book exists.</summary>
 public sealed record TagEdit(string? Set, string? Add, string? Remove);
 
@@ -20,11 +25,23 @@ public interface IEngineData
 {
 	IReadOnlyList<AccountDto> GetAccounts();
 
-	/// <summary>Newest first. <paramref name="query"/> is Lucene filter syntax, over the library; <paramref name="trash"/> lists the trash instead.</summary>
+	/// <summary>Newest first unless <paramref name="sort"/> is set. <paramref name="query"/> is Lucene filter syntax; <paramref name="trash"/> lists the trash instead.</summary>
 	/// <exception cref="SearchQueryException">The query cannot be parsed.</exception>
-	LibraryPageDto GetLibrary(int offset, int limit, string? query = null, bool trash = false);
+	LibraryPageDto GetLibrary(int offset, int limit, string? query = null, bool trash = false, LibrarySortKey? sort = null, bool descending = false);
+
+	/// <summary>Every matching ASIN, newest first, capped at <see cref="LibraryPaging.MaxAsins"/>.</summary>
+	/// <exception cref="SearchQueryException">The query cannot be parsed.</exception>
+	LibraryAsinsDto GetLibraryAsins(string? query = null, bool trash = false);
 
 	BookDto? GetBook(string asin);
+	BookDetailDto? GetBookDetail(string asin);
+	BackupCountsDto GetBackupCounts();
+
+	/// <summary>Null when no such book exists.</summary>
+	CoverInfo? FindCover(string asin);
+
+	/// <summary>Cached jpeg bytes, fetched on first use; null when unavailable.</summary>
+	Task<byte[]?> LoadCover(string pictureId, CoverSize size, CancellationToken ct);
 	Task<BookDto?> SetTags(string asin, string tags);
 	Task<BookDto?> SetBookStatus(string asin, LiberatedStatus status);
 	Task<BookDto?> SetTrash(string asin, bool inTrash);

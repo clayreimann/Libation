@@ -18,11 +18,31 @@ public static class ApiEndpoints
 	private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
 	public static void AddServices(IServiceCollection services)
-		=> services.AddOpenApi(options => options.AddDocumentTransformer((document, _, _) =>
+		=> services.AddOpenApi(options =>
 		{
-			document.Info = new() { Title = "Libation daemon API", Version = LibationScaffolding.BuildVersion?.ToString() ?? "0" };
-			return Task.CompletedTask;
-		}));
+			options.AddDocumentTransformer((document, _, _) =>
+			{
+				document.Info = new() { Title = "Libation daemon API", Version = LibationScaffolding.BuildVersion?.ToString() ?? "0" };
+				return Task.CompletedTask;
+			});
+			options.AddOperationTransformer((operation, _, _) =>
+			{
+				foreach (var parameter in operation.Parameters ?? [])
+					if (parameter.Name is { } name && QueryEnums.TryGetValue(name, out var values) && parameter.Schema is Microsoft.OpenApi.OpenApiSchema schema)
+						schema.Enum = values.Select(v => (System.Text.Json.Nodes.JsonNode)System.Text.Json.Nodes.JsonValue.Create(v)!).ToList();
+				foreach (var response in operation.Responses?.Values.ToList() ?? [])
+					if (response.Content?.TryGetValue("image/jpeg", out var media) == true)
+						media.Schema = new Microsoft.OpenApi.OpenApiSchema { Type = Microsoft.OpenApi.JsonSchemaType.String, Format = "binary" };
+				return Task.CompletedTask;
+			});
+		});
+
+	private static readonly Dictionary<string, string[]> QueryEnums = new()
+	{
+		["sort"] = Enum.GetNames<LibrarySortKey>().Select(n => char.ToLowerInvariant(n[0]) + n[1..]).ToArray(),
+		["dir"] = ["asc", "desc"],
+		["size"] = ["small", "large"]
+	};
 
 	public static void RequireToken(WebApplication app, string token)
 		=> app.Use(async (context, next) =>
@@ -69,26 +89,87 @@ public static class ApiEndpoints
 			.WithName("getAccounts").WithTags("daemon")
 			.Produces<IReadOnlyList<AccountDto>>(StatusCodes.Status200OK);
 
-		api.MapGet("/library", (int? offset, int? limit, string? q, bool? trash) =>
+		api.MapGet("/library", (int? offset, int? limit, string? q, bool? trash, string? sort, string? dir) =>
 		{
 			var (o, l) = LibraryPaging.Clamp(offset, limit);
+			if (!LibrarySorting.TryParse(sort, dir, out var key, out var descending, out var problem))
+				return Error(problem, StatusCodes.Status400BadRequest);
 			try
 			{
-				return Results.Json(data.GetLibrary(o, l, q, trash ?? false));
+				return Results.Json(data.GetLibrary(o, l, q, trash ?? false, key, descending));
 			}
 			catch (SearchQueryException ex)
 			{
 				return Error(ex.Message, StatusCodes.Status400BadRequest);
 			}
-		}).WithSummary("Books, newest first. offset (default 0), limit (default 100, max 1000), q (Lucene filter syntax), trash=true for the trash. total counts all matches.")
+		}).WithSummary("Books, newest first unless sorted. offset (default 0), limit (default 100, max 1000), q (Lucene filter syntax, also with trash), trash=true for the trash, sort (title, author, narrator, series, length, purchaseDate, added, status, rating, lastDownload) with dir=asc|desc. purchaseDate and added are the same date. total counts all matches.")
 			.WithName("getLibrary").WithTags("library")
 			.Produces<LibraryPageDto>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
 
-		api.MapGet("/library/{asin}", (string asin) => data.GetBook(asin) is { } book ? Results.Json(book) : NoSuchBook())
-			.WithSummary("One book by ASIN, trashed ones included, or 404.")
+		api.MapGet("/library/asins", (string? q, bool? trash) =>
+		{
+			try
+			{
+				return Results.Json(data.GetLibraryAsins(q, trash ?? false));
+			}
+			catch (SearchQueryException ex)
+			{
+				return Error(ex.Message, StatusCodes.Status400BadRequest);
+			}
+		}).WithSummary("Every ASIN matching q and trash, newest first, for select-all. total counts all matches; asins stops at 50000.")
+			.WithName("getLibraryAsins").WithTags("library")
+			.Produces<LibraryAsinsDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
+
+		api.MapGet("/library/stats", () => Results.Json(data.GetBackupCounts()))
+			.WithSummary("Backup counts as in the desktop status bar: books and PDFs liberated, not liberated, errored or unavailable.")
+			.WithName("getLibraryStats").WithTags("library")
+			.Produces<BackupCountsDto>(StatusCodes.Status200OK);
+
+		api.MapGet("/library/{asin}", (string asin) => data.GetBookDetail(asin) is { } book ? Results.Json(book) : NoSuchBook())
+			.WithSummary("One book by ASIN with description, category ladders and file state, trashed ones included, or 404.")
 			.WithName("getBook").WithTags("library")
-			.Produces<BookDto>(StatusCodes.Status200OK)
+			.Produces<BookDetailDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
+
+		api.MapGet("/library/{asin}/cover", async (HttpContext context, string asin, string? size, CancellationToken ct) =>
+		{
+			var coverSize = size?.Trim().ToLowerInvariant() switch
+			{
+				null or "" or "small" => CoverSize.Small,
+				"large" => CoverSize.Large,
+				_ => (CoverSize?)null
+			};
+			if (coverSize is not { } cover)
+				return Error("size must be small or large.", StatusCodes.Status400BadRequest);
+			if (data.FindCover(asin) is not { } info)
+				return NoSuchBook();
+			if (info.PictureId is not { } pictureId)
+				return Error("No cover for that book.", StatusCodes.Status404NotFound);
+
+			var etag = $"\"{pictureId}-{cover}\"".ToLowerInvariant();
+			void Cacheable()
+			{
+				context.Response.Headers.ETag = etag;
+				context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+			}
+
+			if (context.Request.Headers.IfNoneMatch.Any(v => v == "*" || v?.Split(',').Any(t => t.Trim() == etag) == true))
+			{
+				Cacheable();
+				return Results.StatusCode(StatusCodes.Status304NotModified);
+			}
+
+			if (await data.LoadCover(pictureId, cover, ct) is not { } bytes)
+				return Error("Cover unavailable.", StatusCodes.Status404NotFound);
+			Cacheable();
+			return Results.Bytes(bytes, "image/jpeg");
+		}).WithSummary("Cover jpeg, size=small (80px, default) or large (500px), from the picture cache and fetched from Audible on first use. Cached immutable with an ETag; 304 on a match, 404 unknown ASIN or no cover.")
+			.WithName("getBookCover").WithTags("library")
+			.Produces<byte[]>(StatusCodes.Status200OK, "image/jpeg")
+			.Produces(StatusCodes.Status304NotModified)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
 			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
 		api.MapPut("/library/{asin}/tags", async (string asin, TagsRequest? body) =>

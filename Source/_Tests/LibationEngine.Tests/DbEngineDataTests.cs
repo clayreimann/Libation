@@ -121,4 +121,56 @@ public class DbEngineDataTests
 		using var context = DbContexts.GetContext();
 		Assert.AreEqual(2, context.Books.Count());
 	}
+
+	[TestMethod]
+	public void GetLibrary_sorts_and_reverses()
+	{
+		string[] Asins(LibrarySortKey? key, bool desc) => data.GetLibrary(0, 10, sort: key, descending: desc).Items.Select(b => b.Asin).ToArray();
+
+		CollectionAssert.AreEqual(new[] { "B0PDF000001", "B0PLAIN0001" }, Asins(LibrarySortKey.Author, false));
+		CollectionAssert.AreEqual(new[] { "B0PLAIN0001", "B0PDF000001" }, Asins(LibrarySortKey.Author, true));
+		Assert.HasCount(2, Asins(null, false));
+	}
+
+	[TestMethod]
+	public void GetLibrary_lists_the_trash_and_filters_it_with_a_query()
+	{
+		CollectionAssert.AreEqual(new[] { "B0TRASHED01" }, data.GetLibrary(0, 10, trash: true).Items.Select(b => b.Asin).ToArray());
+		Assert.AreEqual(1, data.GetLibrary(0, 10, "B0TRASHED01", trash: true).Total);
+		Assert.AreEqual(0, data.GetLibrary(0, 10, "author:nobody", trash: true).Total);
+		Assert.Throws<SearchQueryException>(() => data.GetLibrary(0, 10, "bad[", trash: true));
+	}
+
+	[TestMethod]
+	public void GetLibraryAsins_returns_every_match()
+	{
+		var live = data.GetLibraryAsins();
+		Assert.AreEqual(2, live.Total);
+		CollectionAssert.AreEquivalent(new[] { "B0PLAIN0001", "B0PDF000001" }, live.Asins.ToArray());
+		CollectionAssert.AreEqual(new[] { "B0TRASHED01" }, data.GetLibraryAsins(trash: true).Asins.ToArray());
+	}
+
+	[TestMethod]
+	public void Books_carry_the_richer_fields_and_detail_adds_file_state()
+	{
+		var pdf = data.GetBook("B0PDF000001")!;
+		Assert.IsTrue(pdf.HasPdf);
+		Assert.IsFalse(data.GetBook("B0PLAIN0001")!.HasPdf);
+		Assert.IsFalse(pdf.AbsentFromLastScan);
+
+		var detail = data.GetBookDetail("B0PLAIN0001")!;
+		Assert.AreEqual("Description", detail.Description);
+		Assert.IsFalse(detail.AudioFileExists);
+		Assert.IsFalse(detail.PartialDownload);
+		Assert.IsNull(data.GetBookDetail("nope"));
+		Assert.IsNotNull(data.GetBookDetail("B0TRASHED01"));
+	}
+
+	[TestMethod]
+	public void GetBackupCounts_counts_from_the_database()
+	{
+		var counts = data.GetBackupCounts();
+		Assert.AreEqual(2, counts.Total);
+		Assert.AreEqual(1, counts.PdfNotLiberated);
+	}
 }

@@ -686,8 +686,7 @@ public static class LibraryCommands
 				// so drop any wait Libation was observing before attempting it again. Compared against the
 				// previous value rather than acting on every call: editing tags or a rating must not quietly
 				// put a title Audible just refused back into the next scheduled run.
-				foreach (var book in statusChanged)
-					DownloadAttemptFailureStore.Clear(book);
+				DownloadAttemptFailureStore.Clear(statusChanged);
 
 				BookUserDefinedItemCommitted?.Invoke(null, nonNullBooks);
 			}
