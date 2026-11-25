@@ -22,8 +22,11 @@ public static class DaemonHost
 		builder.Logging.SetMinimumLevel(LogLevel.Warning);
 		builder.Services.Configure<ConsoleLifetimeOptions>(o => o.SuppressStatusMessages = true);
 
+		if (options.ApiEnabled)
+			ApiEndpoints.AddServices(builder.Services);
+
 		var app = builder.Build();
-		app.MapMethods("/health", ["GET", "HEAD"], () => Results.Json(state.Snapshot()));
+		app.MapMethods("/health", ["GET", "HEAD"], () => Results.Json(state.Snapshot())).ExcludeFromDescription();
 
 		if (options.ApiEnabled)
 		{

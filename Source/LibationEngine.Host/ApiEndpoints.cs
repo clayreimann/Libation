@@ -5,6 +5,7 @@ using LibationEngine.Contracts;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace LibationEngine.Host;
 
@@ -13,6 +14,13 @@ public static class ApiEndpoints
 	public static readonly TimeSpan Heartbeat = TimeSpan.FromSeconds(15);
 
 	private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+	public static void AddServices(IServiceCollection services)
+		=> services.AddOpenApi(options => options.AddDocumentTransformer((document, _, _) =>
+		{
+			document.Info = new() { Title = "Libation daemon API", Version = LibationScaffolding.BuildVersion?.ToString() ?? "0" };
+			return Task.CompletedTask;
+		}));
 
 	public static void RequireToken(WebApplication app, string token)
 		=> app.Use(async (context, next) =>
@@ -47,11 +55,17 @@ public static class ApiEndpoints
 
 		var api = app.MapGroup("/api");
 
+		app.MapOpenApi("/api/openapi.json");
+
 		api.MapGet("/status", Status)
-			.WithSummary("Daemon state, last results, next run, interval and version.");
+			.WithSummary("Daemon state, last results, next run, interval and version.")
+			.WithName("getStatus").WithTags("daemon")
+			.Produces<StatusDto>(StatusCodes.Status200OK);
 
 		api.MapGet("/accounts", () => data.GetAccounts())
-			.WithSummary("Accounts: id, name, locale and library-scan flag. Never tokens.");
+			.WithSummary("Accounts: id, name, locale and library-scan flag. Never tokens.")
+			.WithName("getAccounts").WithTags("daemon")
+			.Produces<IReadOnlyList<AccountDto>>(StatusCodes.Status200OK);
 
 		api.MapGet("/library", (int? offset, int? limit, string? q, bool? trash) =>
 		{
@@ -64,28 +78,48 @@ public static class ApiEndpoints
 			{
 				return Error(ex.Message, StatusCodes.Status400BadRequest);
 			}
-		}).WithSummary("Books, newest first. offset (default 0), limit (default 100, max 1000), q (Lucene filter syntax), trash=true for the trash. total counts all matches.");
+		}).WithSummary("Books, newest first. offset (default 0), limit (default 100, max 1000), q (Lucene filter syntax), trash=true for the trash. total counts all matches.")
+			.WithName("getLibrary").WithTags("library")
+			.Produces<LibraryPageDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
 
 		api.MapGet("/library/{asin}", (string asin) => data.GetBook(asin) is { } book ? Results.Json(book) : NoSuchBook())
-			.WithSummary("One book by ASIN, trashed ones included, or 404.");
+			.WithSummary("One book by ASIN, trashed ones included, or 404.")
+			.WithName("getBook").WithTags("library")
+			.Produces<BookDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
 		api.MapPut("/library/{asin}/tags", async (string asin, TagsRequest? body) =>
 			body?.Tags is null
 				? Error("tags is required; an empty string clears them.", StatusCodes.Status400BadRequest)
 				: await data.SetTags(asin, body.Tags) is { } book ? Results.Json(book) : NoSuchBook())
-			.WithSummary("Replaces a book's tags. 200 with the book, 400 bad body, 404 unknown ASIN.");
+			.WithSummary("Replaces a book's tags. 200 with the book, 400 bad body, 404 unknown ASIN.")
+			.WithName("setBookTags").WithTags("library")
+			.Produces<BookDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
 		api.MapPut("/library/{asin}/status", async (string asin, StatusRequest? body) =>
 			!TryParseStatus(body?.Status, out var status)
 				? Error("status must be liberated or notLiberated.", StatusCodes.Status400BadRequest)
 				: await data.SetBookStatus(asin, status) is { } book ? Results.Json(book) : NoSuchBook())
-			.WithSummary("Sets a book's liberated status to liberated or notLiberated. 200 with the book, 400 bad body, 404 unknown ASIN.");
+			.WithSummary("Sets a book's liberated status to liberated or notLiberated. 200 with the book, 400 bad body, 404 unknown ASIN.")
+			.WithName("setBookStatus").WithTags("library")
+			.Produces<BookDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
 		api.MapPost("/library/{asin}/trash", async (string asin) => await data.SetTrash(asin, true) is { } book ? Results.Json(book) : NoSuchBook())
-			.WithSummary("Moves a book to the trash. 200 with the book, 404 unknown ASIN.");
+			.WithSummary("Moves a book to the trash. 200 with the book, 404 unknown ASIN.")
+			.WithName("trashBook").WithTags("library")
+			.Produces<BookDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
 		api.MapPost("/library/{asin}/restore", async (string asin) => await data.SetTrash(asin, false) is { } book ? Results.Json(book) : NoSuchBook())
-			.WithSummary("Restores a book from the trash. 200 with the book, 404 unknown ASIN.");
+			.WithSummary("Restores a book from the trash. 200 with the book, 404 unknown ASIN.")
+			.WithName("restoreBook").WithTags("library")
+			.Produces<BookDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
 		var enqueueLock = new object();
 		api.MapPost("/library/{asin}/liberate", (string asin) =>
@@ -101,25 +135,50 @@ public static class ApiEndpoints
 				queue.StartOrWake();
 				return Results.Json(QueueMapper.ToDto(job, "queued"), statusCode: StatusCodes.Status202Accepted);
 			}
-		}).WithSummary("Queues one book for liberation, re-downloading it if already liberated. 202 with the job, 404 unknown ASIN, 409 already queued.");
+		}).WithSummary("Queues one book for liberation, re-downloading it if already liberated. 202 with the job, 404 unknown ASIN, 409 already queued.")
+			.WithName("liberateBook").WithTags("library")
+			.Produces<QueueJobDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapGet("/settings", () => data.GetSettings())
-			.WithSummary("Curated read-only settings: Books and working folders, naming templates, download, queue and library options. No secrets.");
+			.WithSummary("Curated read-only settings: Books and working folders, naming templates, download, queue and library options. No secrets.")
+			.WithName("getSettings").WithTags("settings")
+			.Produces<SettingsDto>(StatusCodes.Status200OK);
 
 		api.MapPost("/scan", () => Run(RunKind.Scan))
-			.WithSummary("Runs a library scan now, without liberating. 202, or 409 if busy.");
+			.WithSummary("Runs a library scan now, without liberating. 202, or 409 if busy.")
+			.WithName("scan").WithTags("daemon")
+			.Produces<StatusDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapPost("/liberate", () => Run(RunKind.Cycle))
-			.WithSummary("Runs a full cycle now: scan, then liberate if the scan succeeded. 202, or 409 if busy.");
+			.WithSummary("Runs a full cycle now: scan, then liberate if the scan succeeded. 202, or 409 if busy.")
+			.WithName("liberate").WithTags("daemon")
+			.Produces<StatusDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapGet("/queue", () => QueueMapper.Snapshot(queue))
-			.WithSummary("Working and queued jobs, pending decisions and the current wait, if any.");
+			.WithSummary("Working and queued jobs, pending decisions and the current wait, if any.")
+			.WithName("getQueue").WithTags("queue")
+			.Produces<QueueDto>(StatusCodes.Status200OK);
 
 		api.MapPost("/queue/decisions/{pauseId:long}", (long pauseId, DecisionRequest? body) => Decide(queue, new PauseId(pauseId), body))
-			.WithSummary("Answers a pending decision or wait. 200 with the queue, 400 bad body, 404 unknown id, 409 decision not allowed.");
+			.WithSummary("Answers a pending decision or wait. 200 with the queue, 400 bad body, 404 unknown id, 409 decision not allowed.")
+			.WithName("decide").WithTags("queue")
+			.Produces<QueueDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
-		api.MapGet("/events", (HttpContext context) => StreamEvents(context, scheduler.Events))
-			.WithSummary("Server-Sent Events; event name is the record type, data is its JSON.");
+		api.MapGet("/events", async (HttpContext context) =>
+		{
+			await StreamEvents(context, scheduler.Events);
+			return Results.Empty;
+		})
+			.WithSummary("Server-Sent Events; event name is the record type, data is its JSON.")
+			.WithName("streamEvents").WithTags("daemon")
+			.Produces<string>(StatusCodes.Status200OK, "text/event-stream");
 	}
 
 	private static IResult Error(string message, int status) => Results.Json(new ErrorDto(message), statusCode: status);

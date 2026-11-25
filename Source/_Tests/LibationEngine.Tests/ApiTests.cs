@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
@@ -7,6 +8,9 @@ using LibationEngine.Host;
 using DataLayer;
 using LibationEngine;
 using LibationFileManager;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace LibationEngine.Tests;
@@ -596,6 +600,69 @@ public class ApiTests
 		StringAssert.Contains(json, "\"serverConfigured\":true");
 		foreach (var name in typeof(SettingsDto).Assembly.GetTypes().Where(t => t.Name.EndsWith("SettingsDto")).SelectMany(t => t.GetProperties()).Select(p => p.Name))
 			Assert.IsFalse(name.Contains("Token") || name.Contains("Key") || name.Contains("Secret") || name.Contains("Password"), name);
+	}
+
+	[TestMethod]
+	public async Task OpenApi_document_follows_the_api_gate_and_the_token()
+	{
+		await using (var off = new Harness(api: false))
+		{
+			await off.WaitIdleAfterFirstCycle();
+			Assert.AreEqual(HttpStatusCode.NotFound, (await off.Http.GetAsync(off.Base + "/api/openapi.json")).StatusCode);
+		}
+
+		await using var h = await TokenHarness();
+		Assert.AreEqual(HttpStatusCode.Unauthorized, (await h.Http.GetAsync(h.Base + "/api/openapi.json")).StatusCode);
+		var ok = await h.Http.SendAsync(Authed(HttpMethod.Get, h.Base + "/api/openapi.json"));
+		Assert.AreEqual(HttpStatusCode.OK, ok.StatusCode);
+		Assert.AreEqual("application/json", ok.Content.Headers.ContentType?.MediaType);
+	}
+
+	[TestMethod]
+	public async Task OpenApi_document_lists_every_route_with_a_typed_success_response()
+	{
+		using var dir = new TempDir();
+		var port = ((IPEndPoint)new Func<IPEndPoint>(() =>
+		{
+			var l = new TcpListener(IPAddress.Loopback, 0);
+			l.Start();
+			var ep = (IPEndPoint)l.LocalEndpoint;
+			l.Stop();
+			return ep;
+		})()).Port;
+		var options = new DaemonOptions(TimeSpan.FromMinutes(30), false, $"http://127.0.0.1:{port}", dir.Path, ApiEnabled: true);
+		var state = new CycleState();
+		var scheduler = new CycleScheduler(options, new DaemonJobs(_ => Task.FromResult(0), _ => Task.FromResult(0), _ => Task.FromResult(0)), state);
+		var queue = new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => 1 });
+		await using var app = DaemonHost.Build(options, state, scheduler, queue, new FakeData());
+		await app.StartAsync();
+		using var http = new HttpClient();
+
+		using var doc = JsonDocument.Parse(await http.GetStringAsync($"http://127.0.0.1:{port}/api/openapi.json"));
+		var documented = new SortedSet<string>();
+		var operationIds = new List<string>();
+		foreach (var path in doc.RootElement.GetProperty("paths").EnumerateObject())
+		{
+			foreach (var operation in path.Value.EnumerateObject())
+			{
+				documented.Add($"{operation.Name.ToUpperInvariant()} {path.Name}");
+				operationIds.Add(operation.Value.GetProperty("operationId").GetString()!);
+				var success = operation.Value.GetProperty("responses").EnumerateObject().Single(r => r.Name is "200" or "202");
+				Assert.IsTrue(success.Value.GetProperty("content").EnumerateObject().Any(), $"{operation.Name} {path.Name} has no typed success response");
+			}
+		}
+
+		var routed = app.Services.GetRequiredService<EndpointDataSource>().Endpoints
+			.OfType<RouteEndpoint>()
+			.Where(e => e.RoutePattern.RawText!.StartsWith("/api/") && e.RoutePattern.RawText != "/api/openapi.json")
+			.SelectMany(e => e.Metadata.GetRequiredMetadata<HttpMethodMetadata>().HttpMethods
+				.Select(m => $"{m} {System.Text.RegularExpressions.Regex.Replace(e.RoutePattern.RawText!, @":[a-z]+(?=\})", "")}"))
+			.ToImmutableSortedSet();
+
+		Assert.IsGreaterThan(10, routed.Count);
+		CollectionAssert.AreEqual(routed.ToList(), documented.ToList());
+		Assert.AreEqual(operationIds.Count, operationIds.Distinct().Count());
+		await app.StopAsync();
 	}
 
 	[TestMethod]
