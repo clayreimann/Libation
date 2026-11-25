@@ -96,6 +96,12 @@ sudo docker run --rm \
 
 Set `--metrics-file` (or `LIBATION_METRICS_FILE`) to write a Prometheus textfile after every cycle, suitable for node_exporter's textfile collector.
 
+### HTTP API
+
+Off by default. `--api` (or `LIBATION_API=1`) serves a JSON API under `/api` on the same `--listen` address: `GET /api/status`, `/api/accounts`, `/api/library?offset=&limit=`, `/api/library/{asin}`, `/api/events` (Server-Sent Events), and `POST /api/scan` and `/api/liberate` (run now; `202`, or `409` if a job is running). Account responses never include tokens.
+
+There are no users. Set `--api-token-file` (or `LIBATION_API_TOKEN_FILE`) to a file containing one token and every `/api` request must send `Authorization: Bearer <token>`; `/health` stays open. `serve` exits if that file is missing or empty. Without a token, anyone who can reach the port controls the daemon, and `serve` logs a warning. Keep it on loopback, or put it behind your reverse proxy with TLS.
+
 ### Read-only configuration
 
 When `/config` is a read-only mount (Kubernetes ConfigMaps and Secrets, for example), mount it elsewhere and give Libation a writable state folder:
@@ -134,6 +140,8 @@ Or run any one-off command directly, for example `docker run --rm -it -v /opt/li
 | LIBATION_FILES_DIR                | /config | Libation files folder (`Settings.json`, `AccountsSettings.json`, database). `LIBATION_CONFIG_DIR` is accepted as an alias.                                               |
 | LIBATION_READONLY_CONFIG_DIR      |         | Read-only source for `Settings.json` and `AccountsSettings.json`; see above. Must differ from `LIBATION_FILES_DIR`.                                                      |
 | LIBATION_ACCOUNTS_IMPORT          |         | Path of an `AccountsSettings.json` to import into the files folder when its contents change.                                                                             |
+| LIBATION_API                      |         | `1` or `true` enables the HTTP API (same as `--api`).                                                                                                                    |
+| LIBATION_API_TOKEN_FILE           |         | Path of a file holding the bearer token required for `/api` requests.                                                                                                    |
 | LIBATION_METRICS_FILE             |         | Path of the Prometheus textfile to write after each cycle.                                                                                                               |
 | LIBATION_SQLITE_PATH              |         | Full path of the SQLite database file, e.g. on a separate writable volume. Defaults to `LibationContext.db` in the files folder.                                         |
 | LIBATION_CONNECTION_STRING        |         | Connection string for Postgresql. If not present, Libation uses the default sqlite.                                                                                      |

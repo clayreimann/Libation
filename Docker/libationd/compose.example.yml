@@ -18,3 +18,5 @@ services:
     # command: ["serve", "--reconcile-on-start", "--listen", "http://0.0.0.0:8080"]
     # ports:
     #   - "8080:8080"
+    # Opt-in HTTP API under /api (no users: use a token file and/or put it behind your proxy):
+    # command: ["serve", "--reconcile-on-start", "--api", "--api-token-file", "/secrets/api-token", "--listen", "http://0.0.0.0:8080"]
