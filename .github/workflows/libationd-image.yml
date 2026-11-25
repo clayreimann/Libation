@@ -1,0 +1,48 @@
+# libationd-image.yml
+# Fork-only: publishes the libationd image to ghcr.io.
+---
+name: libationd-image
+
+on:
+  push:
+    branches: [libationd/main]
+  workflow_dispatch:
+
+jobs:
+  build_and_push:
+    if: github.repository_owner == 'clayreimann'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Short sha
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: libationd
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/clayreimann/libation:libationd
+            ghcr.io/clayreimann/libation:libationd-${{ steps.sha.outputs.short }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
