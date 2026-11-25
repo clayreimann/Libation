@@ -27,6 +27,8 @@ public interface IExternalLoginBackend
 	void DiscardUnfinished(LoginTarget target);
 }
 
+public sealed record PendingLogin(string LoginId, string AccountId, string LocaleName, string Url, DateTimeOffset ExpiresAt);
+
 /// <summary>Pending browser logins, in memory only; each is single-use and expires.</summary>
 public sealed class LoginSessions : IDisposable
 {
@@ -51,6 +53,18 @@ public sealed class LoginSessions : IDisposable
 			Sweep();
 			return pending.Count;
 		}
+	}
+
+	/// <summary>Started, unexpired logins, soonest to expire first; the sign-in URL only, never a response URL.</summary>
+	public IReadOnlyList<PendingLogin> List()
+	{
+		Sweep();
+		return pending
+			.Select(p => (p.Key, Entry: p.Value, Url: p.Value.Url))
+			.Where(p => p.Url is not null)
+			.OrderBy(p => p.Entry.ExpiresAt)
+			.Select(p => new PendingLogin(p.Key, p.Entry.Target.AccountId, p.Entry.Target.LocaleName, p.Url!, p.Entry.ExpiresAt))
+			.ToList();
 	}
 
 	public async Task<(string LoginId, string Url, DateTimeOffset ExpiresAt)> StartAsync(string? accountId, string? locale, string? deviceRegistration, bool allowNewAccount, CancellationToken ct)
@@ -209,6 +223,7 @@ public sealed class LoginSessions : IDisposable
 		public int Claimed;
 		public int Discarded;
 		public volatile bool Failed;
+		public volatile string? Url;
 
 		public void Dispose()
 		{
@@ -220,6 +235,7 @@ public sealed class LoginSessions : IDisposable
 	{
 		public string GetResponseUrl(string loginUrl, CookieCollection signInCookies)
 		{
+			entry.Url = loginUrl;
 			entry.UrlReady.TrySetResult(loginUrl);
 			return entry.Response.Task.WaitAsync(entry.Cts.Token).GetAwaiter().GetResult().Trim();
 		}

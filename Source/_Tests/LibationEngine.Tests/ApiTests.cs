@@ -1504,6 +1504,7 @@ public class ApiTests
 		await h.WaitIdleAfterFirstCycle();
 		foreach (var (method, path, body) in new[]
 		{
+			(HttpMethod.Get, "/api/accounts/login", null),
 			(HttpMethod.Post, "/api/accounts/login", """{"locale":"us","accountId":"a"}"""),
 			(HttpMethod.Post, "/api/accounts/login/abc", Complete()),
 			(HttpMethod.Delete, "/api/accounts/login/abc", null)
@@ -1534,6 +1535,43 @@ public class ApiTests
 		Assert.AreEqual(0, rig.Sessions.PendingCount);
 
 		Assert.AreEqual(HttpStatusCode.NotFound, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete())).Status);
+	}
+
+	[TestMethod]
+	public async Task Pending_logins_are_listed_until_completed_cancelled_or_expired()
+	{
+		await using var rig = await LoginRig.Create();
+		var (empty, none) = await rig.Call(HttpMethod.Get, "/api/accounts/login");
+		Assert.AreEqual(HttpStatusCode.OK, empty);
+		Assert.AreEqual(0, none.GetArrayLength());
+
+		var first = await rig.Start("a@example.com");
+		rig.Time.Advance(TimeSpan.FromMinutes(1));
+		var second = await rig.Start("b@example.com");
+		var (_, listed) = await rig.Call(HttpMethod.Get, "/api/accounts/login");
+		Assert.AreEqual(2, listed.GetArrayLength());
+		var head = listed[0];
+		Assert.AreEqual(first, head.GetProperty("loginId").GetString());
+		Assert.AreEqual("a@example.com", head.GetProperty("accountId").GetString());
+		Assert.AreEqual("us", head.GetProperty("locale").GetString());
+		Assert.AreEqual(LoginUrl, head.GetProperty("url").GetString());
+		Assert.IsTrue(head.TryGetProperty("expiresAt", out _));
+		Assert.AreEqual(second, listed[1].GetProperty("loginId").GetString());
+
+		var response = await rig.Http.SendAsync(Authed(HttpMethod.Get, rig.Base + "/api/accounts/login"));
+		Assert.AreEqual("no-store", response.Headers.CacheControl?.ToString());
+
+		Assert.AreEqual(HttpStatusCode.OK, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{first}", Complete())).Status);
+		var (_, afterComplete) = await rig.Call(HttpMethod.Get, "/api/accounts/login");
+		Assert.AreEqual(1, afterComplete.GetArrayLength());
+		StringAssert.DoesNotMatch(afterComplete.GetRawText(), new System.Text.RegularExpressions.Regex("authorization_code|SECRETMARKERCODE"));
+
+		Assert.AreEqual(HttpStatusCode.OK, (await rig.Call(HttpMethod.Delete, $"/api/accounts/login/{second}")).Status);
+		Assert.AreEqual(0, (await rig.Call(HttpMethod.Get, "/api/accounts/login")).Body.GetArrayLength());
+
+		await rig.Start("c@example.com");
+		rig.Time.Advance(TimeSpan.FromMinutes(11));
+		Assert.AreEqual(0, (await rig.Call(HttpMethod.Get, "/api/accounts/login")).Body.GetArrayLength());
 	}
 
 	[TestMethod]

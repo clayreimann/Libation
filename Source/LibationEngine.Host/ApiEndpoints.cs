@@ -283,6 +283,12 @@ public static class ApiEndpoints
 			}
 		}
 
+		api.MapGet("/accounts/login", () => logins.List().Select(l => new PendingLoginDto(l.LoginId, l.AccountId, l.LocaleName, l.Url, l.ExpiresAt)).ToList())
+			.WithSummary("Lists the open sign-ins, soonest to expire first, so a reloaded page can offer them again: loginId, accountId, locale, url (the sign-in address) and expiresAt. Needs --api-token-file (403 otherwise); never returns a response URL.")
+			.WithName("listAccountLogins").WithTags("accounts")
+			.Produces<IReadOnlyList<PendingLoginDto>>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status403Forbidden);
+
 		api.MapPost("/accounts/login", (LoginStartRequest? body, CancellationToken ct) => Login(async () =>
 		{
 			if (body is null)

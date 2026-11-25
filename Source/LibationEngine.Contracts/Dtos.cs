@@ -340,3 +340,6 @@ public sealed record LoginStartDto(string LoginId, string Url, DateTimeOffset Ex
 public sealed record LoginCompleteRequest(string? ResponseUrl);
 
 public sealed record LoginCancelDto(string LoginId);
+
+/// <summary>One open sign-in as <c>GET /api/accounts/login</c> lists it; Url is the sign-in address, never a response URL.</summary>
+public sealed record PendingLoginDto(string LoginId, string AccountId, string Locale, string Url, DateTimeOffset ExpiresAt);
