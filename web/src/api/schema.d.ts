@@ -72,6 +72,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Downloads the library as csv, xlsx or json, the same export as the desktop and the CLI, newest first. q (Lucene filter syntax) and trash filter as in /library. 400 bad format or query. */
+        get: operations["exportLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/quick-filters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The saved quick filters in display order, and whether the first one applies by default. */
+        get: operations["getQuickFilters"];
+        /** Replaces the whole quick filter list; every filter must parse as a library query. 400 names the offending filters[index]; 409 when the filters file is not writable. */
+        put: operations["putQuickFilters"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/podcasts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Podcast parent rows (isPodcastParent) with at least one episode matching q and trash, by title. /library never returns parents; group its episodes under these by parentAsin. An episode whose parent is missing here is a standalone row, as in the desktop grid. */
+        get: operations["getLibraryPodcasts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/stats": {
         parameters: {
             query?: never;
@@ -624,45 +676,48 @@ export interface components {
             publisher?: null | string;
             language?: null | string;
             copyright?: null | string;
-            isAbridged?: boolean;
+            isAbridged: boolean;
             /** Format: date-time */
             datePublished?: null | string;
-            categoryLadders?: string[][];
-            audioFileExists?: boolean;
-            partialDownload?: boolean;
-            asin?: string;
-            title?: string;
+            categoryLadders: string[][];
+            audioFileExists: boolean;
+            asin: string;
+            title: string;
             subtitle?: null | string;
-            authors?: string[];
-            narrators?: string[];
-            series?: components["schemas"]["SeriesDto"][];
+            authors: string[];
+            narrators: string[];
+            series: components["schemas"]["SeriesDto"][];
             /** Format: int32 */
-            lengthInMinutes?: number | string;
-            bookStatus?: string;
-            pdfStatus?: null | string;
+            lengthInMinutes: number | string;
+            /** @enum {string} */
+            bookStatus: "NotLiberated" | "Liberated" | "Error";
+            /** @enum {null|string} */
+            pdfStatus?: "NotLiberated" | "Liberated" | "Error" | null;
             /** Format: date-time */
-            dateAdded?: string;
-            account?: string;
-            locale?: string;
-            contentType?: string;
-            isPodcastEpisode?: boolean;
-            tags?: string;
-            inTrash?: boolean;
-            categories?: string[];
-            productRating?: components["schemas"]["RatingDto"];
-            myRating?: components["schemas"]["RatingDto"];
-            hasPdf?: boolean;
-            isAudiblePlus?: boolean;
+            dateAdded: string;
+            account: string;
+            locale: string;
+            contentType: string;
+            isPodcastEpisode: boolean;
+            tags: string;
+            inTrash: boolean;
+            categories: string[];
+            productRating: components["schemas"]["RatingDto"];
+            myRating: components["schemas"]["RatingDto"];
+            hasPdf: boolean;
+            isAudiblePlus: boolean;
             /** Format: date-time */
             includedUntil?: null | string;
             /** Format: date-time */
             lastDownloaded?: null | string;
             lastDownloadedVersion?: null | string;
             lastDownloadedFormat?: null | string;
-            isSpatial?: boolean;
+            isSpatial: boolean;
             pictureId?: null | string;
             parentAsin?: null | string;
-            absentFromLastScan?: boolean;
+            absentFromLastScan: boolean;
+            partialDownload: boolean;
+            isPodcastParent: boolean;
         };
         BookDto: {
             asin: string;
@@ -673,8 +728,10 @@ export interface components {
             series: components["schemas"]["SeriesDto"][];
             /** Format: int32 */
             lengthInMinutes: number | string;
-            bookStatus: string;
-            pdfStatus: null | string;
+            /** @enum {string} */
+            bookStatus: "NotLiberated" | "Liberated" | "Error";
+            /** @enum {null|string} */
+            pdfStatus: "NotLiberated" | "Liberated" | "Error" | null;
             /** Format: date-time */
             dateAdded: string;
             account: string;
@@ -698,10 +755,47 @@ export interface components {
             pictureId: null | string;
             parentAsin: null | string;
             absentFromLastScan: boolean;
+            partialDownload: boolean;
+            isPodcastParent: boolean;
+        };
+        BookFinished: {
+            jobId: string;
+            asin: string;
+            title: string;
+            /** @enum {string} */
+            result: "none" | "success" | "cancelled" | "validationFail" | "failedRetry" | "failedSkip" | "failedAbort" | "licenseDenied" | "licenseDeniedPossibleOutage" | "licenseDeniedThrottled" | "licenseDeniedThrottledRecovered" | "widevineRecommended" | "diskFull" | "awaitingDecision" | "skippedDailyLimit";
+            /** @enum {string} */
+            status: "queued" | "cancelled" | "working" | "completed" | "failed";
+            /** Format: date-time */
+            at: string;
+        };
+        BookLog: {
+            jobId: string;
+            /** @enum {string} */
+            level: "info" | "warning" | "error";
+            message: string;
+            /** Format: date-time */
+            at: string;
+        };
+        BookProgress: {
+            jobId: string;
+            asin: string;
+            /** Format: int32 */
+            percent: number | string;
+            /** Format: date-time */
+            at: string;
+        };
+        BookStarted: {
+            jobId: string;
+            asin: string;
+            title: string;
+            /** Format: date-time */
+            at: string;
         };
         BulkItemDto: {
             asin: string;
-            result: string;
+            /** @enum {string} */
+            result: "ok" | "notFound" | "conflict";
         };
         BulkRequest: {
             asins: null | string[];
@@ -724,7 +818,14 @@ export interface components {
         };
         CancelJobDto: {
             id: string;
-            outcome: string;
+            /** @enum {string} */
+            outcome: "removed" | "cancelling";
+        };
+        CycleFinished: {
+            /** Format: int32 */
+            exitCode: number | string;
+            /** Format: date-time */
+            at: string;
         };
         DecisionRequest: {
             decision: null | string;
@@ -760,6 +861,8 @@ export interface components {
             creationTime: string;
             lastWriteTime: string;
         };
+        /** @description One server-sent event on /api/events; the SSE event name is the name of the matching schema. */
+        EngineEvent: components["schemas"]["BookFinished"] | components["schemas"]["BookLog"] | components["schemas"]["BookProgress"] | components["schemas"]["BookStarted"] | components["schemas"]["CycleFinished"] | components["schemas"]["LiberateFinished"] | components["schemas"]["LiberateStarted"] | components["schemas"]["LocateScanProgress"] | components["schemas"]["NextRunScheduled"] | components["schemas"]["QueueChanged"] | components["schemas"]["QueueDispatchPaused"] | components["schemas"]["QueueDispatchResumed"] | components["schemas"]["QueuePaused"] | components["schemas"]["QueueResumed"] | components["schemas"]["QueueWaitEnded"] | components["schemas"]["QueueWaiting"] | components["schemas"]["ScanFinished"] | components["schemas"]["ScanStarted"] | components["schemas"]["StateChanged"];
         ErrorDto: {
             error: string;
         };
@@ -767,8 +870,10 @@ export interface components {
             id: string;
             asin: string;
             title: string;
-            result: string;
-            status: string;
+            /** @enum {string} */
+            result: "none" | "success" | "cancelled" | "validationFail" | "failedRetry" | "failedSkip" | "failedAbort" | "licenseDenied" | "licenseDeniedPossibleOutage" | "licenseDeniedThrottled" | "licenseDeniedThrottledRecovered" | "widevineRecommended" | "diskFull" | "awaitingDecision" | "skippedDailyLimit";
+            /** @enum {string} */
+            status: "queued" | "cancelled" | "working" | "completed" | "failed";
             /** Format: date-time */
             finishedAt: string;
         };
@@ -781,8 +886,19 @@ export interface components {
         JobLogLineDto: {
             /** Format: date-time */
             at: string;
-            level: string;
+            /** @enum {string} */
+            level: "info" | "warning" | "error";
             message: string;
+        };
+        LiberateFinished: {
+            /** Format: int32 */
+            exitCode: number | string;
+            /** Format: date-time */
+            at: string;
+        };
+        LiberateStarted: {
+            /** Format: date-time */
+            at: string;
         };
         LibraryAsinsDto: {
             /** Format: int32 */
@@ -809,7 +925,8 @@ export interface components {
             path: null | string;
         };
         LocateScanDto: {
-            state: string;
+            /** @enum {string} */
+            state: "idle" | "running" | "completed" | "failed";
             folder: null | string;
             /** Format: int32 */
             found: number | string;
@@ -823,6 +940,25 @@ export interface components {
             /** Format: date-time */
             finishedAt: null | string;
         };
+        LocateScanProgress: {
+            scan: {
+                state: string;
+                folder: null | string;
+                /** Format: int32 */
+                found: number | string;
+                /** Format: int32 */
+                matched: number | string;
+                /** Format: int32 */
+                updated: number | string;
+                error: null | string;
+                /** Format: date-time */
+                startedAt: null | string;
+                /** Format: date-time */
+                finishedAt: null | string;
+            };
+            /** Format: date-time */
+            at: string;
+        };
         LocateScanRequest: {
             folder: null | string;
         };
@@ -835,12 +971,78 @@ export interface components {
             chapterFileTemplate: string;
             chapterTitleTemplate: string;
         };
+        NextRunScheduled: {
+            /** Format: date-time */
+            nextRun: null | string;
+            /** Format: date-time */
+            at: string;
+        };
         PendingDecisionDto: {
             /** Format: int64 */
             id: number | string;
-            reason: string;
+            /** @enum {string} */
+            reason: "badBook" | "licenseGuidance" | "widevineGuidance" | "diskFull";
             jobId: null | string;
             allowed: string[];
+        };
+        QueueChanged: {
+            queue: {
+                running: boolean;
+                jobs: {
+                    id: string;
+                    asin: string;
+                    title: string;
+                    /** @enum {string} */
+                    state: "working" | "queued";
+                }[];
+                pending: {
+                    /** Format: int64 */
+                    id: number | string;
+                    /** @enum {string} */
+                    reason: "badBook" | "licenseGuidance" | "widevineGuidance" | "diskFull";
+                    jobId: null | string;
+                    allowed: string[];
+                }[];
+                waiting: {
+                    /** Format: int64 */
+                    id: number | string;
+                    reason: string;
+                    /** Format: date-time */
+                    since: string;
+                    /** Format: date-time */
+                    nextCheck: null | string;
+                    jobId: null | string;
+                    allowed: string[];
+                    volumes: null | {
+                        root: string;
+                        /** Format: int64 */
+                        freeBytes: null | number | string;
+                        /** Format: int64 */
+                        requiredBytes: number | string;
+                    }[];
+                };
+                paused: boolean;
+                stats: {
+                    /** Format: int32 */
+                    queued: number | string;
+                    /** Format: int32 */
+                    completed: number | string;
+                    /** Format: int32 */
+                    errors: number | string;
+                    /** Format: date-time */
+                    runningSince: null | string;
+                };
+            };
+            /** Format: date-time */
+            at: string;
+        };
+        QueueDispatchPaused: {
+            /** Format: date-time */
+            at: string;
+        };
+        QueueDispatchResumed: {
+            /** Format: date-time */
+            at: string;
         };
         QueueDto: {
             running: boolean;
@@ -854,7 +1056,26 @@ export interface components {
             id: string;
             asin: string;
             title: string;
-            state: string;
+            /** @enum {string} */
+            state: "working" | "queued";
+        };
+        QueuePaused: {
+            pause: {
+                /** Format: int64 */
+                id: number | string;
+                reason: string;
+                jobId: null | string;
+                allowed: string[];
+            };
+            /** Format: date-time */
+            at: string;
+        };
+        QueueResumed: {
+            /** Format: int64 */
+            pauseId: number | string;
+            decision: string;
+            /** Format: date-time */
+            at: string;
         };
         QueueSettingsDto: {
             /** Format: int32 */
@@ -889,6 +1110,43 @@ export interface components {
             allowed: string[];
             volumes: null | components["schemas"]["VolumeDto"][];
         };
+        QueueWaitEnded: {
+            /** Format: int64 */
+            pauseId: number | string;
+            reason: string;
+            /** Format: date-time */
+            at: string;
+        };
+        QueueWaiting: {
+            wait: {
+                /** Format: int64 */
+                id: number | string;
+                reason: string;
+                /** Format: date-time */
+                since: string;
+                /** Format: date-time */
+                nextCheck: null | string;
+                jobId: null | string;
+                allowed: string[];
+                volumes: null | {
+                    root: string;
+                    /** Format: int64 */
+                    freeBytes: null | number | string;
+                    /** Format: int64 */
+                    requiredBytes: number | string;
+                }[];
+            };
+            /** Format: date-time */
+            at: string;
+        };
+        QuickFilterDto: {
+            filter: string;
+            name?: null | string;
+        };
+        QuickFiltersDto: {
+            useDefault: boolean;
+            filters: components["schemas"]["QuickFilterDto"][];
+        };
         RatingDto: {
             /** Format: float */
             overall: number | string;
@@ -896,6 +1154,16 @@ export interface components {
             performance: number | string;
             /** Format: float */
             story: number | string;
+        };
+        ScanFinished: {
+            /** Format: int32 */
+            exitCode: number | string;
+            /** Format: date-time */
+            at: string;
+        };
+        ScanStarted: {
+            /** Format: date-time */
+            at: string;
         };
         SeriesDto: {
             name: string;
@@ -912,6 +1180,11 @@ export interface components {
             queue: components["schemas"]["QueueSettingsDto"];
             library: components["schemas"]["LibrarySettingsDto"];
             audiobookshelf: components["schemas"]["AudiobookshelfSettingsDto"];
+        };
+        StateChanged: {
+            state: string;
+            /** Format: date-time */
+            at: string;
         };
         StatusDto: {
             state: string;
@@ -1046,6 +1319,135 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryAsinsDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    exportLibrary: {
+        parameters: {
+            query?: {
+                format?: string;
+                q?: string;
+                trash?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "application/json": string;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    getQuickFilters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuickFiltersDto"];
+                };
+            };
+        };
+    };
+    putQuickFilters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["QuickFiltersDto"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuickFiltersDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    getLibraryPodcasts: {
+        parameters: {
+            query?: {
+                q?: string;
+                trash?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDto"][];
                 };
             };
             /** @description Bad Request */
@@ -2067,7 +2469,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": string;
+                    "text/event-stream": components["schemas"]["EngineEvent"];
                 };
             };
         };

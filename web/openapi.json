@@ -6,7 +6,7 @@
   },
   "servers": [
     {
-      "url": "http://localhost:18091/"
+      "url": "http://localhost:8099/"
     }
   ],
   "paths": {
@@ -186,6 +186,199 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibraryAsinsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/export": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Downloads the library as csv, xlsx or json, the same export as the desktop and the CLI, newest first. q (Lucene filter syntax) and trash filter as in /library. 400 bad format or query.",
+        "operationId": "exportLibrary",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trash",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/quick-filters": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "The saved quick filters in display order, and whether the first one applies by default.",
+        "operationId": "getQuickFilters",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuickFiltersDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Replaces the whole quick filter list; every filter must parse as a library query. 400 names the offending filters[index]; 409 when the filters file is not writable.",
+        "operationId": "putQuickFilters",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/QuickFiltersDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuickFiltersDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/podcasts": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Podcast parent rows (isPodcastParent) with at least one episode matching q and trash, by title. /library never returns parents; group its episodes under these by parentAsin. An episode whose parent is missing here is a standalone row, as in the desktop grid.",
+        "operationId": "getLibraryPodcasts",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trash",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BookDto"
+                  }
                 }
               }
             }
@@ -1531,7 +1724,7 @@
             "content": {
               "text/event-stream": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/EngineEvent"
                 }
               }
             }
@@ -1679,6 +1872,34 @@
         }
       },
       "BookDetailDto": {
+        "required": [
+          "isAbridged",
+          "categoryLadders",
+          "audioFileExists",
+          "asin",
+          "title",
+          "authors",
+          "narrators",
+          "series",
+          "lengthInMinutes",
+          "bookStatus",
+          "dateAdded",
+          "account",
+          "locale",
+          "contentType",
+          "isPodcastEpisode",
+          "tags",
+          "inTrash",
+          "categories",
+          "productRating",
+          "myRating",
+          "hasPdf",
+          "isAudiblePlus",
+          "isSpatial",
+          "absentFromLastScan",
+          "partialDownload",
+          "isPodcastParent"
+        ],
         "type": "object",
         "properties": {
           "description": {
@@ -1727,9 +1948,6 @@
           "audioFileExists": {
             "type": "boolean"
           },
-          "partialDownload": {
-            "type": "boolean"
-          },
           "asin": {
             "type": "string"
           },
@@ -1769,9 +1987,20 @@
             "format": "int32"
           },
           "bookStatus": {
+            "enum": [
+              "NotLiberated",
+              "Liberated",
+              "Error"
+            ],
             "type": "string"
           },
           "pdfStatus": {
+            "enum": [
+              "NotLiberated",
+              "Liberated",
+              "Error",
+              null
+            ],
             "type": [
               "null",
               "string"
@@ -1859,6 +2088,12 @@
             ]
           },
           "absentFromLastScan": {
+            "type": "boolean"
+          },
+          "partialDownload": {
+            "type": "boolean"
+          },
+          "isPodcastParent": {
             "type": "boolean"
           }
         }
@@ -1893,7 +2128,9 @@
           "isSpatial",
           "pictureId",
           "parentAsin",
-          "absentFromLastScan"
+          "absentFromLastScan",
+          "partialDownload",
+          "isPodcastParent"
         ],
         "type": "object",
         "properties": {
@@ -1936,9 +2173,20 @@
             "format": "int32"
           },
           "bookStatus": {
+            "enum": [
+              "NotLiberated",
+              "Liberated",
+              "Error"
+            ],
             "type": "string"
           },
           "pdfStatus": {
+            "enum": [
+              "NotLiberated",
+              "Liberated",
+              "Error",
+              null
+            ],
             "type": [
               "null",
               "string"
@@ -2027,6 +2275,150 @@
           },
           "absentFromLastScan": {
             "type": "boolean"
+          },
+          "partialDownload": {
+            "type": "boolean"
+          },
+          "isPodcastParent": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BookFinished": {
+        "required": [
+          "jobId",
+          "asin",
+          "title",
+          "result",
+          "status",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "result": {
+            "enum": [
+              "none",
+              "success",
+              "cancelled",
+              "validationFail",
+              "failedRetry",
+              "failedSkip",
+              "failedAbort",
+              "licenseDenied",
+              "licenseDeniedPossibleOutage",
+              "licenseDeniedThrottled",
+              "licenseDeniedThrottledRecovered",
+              "widevineRecommended",
+              "diskFull",
+              "awaitingDecision",
+              "skippedDailyLimit"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "cancelled",
+              "working",
+              "completed",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BookLog": {
+        "required": [
+          "jobId",
+          "level",
+          "message",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BookProgress": {
+        "required": [
+          "jobId",
+          "asin",
+          "percent",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "percent": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BookStarted": {
+        "required": [
+          "jobId",
+          "asin",
+          "title",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -2041,6 +2433,11 @@
             "type": "string"
           },
           "result": {
+            "enum": [
+              "ok",
+              "notFound",
+              "conflict"
+            ],
             "type": "string"
           }
         }
@@ -2162,13 +2559,40 @@
             "type": "string"
           },
           "outcome": {
+            "enum": [
+              "removed",
+              "cancelling"
+            ],
             "type": "string"
+          }
+        }
+      },
+      "CycleFinished": {
+        "required": [
+          "exitCode",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "exitCode": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
       "DecisionRequest": {
         "required": [
-          "decision"
+          "decision",
+          "applyToAll",
+          "remember"
         ],
         "type": "object",
         "properties": {
@@ -2298,6 +2722,68 @@
           }
         }
       },
+      "EngineEvent": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/BookFinished"
+          },
+          {
+            "$ref": "#/components/schemas/BookLog"
+          },
+          {
+            "$ref": "#/components/schemas/BookProgress"
+          },
+          {
+            "$ref": "#/components/schemas/BookStarted"
+          },
+          {
+            "$ref": "#/components/schemas/CycleFinished"
+          },
+          {
+            "$ref": "#/components/schemas/LiberateFinished"
+          },
+          {
+            "$ref": "#/components/schemas/LiberateStarted"
+          },
+          {
+            "$ref": "#/components/schemas/LocateScanProgress"
+          },
+          {
+            "$ref": "#/components/schemas/NextRunScheduled"
+          },
+          {
+            "$ref": "#/components/schemas/QueueChanged"
+          },
+          {
+            "$ref": "#/components/schemas/QueueDispatchPaused"
+          },
+          {
+            "$ref": "#/components/schemas/QueueDispatchResumed"
+          },
+          {
+            "$ref": "#/components/schemas/QueuePaused"
+          },
+          {
+            "$ref": "#/components/schemas/QueueResumed"
+          },
+          {
+            "$ref": "#/components/schemas/QueueWaitEnded"
+          },
+          {
+            "$ref": "#/components/schemas/QueueWaiting"
+          },
+          {
+            "$ref": "#/components/schemas/ScanFinished"
+          },
+          {
+            "$ref": "#/components/schemas/ScanStarted"
+          },
+          {
+            "$ref": "#/components/schemas/StateChanged"
+          }
+        ],
+        "description": "One server-sent event on /api/events; the SSE event name is the name of the matching schema."
+      },
       "ErrorDto": {
         "required": [
           "error"
@@ -2330,9 +2816,33 @@
             "type": "string"
           },
           "result": {
+            "enum": [
+              "none",
+              "success",
+              "cancelled",
+              "validationFail",
+              "failedRetry",
+              "failedSkip",
+              "failedAbort",
+              "licenseDenied",
+              "licenseDeniedPossibleOutage",
+              "licenseDeniedThrottled",
+              "licenseDeniedThrottledRecovered",
+              "widevineRecommended",
+              "diskFull",
+              "awaitingDecision",
+              "skippedDailyLimit"
+            ],
             "type": "string"
           },
           "status": {
+            "enum": [
+              "queued",
+              "cancelled",
+              "working",
+              "completed",
+              "failed"
+            ],
             "type": "string"
           },
           "finishedAt": {
@@ -2381,10 +2891,48 @@
             "format": "date-time"
           },
           "level": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
             "type": "string"
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "LiberateFinished": {
+        "required": [
+          "exitCode",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "exitCode": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LiberateStarted": {
+        "required": [
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -2507,6 +3055,12 @@
         "type": "object",
         "properties": {
           "state": {
+            "enum": [
+              "idle",
+              "running",
+              "completed",
+              "failed"
+            ],
             "type": "string"
           },
           "folder": {
@@ -2557,6 +3111,87 @@
               "null",
               "string"
             ],
+            "format": "date-time"
+          }
+        }
+      },
+      "LocateScanProgress": {
+        "required": [
+          "scan",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "scan": {
+            "required": [
+              "state",
+              "folder",
+              "found",
+              "matched",
+              "updated",
+              "error",
+              "startedAt",
+              "finishedAt"
+            ],
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string"
+              },
+              "folder": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "found": {
+                "pattern": "^-?(?:0|[1-9]\\d*)$",
+                "type": [
+                  "integer",
+                  "string"
+                ],
+                "format": "int32"
+              },
+              "matched": {
+                "pattern": "^-?(?:0|[1-9]\\d*)$",
+                "type": [
+                  "integer",
+                  "string"
+                ],
+                "format": "int32"
+              },
+              "updated": {
+                "pattern": "^-?(?:0|[1-9]\\d*)$",
+                "type": [
+                  "integer",
+                  "string"
+                ],
+                "format": "int32"
+              },
+              "error": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "startedAt": {
+                "type": [
+                  "null",
+                  "string"
+                ],
+                "format": "date-time"
+              },
+              "finishedAt": {
+                "type": [
+                  "null",
+                  "string"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          "at": {
+            "type": "string",
             "format": "date-time"
           }
         }
@@ -2612,6 +3247,26 @@
           }
         }
       },
+      "NextRunScheduled": {
+        "required": [
+          "nextRun",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "nextRun": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "PendingDecisionDto": {
         "required": [
           "id",
@@ -2630,6 +3285,12 @@
             "format": "int64"
           },
           "reason": {
+            "enum": [
+              "badBook",
+              "licenseGuidance",
+              "widevineGuidance",
+              "diskFull"
+            ],
             "type": "string"
           },
           "jobId": {
@@ -2643,6 +3304,261 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "QueueChanged": {
+        "required": [
+          "queue",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "queue": {
+            "required": [
+              "running",
+              "jobs",
+              "pending",
+              "waiting",
+              "paused",
+              "stats"
+            ],
+            "type": "object",
+            "properties": {
+              "running": {
+                "type": "boolean"
+              },
+              "jobs": {
+                "type": "array",
+                "items": {
+                  "required": [
+                    "id",
+                    "asin",
+                    "title",
+                    "state"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "asin": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "enum": [
+                        "working",
+                        "queued"
+                      ],
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "pending": {
+                "type": "array",
+                "items": {
+                  "required": [
+                    "id",
+                    "reason",
+                    "jobId",
+                    "allowed"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "integer",
+                        "string"
+                      ],
+                      "format": "int64"
+                    },
+                    "reason": {
+                      "enum": [
+                        "badBook",
+                        "licenseGuidance",
+                        "widevineGuidance",
+                        "diskFull"
+                      ],
+                      "type": "string"
+                    },
+                    "jobId": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "allowed": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "waiting": {
+                "required": [
+                  "id",
+                  "reason",
+                  "since",
+                  "nextCheck",
+                  "jobId",
+                  "allowed",
+                  "volumes"
+                ],
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "format": "int64"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "since": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "nextCheck": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "date-time"
+                  },
+                  "jobId": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "allowed": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "volumes": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "required": [
+                        "root",
+                        "freeBytes",
+                        "requiredBytes"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "root": {
+                          "type": "string"
+                        },
+                        "freeBytes": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int64"
+                        },
+                        "requiredBytes": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int64"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "paused": {
+                "type": "boolean"
+              },
+              "stats": {
+                "required": [
+                  "queued",
+                  "completed",
+                  "errors",
+                  "runningSince"
+                ],
+                "type": "object",
+                "properties": {
+                  "queued": {
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "format": "int32"
+                  },
+                  "completed": {
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "format": "int32"
+                  },
+                  "errors": {
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "format": "int32"
+                  },
+                  "runningSince": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QueueDispatchPaused": {
+        "required": [
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QueueDispatchResumed": {
+        "required": [
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -2709,7 +3625,83 @@
             "type": "string"
           },
           "state": {
+            "enum": [
+              "working",
+              "queued"
+            ],
             "type": "string"
+          }
+        }
+      },
+      "QueuePaused": {
+        "required": [
+          "pause",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "pause": {
+            "required": [
+              "id",
+              "reason",
+              "jobId",
+              "allowed"
+            ],
+            "type": "object",
+            "properties": {
+              "id": {
+                "pattern": "^-?(?:0|[1-9]\\d*)$",
+                "type": [
+                  "integer",
+                  "string"
+                ],
+                "format": "int64"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "jobId": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "allowed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QueueResumed": {
+        "required": [
+          "pauseId",
+          "decision",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "pauseId": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -2858,6 +3850,163 @@
           }
         }
       },
+      "QueueWaitEnded": {
+        "required": [
+          "pauseId",
+          "reason",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "pauseId": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QueueWaiting": {
+        "required": [
+          "wait",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "wait": {
+            "required": [
+              "id",
+              "reason",
+              "since",
+              "nextCheck",
+              "jobId",
+              "allowed",
+              "volumes"
+            ],
+            "type": "object",
+            "properties": {
+              "id": {
+                "pattern": "^-?(?:0|[1-9]\\d*)$",
+                "type": [
+                  "integer",
+                  "string"
+                ],
+                "format": "int64"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "since": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "nextCheck": {
+                "type": [
+                  "null",
+                  "string"
+                ],
+                "format": "date-time"
+              },
+              "jobId": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "allowed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "volumes": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "required": [
+                    "root",
+                    "freeBytes",
+                    "requiredBytes"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "root": {
+                      "type": "string"
+                    },
+                    "freeBytes": {
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ],
+                      "format": "int64"
+                    },
+                    "requiredBytes": {
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "integer",
+                        "string"
+                      ],
+                      "format": "int64"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QuickFilterDto": {
+        "required": [
+          "filter"
+        ],
+        "type": "object",
+        "properties": {
+          "filter": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "QuickFiltersDto": {
+        "required": [
+          "useDefault",
+          "filters"
+        ],
+        "type": "object",
+        "properties": {
+          "useDefault": {
+            "type": "boolean"
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuickFilterDto"
+            }
+          }
+        }
+      },
       "RatingDto": {
         "required": [
           "overall",
@@ -2889,6 +4038,39 @@
               "string"
             ],
             "format": "float"
+          }
+        }
+      },
+      "ScanFinished": {
+        "required": [
+          "exitCode",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "exitCode": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ScanStarted": {
+        "required": [
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -2958,6 +4140,22 @@
           },
           "audiobookshelf": {
             "$ref": "#/components/schemas/AudiobookshelfSettingsDto"
+          }
+        }
+      },
+      "StateChanged": {
+        "required": [
+          "state",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

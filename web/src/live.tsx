@@ -6,7 +6,6 @@ import {
   applySnapshot,
   applyStatusEvent,
   emptyQueue,
-  needsQueueRefetch,
   needsStatusRefetch,
   parseEvent,
   type QueueView,
@@ -18,7 +17,6 @@ interface Live {
   statusError: string | null;
   queue: QueueView;
   locateScan: LocateScan | null;
-  refreshQueue: () => void;
   refreshStatus: () => void;
   setStatus: (s: Status) => void;
   onBookEvent: (fn: () => void) => () => void;
@@ -68,12 +66,6 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     refreshQueue();
     api.locateScan().then(setLocateScan, () => undefined);
 
-    let queueTimer: number | undefined;
-    const scheduleQueueRefetch = () => {
-      window.clearTimeout(queueTimer);
-      queueTimer = window.setTimeout(refreshQueue, 150);
-    };
-
     const es = new EventSource("/api/events");
     es.onopen = () => {
       setConnected(true);
@@ -88,7 +80,6 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         if (!evt) return;
         setStatus((s) => applyStatusEvent(s, evt));
         dispatch({ kind: "event", evt });
-        if (needsQueueRefetch(evt)) scheduleQueueRefetch();
         if (needsStatusRefetch(evt)) refreshStatus();
         if (evt.type === "LocateScanProgress") {
           setLocateScan(evt.scan);
@@ -99,7 +90,6 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     }
 
     return () => {
-      window.clearTimeout(queueTimer);
       es.close();
     };
   }, [refreshQueue, refreshStatus]);
@@ -110,8 +100,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ connected, status, statusError, queue, locateScan, refreshQueue, refreshStatus, setStatus, onBookEvent }),
-    [connected, status, statusError, queue, locateScan, refreshQueue, refreshStatus, onBookEvent],
+    () => ({ connected, status, statusError, queue, locateScan, refreshStatus, setStatus, onBookEvent }),
+    [connected, status, statusError, queue, locateScan, refreshStatus, onBookEvent],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

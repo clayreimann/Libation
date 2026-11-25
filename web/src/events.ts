@@ -49,10 +49,11 @@ export function applySnapshot(view: QueueView, snap: Queue): QueueView {
 export function applyQueueEvent(view: QueueView, evt: EngineEvent): QueueView {
   switch (evt.type) {
     case "BookStarted": {
+      const working = "working" as const;
       const known = view.jobs.some((j) => j.id === evt.jobId);
-      const jobs = known
-        ? view.jobs.map((j) => (j.id === evt.jobId ? { ...j, state: "working" } : j))
-        : [...view.jobs, { id: evt.jobId, asin: evt.asin, title: evt.title, state: "working" }];
+      const jobs: QueueJob[] = known
+        ? view.jobs.map((j) => (j.id === evt.jobId ? { ...j, state: working } : j))
+        : [...view.jobs, { id: evt.jobId, asin: evt.asin, title: evt.title, state: working }];
       return { ...view, jobs, running: true };
     }
     case "BookProgress":
@@ -67,6 +68,8 @@ export function applyQueueEvent(view: QueueView, evt: EngineEvent): QueueView {
       const line = { at: evt.at ?? new Date().toISOString(), level: evt.level, message: evt.message };
       return { ...view, logs: { ...view.logs, [evt.jobId]: appendLog(view.logs[evt.jobId], line) } };
     }
+    case "QueueChanged":
+      return applySnapshot(view, evt.queue);
     case "QueueDispatchPaused":
       return view.paused ? view : { ...view, paused: true };
     case "QueueDispatchResumed":
@@ -94,12 +97,6 @@ export function applyStatusEvent(status: Status | null, evt: EngineEvent): Statu
     default:
       return status;
   }
-}
-
-/** Events after which the server's view can differ from what the reducers derive. */
-export function needsQueueRefetch(evt: EngineEvent): boolean {
-  if (evt.type === "BookProgress" || evt.type === "BookLog") return false;
-  return evt.type.startsWith("Book") || evt.type.startsWith("Queue") || evt.type === "LiberateFinished";
 }
 
 export function needsStatusRefetch(evt: EngineEvent): boolean {

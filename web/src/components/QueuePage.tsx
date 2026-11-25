@@ -7,7 +7,6 @@ import { useLive } from "../live";
 import { BookDetails } from "./BookDetails";
 
 function Decisions({ item }: { item: PendingDecision | QueueWait }) {
-  const { refreshQueue } = useLive();
   const [error, setError] = useState<string | null>(null);
   const [applyToAll, setApplyToAll] = useState(false);
   const [remember, setRemember] = useState(false);
@@ -22,7 +21,6 @@ function Decisions({ item }: { item: PendingDecision | QueueWait }) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
-      refreshQueue();
     }
   };
 
@@ -61,7 +59,7 @@ const moves: { to: MoveTo; label: string; glyph: string }[] = [
   { to: "bottom", label: "Move to bottom", glyph: "⇊" },
 ];
 
-const isError = (f: FinishedJob) => f.status === "failed" || f.status === "Failed";
+const isError = (f: FinishedJob) => f.status === "failed";
 
 function LogPanel({ jobId, live }: { jobId: string; live?: LogView }) {
   const [server, setServer] = useState<JobLog | null>(null);
@@ -178,7 +176,7 @@ function HistoryRow({ item, onOpen }: { item: FinishedJob; onOpen: (asin: string
 }
 
 export function QueuePage() {
-  const { queue, connected, refreshQueue, onBookEvent } = useLive();
+  const { queue, connected, onBookEvent } = useLive();
   const { jobs, progress, pending, waiting, running, paused, stats, logs } = queue;
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<FinishedJob[] | null>(null);
@@ -199,12 +197,9 @@ export function QueuePage() {
       fn().then(
         () => undefined,
         (e: Error) => setError(e.message),
-      ).finally(() => {
-        refreshQueue();
-        loadHistory();
-      });
+      ).finally(loadHistory);
     },
-    [refreshQueue, loadHistory],
+    [loadHistory],
   );
 
   const open = (asin: string) => {
