@@ -1,5 +1,9 @@
+/** Worker return value that counts the item as skipped, not ok or failed. */
+export const SKIPPED = Symbol("skipped");
+
 export interface BulkResult<T> {
   ok: number;
+  skipped: number;
   failed: { item: T; error: string }[];
   cancelled: boolean;
 }
@@ -13,7 +17,7 @@ export interface BulkOptions<T> {
 
 /** Runs worker over items with bounded concurrency; failures are collected, never thrown. */
 export async function runBulk<T>(items: readonly T[], { concurrency = 4, signal, onProgress, worker }: BulkOptions<T>): Promise<BulkResult<T>> {
-  const result: BulkResult<T> = { ok: 0, failed: [], cancelled: false };
+  const result: BulkResult<T> = { ok: 0, skipped: 0, failed: [], cancelled: false };
   let next = 0;
   let done = 0;
 
@@ -25,8 +29,8 @@ export async function runBulk<T>(items: readonly T[], { concurrency = 4, signal,
       }
       const item = items[next++] as T;
       try {
-        await worker(item);
-        result.ok++;
+        if ((await worker(item)) === SKIPPED) result.skipped++;
+        else result.ok++;
       } catch (e) {
         result.failed.push({ item, error: e instanceof Error ? e.message : String(e) });
       }

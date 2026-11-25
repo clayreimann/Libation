@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runBulk } from "./bulk";
+import { runBulk, SKIPPED } from "./bulk";
 
 const tick = () => new Promise((r) => setTimeout(r, 1));
 
@@ -21,7 +21,7 @@ describe("runBulk", () => {
       },
     });
     expect(peak).toBe(4);
-    expect(res).toEqual({ ok: 50, failed: [], cancelled: false });
+    expect(res).toEqual({ ok: 50, skipped: 0, failed: [], cancelled: false });
     expect(seen.sort((a, b) => a - b)).toEqual(items);
     expect(progress.at(-1)).toBe(50);
   });
@@ -47,5 +47,12 @@ describe("runBulk", () => {
     });
     expect(res.cancelled).toBe(true);
     expect(res.ok).toBe(2);
+  });
+});
+
+describe("runBulk skipped", () => {
+  it("counts SKIPPED separately from ok", async () => {
+    const res = await runBulk([1, 2, 3], { worker: async (i) => (i === 2 ? SKIPPED : undefined) });
+    expect(res).toMatchObject({ ok: 2, skipped: 1, failed: [] });
   });
 });
