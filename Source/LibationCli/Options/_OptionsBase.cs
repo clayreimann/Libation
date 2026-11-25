@@ -51,6 +51,13 @@ public abstract class OptionsBase
 		if (SettingOverrides is not null)
 			ProcessSettingsOverrides();
 
+		await ExecuteAsync();
+	}
+
+	/// <summary>Runs <see cref="ProcessAsync"/> with error reporting and returns the process exit code.</summary>
+	internal async Task<int> ExecuteAsync()
+	{
+		Environment.ExitCode = 0;
 		try
 		{
 			await ProcessAsync();
@@ -64,7 +71,7 @@ public abstract class OptionsBase
 				foreach (var line in htmlEx.GetExplainerLines())
 					Console.Error.WriteLine(line);
 				Serilog.Log.Logger.Error(htmlEx, "Audible returned HTML instead of JSON");
-				return;
+				return Environment.ExitCode;
 			}
 
 			if (AccountSettingsDecryptFailure.TryFindInTree(ex, out var decryptEx) && decryptEx is not null)
@@ -74,7 +81,7 @@ public abstract class OptionsBase
 				foreach (var line in AccountSettingsDecryptFailure.GetExplainerLines(ex))
 					Console.Error.WriteLine(line);
 				Serilog.Log.Logger.Error(decryptEx, "Failed to decrypt account settings tokens");
-				return;
+				return Environment.ExitCode;
 			}
 
 			// the exception message names the account masked, because it gets logged. stderr is not teed into
@@ -90,6 +97,7 @@ public abstract class OptionsBase
 				// Include inner exceptions (e.g. real token failure behind AuthenticationRequiredException).
 				ex.ToString());
 		}
+		return Environment.ExitCode;
 	}
 
 	private static bool TryParseEnum(Type enumType, string? value, out object? result)
