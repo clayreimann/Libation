@@ -7,7 +7,7 @@ namespace LibationEngine.Host;
 public static class LibationDaemon
 {
 	/// <summary>Runs until cancelled or SIGTERM/SIGINT; returns the process exit code.</summary>
-	public static async Task<int> RunAsync(DaemonOptions options, DaemonJobs jobs, CancellationToken ct = default, TimeProvider? time = null, IEngineData? data = null, LiberationQueue? queue = null)
+	public static async Task<int> RunAsync(DaemonOptions options, DaemonJobs jobs, CancellationToken ct = default, TimeProvider? time = null, IEngineData? data = null, LiberationQueue? queue = null, LoginSessions? logins = null)
 	{
 		try
 		{
@@ -55,8 +55,9 @@ public static class LibationDaemon
 		var scheduler = new CycleScheduler(options, jobs, state, time);
 		using var authMonitor = new AccountAuthMonitor(scheduler.Events);
 		scheduler.OnScanSucceeded = authMonitor.ClearAll;
+		using var loginSessions = logins ?? new LoginSessions(new AudibleLoginBackend());
 		_ = new QueueEventPublisher(queue, scheduler.Events, time);
-		await using var host = options.Once ? null : DaemonHost.Build(options, state, scheduler, queue, data, apiToken, jobs.CreateBookJob, authMonitor);
+		await using var host = options.Once ? null : DaemonHost.Build(options, state, scheduler, queue, data, apiToken, jobs.CreateBookJob, authMonitor, loginSessions);
 		if (host is not null)
 			await host.StartAsync(cts.Token);
 

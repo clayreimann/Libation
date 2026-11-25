@@ -159,8 +159,9 @@ public static class ApiEndpoints
 			await next();
 		});
 
-	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null)
+	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null, LoginSessions? logins = null)
 	{
+		logins ??= new LoginSessions(new AudibleLoginBackend());
 		IReadOnlyList<AccountDto> Accounts()
 			=> data.GetAccounts()
 				.Select(a => authMonitor?.IsFlagged(a.AccountId) == true ? a with { AuthState = AuthStates.NeedsLogin } : a)
@@ -249,6 +250,79 @@ public static class ApiEndpoints
 			.Produces<AccountDto>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
 			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		const string LoginPath = "/api/accounts/login";
+		app.Use(async (context, next) =>
+		{
+			if (context.Request.Path.StartsWithSegments(LoginPath))
+			{
+				if (options.ApiTokenFile is null)
+				{
+					context.Response.StatusCode = StatusCodes.Status403Forbidden;
+					await context.Response.WriteAsJsonAsync(new ErrorDto("Signing in over the API requires an API token; start the daemon with --api-token-file."));
+					return;
+				}
+				context.Response.Headers.CacheControl = "no-store";
+			}
+			await next();
+		});
+
+		async Task<IResult> Login(Func<Task<IResult>> run)
+		{
+			try
+			{
+				return await run();
+			}
+			catch (LoginException ex)
+			{
+				return Error(ex.Message, ex.Status);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				return Error($"Accounts cannot be saved: {ex.Message}", StatusCodes.Status409Conflict);
+			}
+		}
+
+		api.MapPost("/accounts/login", (LoginStartRequest? body, CancellationToken ct) => Login(async () =>
+		{
+			if (body is null)
+				return Error("Send locale and, for a new or ambiguous account, accountId.", StatusCodes.Status400BadRequest);
+			var started = await logins.StartAsync(body.AccountId, body.Locale, body.DeviceRegistration, string.IsNullOrWhiteSpace(options.AccountsImportPath), ct);
+			return Results.Json(new LoginStartDto(started.LoginId, started.Url, started.ExpiresAt));
+		})).WithSummary("Starts an external-browser sign-in. Open url, sign in, then post the final address-bar URL to /accounts/login/{loginId}. Needs --api-token-file (403 otherwise); 400 bad request, 409 new account while accounts come from an import file, 429 too many pending, 502 Audible unreachable. A login lasts 10 minutes and is held in memory.")
+			.WithName("startAccountLogin").WithTags("accounts")
+			.Produces<LoginStartDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status403Forbidden)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict)
+			.Produces<ErrorDto>(StatusCodes.Status429TooManyRequests)
+			.Produces<ErrorDto>(StatusCodes.Status502BadGateway);
+
+		api.MapPost("/accounts/login/{loginId}", (string loginId, LoginCompleteRequest? body, CancellationToken ct) => Login(async () =>
+		{
+			var target = await logins.CompleteAsync(loginId, body?.ResponseUrl, ct);
+			if (target is null)
+				return Error("No such pending login: it was already used, cancelled or has expired.", StatusCodes.Status404NotFound);
+			authMonitor?.Clear(target.AccountId);
+			var account = data.GetAccounts().FirstOrDefault(a => a.AccountId.Equals(target.AccountId, StringComparison.OrdinalIgnoreCase) && a.Locale == target.LocaleName);
+			return account is null
+				? Error("Signed in, but the account could not be read back.", StatusCodes.Status500InternalServerError)
+				: Results.Json(account);
+		})).WithSummary("Completes a sign-in with the final browser URL (treat it like a password; it is never logged or echoed). Single use. 200 with the account, 400 not the final URL (the login stays usable) or Audible rejected it (start again), 403 without an API token, 404 unknown, used or expired.")
+			.WithName("completeAccountLogin").WithTags("accounts")
+			.Produces<AccountDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status403Forbidden)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
+
+		api.MapDelete("/accounts/login/{loginId}", (string loginId) => logins.Cancel(loginId)
+			? Results.Json(new LoginCancelDto(loginId))
+			: Error("No such pending login.", StatusCodes.Status404NotFound))
+			.WithSummary("Cancels a pending sign-in. 200, 403 without an API token, 404 unknown, used or expired.")
+			.WithName("cancelAccountLogin").WithTags("accounts")
+			.Produces<LoginCancelDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status403Forbidden)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound);
 
 		api.MapGet("/library", (int? offset, int? limit, string? q, bool? trash, string? sort, string? dir) =>
 		{

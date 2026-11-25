@@ -235,3 +235,14 @@ public sealed record SettingsDto(
 public sealed record QuickFilterDto(string Filter, string? Name = null);
 
 public sealed record QuickFiltersDto(bool UseDefault, IReadOnlyList<QuickFilterDto> Filters);
+
+/// <summary>Body of <c>POST /api/accounts/login</c>; AccountId may be omitted only when exactly one account uses that locale.</summary>
+public sealed record LoginStartRequest(string? AccountId, string? Locale, string? DeviceRegistration = null);
+
+/// <summary>Open Url in a browser, sign in, then post the final address-bar URL to <c>/api/accounts/login/{loginId}</c> before ExpiresAt.</summary>
+public sealed record LoginStartDto(string LoginId, string Url, DateTimeOffset ExpiresAt);
+
+/// <summary>Body of <c>POST /api/accounts/login/{loginId}</c>; treat the URL like a password.</summary>
+public sealed record LoginCompleteRequest(string? ResponseUrl);
+
+public sealed record LoginCancelDto(string LoginId);

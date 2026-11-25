@@ -161,4 +161,31 @@ public class AccountsEngineTests
 	{
 		Assert.AreEqual(AccountOutcome.NotFound, data.DeleteAccount("nobody@example.com", null).Outcome);
 	}
+
+	[TestMethod]
+	public void Login_backend_resolves_targets_and_rejects_bad_requests()
+	{
+		Seed(Registered("a@example.com", "us"), Registered("b@example.com", "uk"));
+		var backend = new AudibleLoginBackend();
+
+		var known = backend.Resolve("A@example.com", "us", null);
+		Assert.AreEqual(("a@example.com", "us", true), (known.AccountId, known.LocaleName, known.Exists));
+		Assert.IsFalse(backend.Resolve("new@example.com", "us", null).Exists);
+		Assert.AreEqual("b@example.com", backend.Resolve(null, "uk", null).AccountId);
+
+		Assert.AreEqual(400, Assert.ThrowsExactly<LoginException>(() => backend.Resolve("a@example.com", "nowhere", null)).Status);
+		Assert.AreEqual(400, Assert.ThrowsExactly<LoginException>(() => backend.Resolve(null, "germany", null)).Status);
+		Assert.AreEqual(400, Assert.ThrowsExactly<LoginException>(() => backend.Resolve("a@example.com", "us", "Nope")).Status);
+	}
+
+	[TestMethod]
+	public void Discarding_an_unfinished_login_removes_only_accounts_without_tokens()
+	{
+		Seed(Registered("kept@example.com", "us"), new Account("empty@example.com") { IdentityTokens = new Identity(Localization.Get("us")) });
+
+		ExternalLoginFlow.DiscardUnfinished("kept@example.com", "us");
+		ExternalLoginFlow.DiscardUnfinished("empty@example.com", "us");
+
+		CollectionAssert.AreEqual(new[] { "kept@example.com" }, data.GetAccounts().Select(a => a.AccountId).ToArray());
+	}
 }

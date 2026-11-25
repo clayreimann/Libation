@@ -236,7 +236,7 @@ public class ApiTests
 		public readonly LiberationQueue Queue;
 		public volatile Func<LiberationJob, Task<ProcessBookResult>> Outcome = _ => Task.FromResult(ProcessBookResult.Success);
 
-		public Harness(bool api, string? tokenFile = null, bool startRun = true, DiskFullPolicy onDiskFull = DiskFullPolicy.Ask, string? accountsImport = null)
+		public Harness(bool api, string? tokenFile = null, bool startRun = true, DiskFullPolicy onDiskFull = DiskFullPolicy.Ask, string? accountsImport = null, LoginSessions? logins = null)
 		{
 			Queue = new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => 1, OnDiskFull = onDiskFull })
 			{
@@ -279,7 +279,7 @@ public class ApiTests
 
 			run = LibationDaemon.RunAsync(
 				new DaemonOptions(TimeSpan.FromMinutes(30), false, Base, dir.Path, AccountsImportPath: accountsImport, ApiEnabled: api, ApiTokenFile: tokenFile),
-				jobs, cts.Token, data: Data, queue: Queue);
+				jobs, cts.Token, data: Data, queue: Queue, logins: logins);
 		}
 
 		public Task<int> Run => run;
@@ -664,12 +664,12 @@ public class ApiTests
 		return request;
 	}
 
-	private static async Task<Harness> TokenHarness()
+	private static async Task<Harness> TokenHarness(LoginSessions? logins = null, string? accountsImport = null)
 	{
 		var dir = new TempDir();
 		var tokenFile = dir.File("token");
 		File.WriteAllText(tokenFile, "s3cret\n");
-		var h = new Harness(api: true, tokenFile);
+		var h = new Harness(api: true, tokenFile, accountsImport: accountsImport, logins: logins);
 		await h.WaitIdleAfterFirstCycle();
 		return h;
 	}
@@ -1258,6 +1258,246 @@ public class ApiTests
 		var schemas = await SchemaDocument();
 		Assert.AreEqual("#/components/schemas/QueueDto", schemas.GetProperty("QueueChanged").GetProperty("properties").GetProperty("queue").GetProperty("$ref").GetString());
 		Assert.IsGreaterThan(0, schemas.GetProperty("QueueJobDto").GetProperty("properties").GetProperty("state").GetProperty("enum").GetArrayLength());
+	}
+
+
+	private const string LoginUrl = "https://www.amazon.com/ap/signin?verifier=SECRETMARKER_VERIFIER";
+	private const string GoodResponse = "https://www.amazon.com/ap/maplanding?openid.oa2.authorization_code=SECRETMARKERCODE";
+
+	private sealed class FakeLoginBackend : IExternalLoginBackend
+	{
+		public FakeData Data = new();
+		public readonly List<string> Discarded = [];
+
+		public LoginTarget Resolve(string? accountId, string locale, string? deviceRegistration)
+		{
+			if (locale == "xx")
+				throw new LoginException(400, "Unknown locale.");
+			var id = accountId ?? throw new LoginException(400, "accountId is required.");
+			return new(id, locale, Data.Accounts.Any(a => a.AccountId == id && a.Locale == locale), deviceRegistration);
+		}
+
+		public Task AuthenticateAsync(LoginTarget target, AudibleApi.ILoginExternal login, CancellationToken ct)
+		{
+			var url = login.GetResponseUrl(LoginUrl, new CookieCollection());
+			if (url.Contains("reject"))
+				throw new InvalidOperationException("Audible refused " + url);
+			if (!target.Exists)
+				Data.Accounts.Add(new(target.AccountId, target.AccountId, target.LocaleName, true, AuthStates.SignedIn, CredentialKinds.Modern, []));
+			return Task.CompletedTask;
+		}
+
+		public void DiscardUnfinished(LoginTarget target) => Discarded.Add(target.AccountId);
+	}
+
+	private sealed class LoginRig : IAsyncDisposable
+	{
+		public readonly FakeLoginBackend Backend = new();
+		public readonly Microsoft.Extensions.Time.Testing.FakeTimeProvider Time = new();
+		public readonly LoginSessions Sessions;
+		public Harness H = null!;
+		public string Base => H.Base;
+		public HttpClient Http => H.Http;
+
+		public LoginRig() => Sessions = new LoginSessions(Backend, Time);
+
+		public static async Task<LoginRig> Create(string? accountsImport = null)
+		{
+			var rig = new LoginRig();
+			rig.H = await TokenHarness(rig.Sessions, accountsImport);
+			rig.Backend.Data = rig.H.Data;
+			return rig;
+		}
+
+		public async Task<(HttpStatusCode Status, JsonElement Body)> Call(HttpMethod method, string path, string? json = null)
+		{
+			var response = await Http.SendAsync(Authed(method, Base + path, json));
+			var text = await response.Content.ReadAsStringAsync();
+			return (response.StatusCode, text.Length == 0 ? default : JsonDocument.Parse(text).RootElement.Clone());
+		}
+
+		public async Task<string> Start(string account = "new@example.com")
+		{
+			var (status, body) = await Call(HttpMethod.Post, "/api/accounts/login", $$"""{"accountId":"{{account}}","locale":"us"}""");
+			Assert.AreEqual(HttpStatusCode.OK, status);
+			return body.GetProperty("loginId").GetString()!;
+		}
+
+		public ValueTask DisposeAsync() => H.DisposeAsync();
+	}
+
+	private static string Complete(string url = GoodResponse) => JsonSerializer.Serialize(new { responseUrl = url });
+
+	[TestMethod]
+	public async Task Login_routes_are_403_without_an_api_token_and_name_the_flag()
+	{
+		await using var h = new Harness(api: true);
+		await h.WaitIdleAfterFirstCycle();
+		foreach (var (method, path, body) in new[]
+		{
+			(HttpMethod.Post, "/api/accounts/login", """{"locale":"us","accountId":"a"}"""),
+			(HttpMethod.Post, "/api/accounts/login/abc", Complete()),
+			(HttpMethod.Delete, "/api/accounts/login/abc", null)
+		})
+		{
+			var response = await h.Http.SendAsync(Send(method, h.Base + path, body));
+			Assert.AreEqual(HttpStatusCode.Forbidden, response.StatusCode, path);
+			StringAssert.Contains(await response.Content.ReadAsStringAsync(), "--api-token-file");
+		}
+	}
+
+	[TestMethod]
+	public async Task Login_start_returns_the_url_and_completing_it_adds_the_account_once()
+	{
+		await using var rig = await LoginRig.Create();
+		var (status, started) = await rig.Call(HttpMethod.Post, "/api/accounts/login", """{"accountId":"new@example.com","locale":"us"}""");
+		Assert.AreEqual(HttpStatusCode.OK, status);
+		CollectionAssert.AreEquivalent(new[] { "loginId", "url", "expiresAt" }, started.EnumerateObject().Select(p => p.Name).ToArray());
+		Assert.AreEqual(LoginUrl, started.GetProperty("url").GetString());
+		var id = started.GetProperty("loginId").GetString()!;
+		Assert.AreEqual(1, rig.Sessions.PendingCount);
+
+		var (done, account) = await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete());
+		Assert.AreEqual(HttpStatusCode.OK, done);
+		Assert.AreEqual("new@example.com", account.GetProperty("accountId").GetString());
+		Assert.AreEqual("signedIn", account.GetProperty("authState").GetString());
+		StringAssert.DoesNotMatch(account.GetRawText(), new System.Text.RegularExpressions.Regex("SECRETMARKER"));
+		Assert.AreEqual(0, rig.Sessions.PendingCount);
+
+		Assert.AreEqual(HttpStatusCode.NotFound, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete())).Status);
+	}
+
+	[TestMethod]
+	public async Task Login_with_a_bad_response_url_is_400_and_stays_usable()
+	{
+		await using var rig = await LoginRig.Create();
+		var id = await rig.Start();
+		foreach (var bad in new[] { "", "not a url", "http://www.amazon.com/ap/maplanding?openid.oa2.authorization_code=x", "https://www.amazon.com/ap/signin" })
+		{
+			var (status, body) = await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete(bad));
+			Assert.AreEqual(HttpStatusCode.BadRequest, status, bad);
+			if (bad.Length > 0)
+				StringAssert.DoesNotMatch(body.GetRawText(), new System.Text.RegularExpressions.Regex(System.Text.RegularExpressions.Regex.Escape(bad)));
+		}
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}")).Status);
+		Assert.AreEqual(HttpStatusCode.OK, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete())).Status);
+	}
+
+	[TestMethod]
+	public async Task Login_rejected_by_audible_is_400_consumed_and_cleaned_up()
+	{
+		await using var rig = await LoginRig.Create();
+		var id = await rig.Start();
+		var (status, body) = await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete("https://www.amazon.com/ap/maplanding?openid.oa2.authorization_code=reject"));
+		Assert.AreEqual(HttpStatusCode.BadRequest, status);
+		StringAssert.DoesNotMatch(body.GetRawText(), new System.Text.RegularExpressions.Regex("reject"));
+		Assert.AreEqual(HttpStatusCode.NotFound, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete())).Status);
+		CollectionAssert.AreEqual(new[] { "new@example.com" }, rig.Backend.Discarded);
+	}
+
+	[TestMethod]
+	public async Task Login_expires_after_ten_minutes()
+	{
+		await using var rig = await LoginRig.Create();
+		var id = await rig.Start();
+		rig.Time.Advance(TimeSpan.FromMinutes(9));
+		Assert.AreEqual(1, rig.Sessions.PendingCount);
+		rig.Time.Advance(TimeSpan.FromMinutes(2));
+		Assert.AreEqual(HttpStatusCode.NotFound, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete())).Status);
+		Assert.AreEqual(0, rig.Sessions.PendingCount);
+		Assert.AreEqual(1, rig.Backend.Discarded.Count);
+		Assert.IsFalse(rig.H.Data.Accounts.Any(a => a.AccountId == "new@example.com"));
+	}
+
+	[TestMethod]
+	public async Task Login_caps_pending_sign_ins_and_cancel_frees_a_slot()
+	{
+		await using var rig = await LoginRig.Create();
+		var ids = new List<string>();
+		for (var i = 0; i < LoginSessions.MaxPending; i++)
+			ids.Add(await rig.Start($"user{i}@example.com"));
+
+		var (status, _) = await rig.Call(HttpMethod.Post, "/api/accounts/login", """{"accountId":"extra@example.com","locale":"us"}""");
+		Assert.AreEqual(HttpStatusCode.TooManyRequests, status);
+
+		var (cancelled, body) = await rig.Call(HttpMethod.Delete, $"/api/accounts/login/{ids[0]}");
+		Assert.AreEqual(HttpStatusCode.OK, cancelled);
+		Assert.AreEqual(ids[0], body.GetProperty("loginId").GetString());
+		Assert.AreEqual(HttpStatusCode.NotFound, (await rig.Call(HttpMethod.Delete, $"/api/accounts/login/{ids[0]}")).Status);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{ids[0]}", Complete())).Status);
+		await rig.Start("extra@example.com");
+	}
+
+	[TestMethod]
+	public async Task Login_start_validates_the_request_and_replaces_a_pending_login_for_the_same_account()
+	{
+		await using var rig = await LoginRig.Create();
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await rig.Call(HttpMethod.Post, "/api/accounts/login", """{"accountId":"a"}""")).Status);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await rig.Call(HttpMethod.Post, "/api/accounts/login", """{"accountId":"a","locale":"xx"}""")).Status);
+		Assert.AreEqual(HttpStatusCode.BadRequest, (await rig.Call(HttpMethod.Post, "/api/accounts/login", """{"locale":"us"}""")).Status);
+
+		var first = await rig.Start();
+		var second = await rig.Start();
+		Assert.AreEqual(1, rig.Sessions.PendingCount);
+		Assert.AreEqual(HttpStatusCode.NotFound, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{first}", Complete())).Status);
+		Assert.AreEqual(HttpStatusCode.OK, (await rig.Call(HttpMethod.Post, $"/api/accounts/login/{second}", Complete())).Status);
+	}
+
+	[TestMethod]
+	public async Task Login_in_import_mode_allows_existing_accounts_and_refuses_new_ones()
+	{
+		await using var rig = await LoginRig.Create(accountsImport: Path.Combine(Path.GetTempPath(), "missing-accounts.json"));
+
+		var (refused, body) = await rig.Call(HttpMethod.Post, "/api/accounts/login", """{"accountId":"new@example.com","locale":"us"}""");
+		Assert.AreEqual(HttpStatusCode.Conflict, refused);
+		StringAssert.Contains(body.GetProperty("error").GetString(), "imported accounts file");
+
+		var id = await rig.Start("a@example.com");
+		var (status, account) = await rig.Call(HttpMethod.Post, $"/api/accounts/login/{id}", Complete());
+		Assert.AreEqual(HttpStatusCode.OK, status);
+		Assert.AreEqual("a@example.com", account.GetProperty("accountId").GetString());
+	}
+
+	[TestMethod]
+	public async Task Login_never_puts_the_url_verifier_or_response_in_a_log_event_or_a_cached_response()
+	{
+		var sink = new CaptureSink();
+		var previous = Serilog.Log.Logger;
+		Serilog.Log.Logger = new Serilog.LoggerConfiguration().MinimumLevel.Verbose().WriteTo.Sink(sink).CreateLogger();
+		try
+		{
+			await using var rig = await LoginRig.Create();
+			var bad = "https://www.amazon.com/ap/maplanding?openid.oa2.authorization_code=reject_SECRETMARKER";
+			var first = await rig.Start();
+			await rig.Call(HttpMethod.Post, $"/api/accounts/login/{first}", Complete("not-a-url-SECRETMARKER"));
+			await rig.Call(HttpMethod.Post, $"/api/accounts/login/{first}", Complete(bad));
+			var second = await rig.Start("b@example.com");
+			await rig.Call(HttpMethod.Post, $"/api/accounts/login/{second}", Complete());
+			var third = await rig.Start("c@example.com");
+			await rig.Call(HttpMethod.Delete, $"/api/accounts/login/{third}");
+			await rig.Call(HttpMethod.Post, "/api/accounts/login", "{not json SECRETMARKER");
+
+			var response = await rig.Http.SendAsync(Authed(HttpMethod.Post, rig.Base + "/api/accounts/login", """{"accountId":"d@example.com","locale":"us"}"""));
+			Assert.AreEqual("no-store", response.Headers.CacheControl?.ToString());
+		}
+		finally
+		{
+			Serilog.Log.Logger = previous;
+		}
+
+		Assert.IsGreaterThan(0, sink.Events.Count, "the capture saw the failed sign-in warning");
+		foreach (var rendered in sink.Events)
+		{
+			StringAssert.DoesNotMatch(rendered, new System.Text.RegularExpressions.Regex("SECRETMARKER|authorization_code|verifier|reject"));
+		}
+	}
+
+	private sealed class CaptureSink : Serilog.Core.ILogEventSink
+	{
+		public readonly System.Collections.Concurrent.ConcurrentBag<string> Events = [];
+
+		public void Emit(Serilog.Events.LogEvent logEvent)
+			=> Events.Add(logEvent.RenderMessage() + " " + string.Join(' ', logEvent.Properties.Select(p => $"{p.Key}={p.Value}")) + " " + logEvent.Exception);
 	}
 
 	[TestMethod]
