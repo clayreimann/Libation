@@ -270,6 +270,20 @@ public partial class ProductsDisplay : UserControl
 		}
 
 		#endregion
+		#region Push Audible progress to Audiobookshelf
+
+		if (ctx.LibraryBookEntries.Length > 0)
+		{
+			var pushProgressMenuItem = new ToolStripMenuItem
+			{
+				Text = ctx.PushAudibleProgressText,
+				Enabled = ctx.PushAudibleProgressEnabled
+			};
+			pushProgressMenuItem.Click += async (_, _) => await RunLibraryOperationAsync(ctx.PushAudibleProgressAsync, "Could not push Audible progress to Audiobookshelf.");
+			ctxMenu.Items.Add(pushProgressMenuItem);
+		}
+
+		#endregion
 		#region Force Re-Download (Single book only)
 
 		if (entries.Length == 1 && entries[0] is LibraryBookEntry entry4)

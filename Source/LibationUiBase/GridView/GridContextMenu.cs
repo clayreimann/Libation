@@ -27,6 +27,7 @@ public class GridContextMenu
 	public string LocateFileDialogTitle => $"Locate the audio file for '{GridEntries[0].Book?.TitleWithSubtitle ?? "[null]"}'";
 	public string LocateFileErrorMessage => "Error saving book's location";
 	public string ConvertToMp3Text => $"{Accelerator}Convert to Mp3";
+	public string PushAudibleProgressText => AudiobookshelfProgressPushFlow.Caption;
 	public string DownloadAsChapters => $"Download {Accelerator}split by chapters";
 	public string ReDownloadText => "Re-download this audiobook";
 	public string DownloadSingleText => "Download this audiobook";
@@ -56,6 +57,8 @@ public class GridContextMenu
 	private IEnumerable<UserDefinedItem> PdfItems
 		=> LibraryBookEntries.Select(ge => ge.Book?.UserDefinedItem).OfType<UserDefinedItem>().Where(udi => udi.Book.HasPdf);
 	public bool ConvertToMp3Enabled => LibraryBookEntries.Any(ge => ge.Book?.UserDefinedItem.BookStatus is LiberatedStatus.Liberated);
+	public bool PushAudibleProgressEnabled => AbsConnection.From(Configuration.Instance) is not null
+		&& LibraryBookEntries.Any(ge => ge.Book?.UserDefinedItem.BookStatus is LiberatedStatus.Liberated);
 	public bool DownloadBookEnabled => LibraryBookEntries.Any(ge => ge.LibraryBook.NeedsBookDownload || ge.LibraryBook.NeedsPdfDownload);
 	public bool DownloadAsChaptersEnabled => LibraryBookEntries.Any(ge => ge.Book?.UserDefinedItem.BookStatus is not LiberatedStatus.Error);
 	public bool ReDownloadEnabled => LibraryBookEntries.Any(ge => ge.Book?.UserDefinedItem.BookStatus is LiberatedStatus.Liberated);
@@ -115,6 +118,8 @@ public class GridContextMenu
 					udi.SetPdfStatus(pdfStatus);
 			});
 	}
+
+	public Task PushAudibleProgressAsync() => AudiobookshelfProgressPushFlow.RunAsync(LibraryBookEntries.Select(e => e.LibraryBook).ToArray());
 
 	public async Task RemoveAsync()
 	{
