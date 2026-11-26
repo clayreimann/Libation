@@ -29,7 +29,7 @@ export function BulkMenu({ count, trash, disabled, onRun }: Props) {
 
   return (
     <>
-      <Popover label={`Actions (${count})`} disabled={disabled} className="menu">
+      <Popover label={`Actions (${count})`} disabled={disabled} className="bulk-menu">
         {(close) => {
           const act = (op: BulkOp) => {
             close();

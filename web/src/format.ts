@@ -38,3 +38,12 @@ export function stars(overall: number | null | undefined): string {
   const n = Math.max(0, Math.min(5, Math.round(overall ?? 0)));
   return n === 0 ? "" : "★".repeat(n) + "☆".repeat(5 - n);
 }
+
+/** Time only when it falls today, otherwise a short date and time. */
+export function shortTime(iso: string | null | undefined, now: Date = new Date()): string {
+  if (!iso) return "never";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "never";
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === now.toDateString() ? time : `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
+}

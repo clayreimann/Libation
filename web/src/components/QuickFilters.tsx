@@ -7,16 +7,17 @@ interface Props {
   current: string;
   qf: ReturnType<typeof useQuickFilters>;
   onApply: (q: string) => void;
+  label?: string;
 }
 
-export function QuickFilters({ current, qf, onApply }: Props) {
+export function QuickFilters({ current, qf, onApply, label: trigger = "Quick filters" }: Props) {
   const { draft, filters, rowError, saveError, loadError, legacy, commit, importLegacy, discardLegacy } = qf;
   const [editing, setEditing] = useState(false);
   const useDefault = draft?.useDefault ?? false;
   const set = (next: typeof filters) => draft && commit({ ...draft, filters: next });
 
   return (
-    <Popover label="Quick filters" className="wide">
+    <Popover label={trigger} className="wide start-only" title="Edit quick filters">
       {(close) => (
         <div>
           {loadError && <p className="error">{loadError}</p>}

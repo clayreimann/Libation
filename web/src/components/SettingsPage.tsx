@@ -18,6 +18,7 @@ export function SettingsPage() {
   const [done, setDone] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [clearToken, setClearToken] = useState(false);
+  const [section, setSection] = useState("s-folders");
 
   const load = (s: Settings) => {
     const d = toDraft(s);
@@ -85,9 +86,27 @@ export function SettingsPage() {
   };
 
   const fixupOff = draft["download.allowLibationFixup"] !== true;
+  const sections = [
+    { id: "s-folders", title: "Folders" },
+    { id: "s-naming", title: "File naming" },
+    ...GROUPS.map((g) => ({ id: `s-${g.id}`, title: g.title })),
+    { id: "s-abs", title: "Audiobookshelf" },
+  ];
+  const jump = (id: string) => {
+    setSection(id);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const { folders } = settings;
 
   return (
+    <div className="settings-layout">
+    <nav className="settings-nav" aria-label="Settings sections">
+      {sections.map((x) => (
+        <button key={x.id} type="button" className={`side-item ${section === x.id ? "current" : ""}`} onClick={() => jump(x.id)}>
+          {x.title}
+        </button>
+      ))}
+    </nav>
     <form
       className="settings"
       onSubmit={(e) => {
@@ -99,7 +118,7 @@ export function SettingsPage() {
         Accounts are managed on the <a href="#/accounts">Accounts</a> page. Changes apply to the next book, not to jobs already running.
       </p>
 
-      <section>
+      <section id="s-folders">
         <h3>Folders</h3>
         <div className="fields">
           <div className="field wide">
@@ -127,7 +146,7 @@ export function SettingsPage() {
         </div>
       </section>
 
-      <section>
+      <section id="s-naming">
         <h3>File naming</h3>
         <div className="fields">
           {TEMPLATE_FIELDS.map((f) => (
@@ -137,7 +156,7 @@ export function SettingsPage() {
       </section>
 
       {GROUPS.map((g) => (
-        <section key={g.id}>
+        <section key={g.id} id={`s-${g.id}`}>
           <h3>{g.title}</h3>
           <div className="fields">
             {g.fields.map((f) => (
@@ -147,6 +166,7 @@ export function SettingsPage() {
         </section>
       ))}
 
+      <div id="s-abs" />
       <AbsSettings settings={settings} draft={draft} errors={shown} clearToken={clearToken} set={set} setClearToken={(v) => { setClearToken(v); setDone(false); }} />
 
       <div className="savebar">
@@ -165,5 +185,6 @@ export function SettingsPage() {
         {restart.length > 0 && <span className="warn-text">Restart the daemon for: {restart.join(", ")}.</span>}
       </div>
     </form>
+    </div>
   );
 }

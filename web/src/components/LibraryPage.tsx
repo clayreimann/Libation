@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ExportFormat } from "../api/client";
-import type { Book, LibraryPage as Page } from "../api/types";
+import type { Book, LibraryPage as Page, Stats } from "../api/types";
 import { notOk, type BulkSummary } from "../bulk";
 import { columns, loadVisible, saveVisible, toggleColumn, type ColumnId } from "../columns";
-import { seriesQuery, withHideEpisodes } from "../filters";
-import { formatDate, formatLength, stars } from "../format";
+import { countQueries, seriesQuery, withHideEpisodes } from "../filters";
+import { formatDate, formatLength, formatTime, humanize, stars } from "../format";
 import { groupPodcasts, needsParents, type ParentRow } from "../podcasts";
 import { defaultQuery } from "../quickFilters";
-import { useQuickFilters } from "../useQuickFilters";
+import type { useQuickFilters } from "../useQuickFilters";
+import { readPref, writePref } from "../prefs";
+import { scopedQuery, scopeLabel, scopes, routeHref, type Scope } from "../route";
+import { useMedia } from "../useMedia";
+import { Icon } from "./Icon";
+import { QueueMini } from "./QueueMini";
+import { StatusLamp } from "./StatusLamp";
 import { seriesSort } from "../series";
 import { loadSort, saveSort, toggleSort, type SortKey, type SortState } from "../sort";
 import { useLive } from "../live";
 import { BookDetails } from "./BookDetails";
 import { usePlayer } from "./Player";
 import { BulkMenu, type BulkOp } from "./BulkMenu";
-import { CountsBar } from "./CountsBar";
 import { Cover } from "./Cover";
 import { InactivePanel } from "./InactivePanel";
 import { RemoveFromAudible } from "./RemoveFromAudible";
@@ -22,7 +27,6 @@ import { LocatePanel } from "./LocatePanel";
 import { Popover } from "./Popover";
 import { SeriesBrowser } from "./SeriesBrowser";
 import { QualityPanel } from "./QualityPanel";
-import { QuickFilters } from "./QuickFilters";
 import { SyntaxHelp } from "./SyntaxHelp";
 
 const PAGE_SIZE = 50;
@@ -53,40 +57,63 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
-export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
+const INSPECTOR_KEY = "libation.inspector";
+
+interface Props {
+  scope: Scope;
+  input: string;
+  setInput: (q: string) => void;
+  qf: ReturnType<typeof useQuickFilters>;
+  stats: Stats | null;
+  onChanged: () => void;
+  onToggleSidebar: () => void;
+}
+
+export function LibraryPage({ scope, input, setInput, qf, stats, onChanged, onToggleSidebar }: Props) {
   const player = usePlayer();
-  const { onBookEvent } = useLive();
-  const [input, setInput] = useState(initialQuery ?? "");
+  const { onBookEvent, status, setStatus } = useLive();
   const q = useDebounced(input, 300);
-  const qf = useQuickFilters();
+  const wide = useMedia("(min-width: 1200px)");
+  const phone = useMedia("(max-width: 720px)");
+  const [inspector, setInspector] = useState(() => readPref(INSPECTOR_KEY) !== false);
+  const [inspectorTab, setInspectorTab] = useState<"details" | "queue">("details");
   const [parents, setParents] = useState<Book[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [trash, setTrash] = useState(false);
+  const trash = scope === "trash";
   const [offset, setOffset] = useState(0);
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [reload, setReload] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selecting, setSelecting] = useState(false);
   const [bulk, setBulk] = useState<BulkState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [gathering, setGathering] = useState(false);
   const [hideEpisodes, setHideEpisodes] = useState(false);
   const [removing, setRemoving] = useState<string[] | null>(null);
   const [detail, setDetail] = useState<Book | null>(null);
-  const [sort, setSort] = useState<SortState | null>(loadSort);
+  const [userSort, setSort] = useState<SortState | null>(loadSort);
   const [visible, setVisible] = useState<ColumnId[]>(loadVisible);
+  const [scanMsg, setScanMsg] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
 
-  const effectiveQ = withHideEpisodes(q, hideEpisodes);
+  const sort = scope === "series" ? seriesSort : userSort;
+  const effectiveQ = withHideEpisodes(scopedQuery(scope, q), hideEpisodes && scope !== "podcasts");
+  const panel = wide && inspector;
 
   useEffect(() => {
     if (defaultFilterHandled || !qf.saved) return;
     defaultFilterHandled = true;
     const dq = defaultQuery(qf.saved);
-    if (dq && !initialQuery) setInput((cur) => cur || dq);
-  }, [qf.saved, initialQuery]);
+    if (dq && !input) setInput(dq);
+  }, [qf.saved]); // eslint-disable-line react-hooks/exhaustive-deps
   const show = (id: ColumnId) => visible.includes(id);
+
+  useEffect(() => {
+    setOffset(0);
+    setSelected(new Set());
+  }, [scope]);
 
   useEffect(() => {
     const ctl = new AbortController();
@@ -104,7 +131,7 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
       },
     );
     return () => ctl.abort();
-  }, [offset, effectiveQ, trash, sort, reload]);
+  }, [offset, effectiveQ, trash, sort?.key, sort?.dir, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const items = page?.items ?? [];
   const hasEpisodes = needsParents(items);
@@ -118,10 +145,15 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
     return () => ctl.abort();
   }, [hasEpisodes, effectiveQ, trash, reload]);
 
+  const bump = () => {
+    setReload((n) => n + 1);
+    onChanged();
+  };
+
   const patchRow = (b: Book) => {
     setDetail((d) => (d?.asin === b.asin ? b : d));
     setPage((p) => (p ? { ...p, items: p.items.map((i) => (i.asin === b.asin ? b : i)) } : p));
-    setReload((n) => n + 1);
+    bump();
   };
 
   useEffect(() => onBookEvent(() => setReload((n) => n + 1)), [onBookEvent]);
@@ -175,7 +207,8 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
     setBulk({ label, done: asins.length, total: asins.length, running: false, summary, okWord });
     setSelected(new Set(notOk(summary)));
     setReload((n) => n + 1);
-  }, []);
+    onChanged();
+  }, [onChanged]);
 
   const runBulkOp = (op: BulkOp) => {
     const asins = [...selected];
@@ -206,8 +239,29 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
     }
   };
 
-  const applyQuery = (next: string) => {
-    setTrash(false);
+  /** "Liberate N": every book that is not downloaded, like the desktop button. */
+  const liberateAll = async () => {
+    setNotice(null);
+    try {
+      const res = await api.asins({ q: countQueries.notLiberated, trash: false });
+      if (res.asins.length === 0) return setNotice("Nothing left to liberate.");
+      await runAction("Queueing", res.asins, (o) => api.bulkLiberate(res.asins, o), "queued");
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  };
+
+  const scanRun = async (kind: "scan" | "liberate") => {
+    setScanMsg(null);
+    try {
+      setStatus(await (kind === "scan" ? api.scan() : api.liberate()));
+      setScanMsg(kind === "scan" ? "Scan requested." : "Scan and liberate requested.");
+    } catch (e) {
+      setScanMsg((e as Error).message);
+    }
+  };
+
+  const setInputQuery = (next: string) => {
     setInput(next);
     resetView();
   };
@@ -226,14 +280,14 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
   };
 
   const showSeries = (id: string, next: SortState = seriesSort) => {
-    setTrash(false);
+    if (scope !== "all") window.location.hash = routeHref({ scope: "all" });
     setInput(seriesQuery(id));
     setSort(next);
     resetView();
   };
 
   const pickSyntax = (text: string) => {
-    setInput((cur) => `${cur.trim()} ${text}`.trim());
+    setInput(`${input.trim()} ${text}`.trim());
     resetView();
   };
 
@@ -241,61 +295,67 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
     setNotice(null);
     try {
       await fn();
-      setReload((n) => n + 1);
+      bump();
     } catch (e) {
       setNotice(`${label}: ${(e as Error).message}`);
     }
   };
 
-  const setInputQuery = (next: string) => {
-    setInput(next);
-    resetView();
+  const toggleInspector = () =>
+    setInspector((o) => {
+      writePref(INSPECTOR_KEY, !o);
+      return !o;
+    });
+
+  const busy = bulk?.running === true;
+  const end = Math.min(offset + PAGE_SIZE, total);
+  const colSpan = visible.length + 5;
+  const showChecks = !phone || selecting || selected.size > 0;
+
+  const open = (b: Book) => {
+    setDetail(b);
+    setInspectorTab("details");
   };
 
-  const bookRow = (b: Book, nested = false) => (
-      <tr key={b.asin} className={`clickable ${nested ? "episode" : ""} ${selected.has(b.asin) ? "selected" : ""} ${b.absentFromLastScan ? "absent" : ""}`} onClick={() => setDetail(b)}>
+  const bookRow = (b: Book, nested = false) => {
+    const isSel = selected.has(b.asin);
+    return (
+      <tr
+        key={b.asin}
+        className={`bookrow clickable ${nested ? "episode" : ""} ${isSel ? "selected" : ""} ${detail?.asin === b.asin ? "focused" : ""} ${b.absentFromLastScan ? "absent" : ""}`}
+        onClick={() => (phone && selecting ? toggle(b.asin) : open(b))}
+      >
         <td className="check" onClick={(e) => e.stopPropagation()}>
-          <input type="checkbox" checked={selected.has(b.asin)} onChange={() => toggle(b.asin)} disabled={busy} aria-label={`Select ${b.title}`} />
+          <input type="checkbox" checked={isSel} onChange={() => toggle(b.asin)} disabled={busy} aria-label={`Select ${b.title}`} />
+        </td>
+        <td className="lamp-col">
+          <StatusLamp book={b} disabled={busy} onLiberate={() => void rowAction("Liberate", () => api.liberateBook(b.asin))} />
         </td>
         <td className="cover-col">
           <Cover asin={b.asin} pictureId={b.pictureId} size="small" />
         </td>
-        <td>
-          <button
-            className="linklike title"
-            onClick={(e) => {
-              e.stopPropagation();
-              setDetail(b);
-            }}
-          >
-            {b.title}
-          </button>
-          {b.isAudiblePlus && <span className="pill plus" title={b.includedUntil ? `Included until ${formatDate(b.includedUntil)}` : "Audible Plus"}>Plus</span>}
-          {b.subtitle && <div className="muted small">{b.subtitle}</div>}
-          <div className="show-sm muted small">{[...b.authors, formatLength(b.lengthInMinutes)].join(" \u00b7 ")}</div>
+        <td className="title-col">
+          <div className="title">{b.title}</div>
+          {b.subtitle && <div className="sub">{b.subtitle}</div>}
+          <div className="row-meta">
+            {[b.authors.join(", "), formatLength(b.lengthInMinutes), b.series[0] ? (b.series[0].order ? `${b.series[0].name} #${b.series[0].order}` : b.series[0].name) : ""].filter(Boolean).join(" · ")}
+          </div>
         </td>
         {visible.map((id) => (
-          <td key={id} className={`hide-sm ${id === "length" || id === "purchased" || id === "lastDownload" || id === "myRating" || id === "rating" ? "nowrap" : ""}`}>
+          <td key={id} className={`col col-${id} ${id === "length" || id === "purchased" || id === "lastDownload" || id === "myRating" || id === "rating" ? "nowrap" : ""}`}>
             {cell(id, b, setInputQuery)}
           </td>
         ))}
         <td className="actions" onClick={(e) => e.stopPropagation()}>
           {b.bookStatus === "Liberated" && !b.inTrash && (
-            <button onClick={() => player.play(b)} title="Play the audiobook">
-              Play
+            <button className="icon-btn play-btn" onClick={() => player.play(b)} title="Play" aria-label={`Play ${b.title}`}>
+              <Icon name="play" size={14} />
             </button>
           )}
-          {!b.inTrash && (
-            <button onClick={() => rowAction("Liberate", () => api.liberateBook(b.asin))} disabled={busy}>
-              Liberate
-            </button>
-          )}
-          <button onClick={() => rowAction(b.inTrash ? "Restore" : "Trash", () => (b.inTrash ? api.restore(b.asin) : api.trash(b.asin)))} disabled={busy}>
-            {b.inTrash ? "Restore" : "Trash"}
-          </button>
         </td>
       </tr>
-  );
+    );
+  };
 
   const toggleExpanded = (asin: string) =>
     setExpanded((s) => {
@@ -305,11 +365,11 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
     });
 
   const parentRows = ({ parent, episodes }: ParentRow) => {
-    const open = expanded.has(parent.asin);
+    const isOpen = expanded.has(parent.asin);
     const asins = episodes.map((e) => e.asin);
     const all = asins.every((a) => selected.has(a));
     return [
-      <tr key={parent.asin} className="clickable parent" onClick={() => toggleExpanded(parent.asin)}>
+      <tr key={parent.asin} className="bookrow clickable parent" onClick={() => toggleExpanded(parent.asin)}>
         <td className="check" onClick={(e) => e.stopPropagation()}>
           <input
             type="checkbox"
@@ -325,212 +385,365 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
             aria-label={`Select episodes of ${parent.title}`}
           />
         </td>
+        <td className="lamp-col">
+          <span className="disclosure" aria-hidden="true">
+            <Icon name={isOpen ? "chevronDown" : "chevronRight"} size={14} />
+          </span>
+        </td>
         <td className="cover-col">
           <Cover asin={parent.asin} pictureId={parent.pictureId} size="small" />
         </td>
-        <td>
-          <button className="linklike title" aria-expanded={open} onClick={(e) => { e.stopPropagation(); toggleExpanded(parent.asin); }}>
-            <span aria-hidden="true">{open ? "\u25be " : "\u25b8 "}</span>
+        <td className="title-col">
+          <button className="linklike title" aria-expanded={isOpen} onClick={(e) => { e.stopPropagation(); toggleExpanded(parent.asin); }}>
             {parent.title}
           </button>
-          <span className="pill">{episodes.length} {episodes.length === 1 ? "episode" : "episodes"}</span>
-          <div className="show-sm muted small">{parent.authors.join(", ")}</div>
+          <div className="row-meta">
+            {episodes.length} {episodes.length === 1 ? "episode" : "episodes"}
+            {parent.authors.length > 0 && ` · ${parent.authors.join(", ")}`}
+          </div>
         </td>
         {visible.map((id) => (
-          <td key={id} className="hide-sm">
+          <td key={id} className={`col col-${id}`}>
             {id === "authors" ? parent.authors.join(", ") : id === "narrators" ? parent.narrators.join(", ") : id === "category" ? parent.categories.join(", ") : null}
           </td>
         ))}
-        <td />
+        <td className="actions" />
       </tr>,
-      ...(open ? episodes.map((e) => bookRow(e, true)) : []),
+      ...(isOpen ? episodes.map((e) => bookRow(e, true)) : []),
     ];
   };
 
-  const busy = bulk?.running === true;
-  const end = Math.min(offset + PAGE_SIZE, total);
+  /** Series scope: a header row whenever the first series changes, like the desktop's series sections. */
+  const body: React.ReactNode[] = [];
+  let lastSeries: string | null = null;
+  for (const r of rows) {
+    if (scope === "series" && r.kind === "book") {
+      const name = r.book.series[0]?.name ?? "";
+      if (name !== lastSeries) {
+        lastSeries = name;
+        body.push(
+          <tr key={`series:${name}:${r.book.asin}`} className="section-row">
+            <td colSpan={colSpan}>{name || "No series"}</td>
+          </tr>,
+        );
+      }
+    }
+    body.push(r.kind === "book" ? bookRow(r.book) : parentRows(r));
+  }
 
-  return (
-    <div className="library">
-      <div className="toolbar">
-        <div className="seg">
-          <button className={!trash ? "active" : ""} onClick={() => { setTrash(false); resetView(); }}>
-            Library
-          </button>
-          <button className={trash ? "active" : ""} onClick={() => { setTrash(true); resetView(); }}>
-            Trash
-          </button>
-        </div>
-        <input
-          type="search"
-          className={`search ${error ? "invalid" : ""}`}
-          placeholder='Filter, e.g. author:herbert -tags:skip title:"the hobbit"'
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            resetView();
-          }}
-          aria-label="Search library"
-        />
-        <SyntaxHelp onPick={pickSyntax} />
-        {!trash && <QuickFilters current={input} qf={qf} onApply={applyQuery} />}
-        <label className="check-label">
-          <input
-            type="checkbox"
-            checked={hideEpisodes}
-            onChange={(e) => {
-              setHideEpisodes(e.target.checked);
-              resetView();
-            }}
-          />
-          Hide podcast episodes
-        </label>
-        <Popover label="Export...">
-          {(close) => (
-            <div className="menu-list">
-              <p className="muted small">{trash ? "Trash" : "Library"}{effectiveQ ? `, filtered by ${effectiveQ}` : ""}</p>
-              <ul className="plain">
-                {exportFormats.map((f) => (
-                  <li key={f.id}>
-                    {error ? (
-                      <span className="muted">{f.label}</span>
-                    ) : (
-                      <a className="menu-link" href={api.exportUrl(f.id, { q: effectiveQ, trash })} download onClick={() => window.setTimeout(close)}>
-                        {f.label}
-                      </a>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              {error && <p className="error small">Fix the search first.</p>}
-            </div>
+  const notLiberated = stats?.notLiberated ?? 0;
+  const searchPlaceholder = phone ? "Search books" : "Search title, author, narrator…  try author:austen";
+
+  const moreMenu = (
+    <Popover label={<Icon name="more" />} className="wide icon-pop" title="More actions">
+      {(close) => (
+        <div className="menu">
+          <label className="menu-check">
+            <input
+              type="checkbox"
+              checked={hideEpisodes}
+              disabled={scope === "podcasts"}
+              onChange={(e) => {
+                setHideEpisodes(e.target.checked);
+                resetView();
+              }}
+            />
+            Hide podcast episodes
+          </label>
+          <div className="menu-sep" />
+          <div className="menu-label">Export {trash ? "trash" : "these books"}</div>
+          {exportFormats.map((f) =>
+            error ? (
+              <span key={f.id} className="menu-item muted">{f.label}</span>
+            ) : (
+              <a key={f.id} className="menu-item" href={api.exportUrl(f.id, { q: effectiveQ, trash })} download onClick={() => window.setTimeout(close)}>
+                {f.label}
+              </a>
+            ),
           )}
-        </Popover>
-        {!trash && <Popover label="Series">{(close) => <SeriesBrowser onPick={(id) => { close(); showSeries(id); }} />}</Popover>}
-        {!trash && <Popover label="Find better quality" className="wide">{() => <QualityPanel />}</Popover>}
-        {!trash && <Popover label="Scan for removed books" className="wide">{() => <InactivePanel onTrashed={() => setReload((n) => n + 1)} />}</Popover>}
-        <Popover label="Locate audiobooks" className="wide">{() => <LocatePanel />}</Popover>
-        <Popover label="Columns">
-          {() => (
-            <div className="menu-list">
+          {!trash && (
+            <>
+              <div className="menu-sep" />
+              <Popover label="Browse series…" className="wide sub">{(c2) => <SeriesBrowser onPick={(id) => { c2(); close(); showSeries(id); }} />}</Popover>
+              <Popover label="Find better quality…" className="wide sub">{() => <QualityPanel />}</Popover>
+              <Popover label="Scan for removed books…" className="wide sub">{() => <InactivePanel onTrashed={bump} />}</Popover>
+            </>
+          )}
+          <Popover label="Locate audiobooks…" className="wide sub">{() => <LocatePanel />}</Popover>
+          {!phone && (
+            <>
+              <div className="menu-sep" />
+              <div className="menu-label">Columns</div>
               {columns.map((c) => (
-                <label key={c.id} className="check-label">
+                <label key={c.id} className="menu-check">
                   <input type="checkbox" checked={show(c.id)} onChange={() => toggleCol(c.id)} />
                   {c.label}
                 </label>
               ))}
+            </>
+          )}
+        </div>
+      )}
+    </Popover>
+  );
+
+  const detailsView = detail && (
+    <BookDetails
+      book={detail}
+      variant={panel ? "panel" : phone ? "sheet" : "drawer"}
+      onChange={patchRow}
+      onClose={() => setDetail(null)}
+      onSearch={(next, nextSort) => {
+        if (!panel) setDetail(null);
+        if (scope !== "all") window.location.hash = routeHref({ scope: "all" });
+        setInput(next);
+        if (nextSort) setSort(nextSort);
+        resetView();
+      }}
+    />
+  );
+
+  return (
+    <div className={`library ${panel ? "with-inspector" : ""} ${showChecks ? "" : "no-checks"}`}>
+      <div className="library-main">
+        <div className="toolbar">
+          <button className="icon-btn" onClick={onToggleSidebar} aria-label="Toggle sidebar" title="Toggle sidebar">
+            <Icon name={phone ? "menu" : "sidebar"} />
+          </button>
+          {phone && <h1 className="phone-title">{scope === "all" ? "Library" : scopeLabel(scope)}</h1>}
+          <div className={`searchbox ${error ? "invalid" : ""}`}>
+            <Icon name="search" size={16} />
+            <input
+              type="search"
+              placeholder={searchPlaceholder}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                resetView();
+              }}
+              aria-label="Search library"
+            />
+            {input && (
+              <button className="clear" onClick={() => setInputQuery("")} aria-label="Clear search">
+                <Icon name="close" size={14} />
+              </button>
+            )}
+          </div>
+          <SyntaxHelp onPick={pickSyntax} />
+          {!trash && (
+            <div className="tool-actions">
+              <button className="btn" onClick={() => void scanRun("scan")} title="Check every account for new books">
+                <Icon name="refresh" size={16} className="show-phone" />
+                <span className="hide-phone">Scan library</span>
+              </button>
+              <div className="split">
+                <button className="btn primary" onClick={() => void liberateAll()} disabled={busy || notLiberated === 0} title="Download every book that is not downloaded yet">
+                  Liberate{notLiberated > 0 ? ` ${notLiberated}` : ""}
+                </button>
+                <Popover label={<Icon name="chevronDown" size={14} />} className="split-pop" title="More liberate options">
+                  {(close) => (
+                    <div className="menu">
+                      <button className="menu-item" onClick={() => { close(); void scanRun("liberate"); }}>
+                        Scan, then liberate new books
+                      </button>
+                      {selected.size > 0 && (
+                        <button className="menu-item" onClick={() => { close(); runBulkOp({ kind: "liberate" }); }}>
+                          Liberate {selected.size} selected
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </Popover>
+              </div>
             </div>
           )}
-        </Popover>
-      </div>
-      {!trash && <CountsBar refreshKey={reload} onApply={applyQuery} />}
-      {error && <p className="error">{error}</p>}
-      {notice && <p className="error">{notice}</p>}
-
-      {selected.size > 0 && (
-        <div className="bulkbar">
-          <strong>{selected.size} selected</strong>
-          {selected.size < total && !busy && (
-            <button onClick={selectAllMatching} disabled={gathering}>
-              {gathering ? "Gathering..." : `Select all ${total} matching`}
+          {moreMenu}
+          {wide && (
+            <button className={`icon-btn ${inspector ? "on" : ""}`} onClick={toggleInspector} aria-label="Toggle inspector" aria-pressed={inspector} title="Toggle inspector">
+              <Icon name="inspector" />
             </button>
           )}
-          <button onClick={() => setSelected(new Set())} disabled={busy}>
-            Clear
-          </button>
-          <BulkMenu count={selected.size} trash={trash} disabled={busy} onRun={runBulkOp} />
         </div>
-      )}
 
-      {removing && (
-        <RemoveFromAudible
-          selected={removing}
-          titles={new Map(items.map((b) => [b.asin, b.title]))}
-          onClose={() => setRemoving(null)}
-          onRemoved={(asins) => {
-            const gone = new Set(asins);
-            setSelected((s) => new Set([...s].filter((a) => !gone.has(a))));
-            setDetail((d) => (d && gone.has(d.asin) ? null : d));
-            setReload((n) => n + 1);
-          }}
-        />
-      )}
+        <div className="chips-bar" role="navigation" aria-label="Library views">
+          {scopes.filter((s) => s.id !== "trash").map((s) => (
+            <a key={s.id} href={routeHref({ scope: s.id })} className={`scope-chip ${scope === s.id ? "current" : ""}`}>
+              {s.label}
+              {s.id === "not-downloaded" && stats ? <span className="chip-count">{stats.notLiberated}</span> : null}
+              {s.id === "needs-attention" && stats && stats.error > 0 ? <span className="chip-count bad">{stats.error}</span> : null}
+            </a>
+          ))}
+          {qf.filters.map((f) => (
+            <button key={f.filter} className={`scope-chip filter ${input.trim() === f.filter ? "current" : ""}`} onClick={() => setInputQuery(input.trim() === f.filter ? "" : f.filter)} title={f.filter}>
+              <Icon name="filter" size={12} /> {f.name?.trim() || f.filter}
+            </button>
+          ))}
+          <a href={routeHref({ scope: "trash" })} className={`scope-chip ${trash ? "current" : ""}`}>Trash</a>
+        </div>
 
-      {bulk && (
-        <div className="card">
-          <div className="job-head">
-            <span>
-              {bulk.running ? `${bulk.label}...` : bulk.summary?.cancelled ? "Cancelled" : "Done"} {bulk.done} / {bulk.total}
-            </span>
-            {bulk.running ? (
-              <button onClick={() => abort.current?.abort()}>Cancel</button>
-            ) : (
-              <button onClick={() => setBulk(null)}>Dismiss</button>
+        {(scope !== "all" || scanMsg || notice || error) && (
+          <div className="infobar">
+            {scope !== "all" && <span className="scope-title">{scopeLabel(scope)}</span>}
+            {error && <span className="error">{error}</span>}
+            {notice && <span className="error">{notice}</span>}
+            {scanMsg && <span className="muted">{scanMsg}</span>}
+          </div>
+        )}
+
+        {(selected.size > 0 || (phone && selecting)) && (
+          <div className="bulkbar">
+            <strong>{selected.size} selected</strong>
+            {selected.size < total && !busy && (
+              <button className="btn subtle" onClick={selectAllMatching} disabled={gathering}>
+                {gathering ? "Gathering..." : phone ? `All ${total}` : `Select all ${total}`}
+              </button>
+            )}
+            <span className="spacer" />
+            <BulkMenu count={selected.size} trash={trash} disabled={busy || selected.size === 0} onRun={runBulkOp} />
+            <button className="btn subtle" onClick={() => { setSelected(new Set()); setSelecting(false); }} disabled={busy}>
+              Done
+            </button>
+          </div>
+        )}
+
+        {removing && (
+          <RemoveFromAudible
+            selected={removing}
+            titles={new Map(items.map((b) => [b.asin, b.title]))}
+            onClose={() => setRemoving(null)}
+            onRemoved={(asins) => {
+              const gone = new Set(asins);
+              setSelected((s) => new Set([...s].filter((a) => !gone.has(a))));
+              setDetail((d) => (d && gone.has(d.asin) ? null : d));
+              bump();
+            }}
+          />
+        )}
+
+        {bulk && (
+          <div className="card bulk-card">
+            <div className="job-head">
+              <span>
+                {bulk.running ? `${bulk.label}...` : bulk.summary?.cancelled ? "Cancelled" : "Done"} {bulk.done} / {bulk.total}
+              </span>
+              {bulk.running ? (
+                <button className="btn" onClick={() => abort.current?.abort()}>Cancel</button>
+              ) : (
+                <button className="btn" onClick={() => setBulk(null)}>Dismiss</button>
+              )}
+            </div>
+            <div className="bar thin">
+              <div style={{ width: `${bulk.total ? (bulk.done / bulk.total) * 100 : 0}%` }} />
+            </div>
+            {bulk.summary && !bulk.running && <BulkReport s={bulk.summary} okWord={bulk.okWord} />}
+            {bulk.summary && !bulk.running && bulk.okWord === "queued" && (
+              <p className="muted small">
+                Outcomes are in each job's log on the <a href="#/queue">queue</a>.
+              </p>
             )}
           </div>
-          <div className="bar">
-            <div style={{ width: `${bulk.total ? (bulk.done / bulk.total) * 100 : 0}%` }} />
-          </div>
-          {bulk.summary && !bulk.running && <BulkReport s={bulk.summary} okWord={bulk.okWord} />}
-          {bulk.summary && !bulk.running && bulk.okWord === "queued" && (
-            <p className="muted small">
-              Pushed, skipped and failed outcomes are in each job's log on the <a href="#/queue">queue</a>.
-            </p>
-          )}
-        </div>
-      )}
+        )}
 
-      <div className="tablewrap" aria-busy={loading}>
-        <table>
-          <thead>
-            <tr>
-              <th className="check">
-                <input type="checkbox" checked={allOnPage} onChange={togglePage} disabled={items.length === 0 || busy} aria-label="Select page" />
-              </th>
-              <th className="cover-col" />
-              <SortTh label="Title" sortKey="title" sort={sort} onSort={sortBy} />
-              {columns.filter((c) => show(c.id)).map((c) => (
-                <SortTh key={c.id} label={c.label} sortKey={c.sort} sort={sort} onSort={sortBy} className="hide-sm" />
-              ))}
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (r.kind === "book" ? bookRow(r.book) : parentRows(r)))}
-            {page && items.length === 0 && (
+        <div className="tablewrap" aria-busy={loading}>
+          <table className="books">
+            <thead>
               <tr>
-                <td colSpan={visible.length + 4} className="muted">
-                  {trash ? "The trash is empty." : "No books match."}
-                </td>
+                <th className="check">
+                  <input type="checkbox" checked={allOnPage} onChange={togglePage} disabled={items.length === 0 || busy} aria-label="Select page" />
+                </th>
+                <th className="lamp-col">Liberate</th>
+                <th className="cover-col">Cover</th>
+                <SortTh label="Title" sortKey="title" sort={sort} onSort={sortBy} className="title-col" />
+                {columns.filter((c) => show(c.id)).map((c) => (
+                  <SortTh key={c.id} label={c.label} sortKey={c.sort} sort={sort} onSort={sortBy} className={`col col-${c.id}`} />
+                ))}
+                <th className="actions" />
               </tr>
+            </thead>
+            <tbody>
+              {body}
+              {page && items.length === 0 && (
+                <tr className="empty-row">
+                  <td colSpan={colSpan}>
+                    <div className="empty">
+                      <Icon name={trash ? "trash" : "search"} size={36} />
+                      <strong>{trash ? "The trash is empty" : input.trim() ? "No books match" : `Nothing in ${scopeLabel(scope)}`}</strong>
+                      {!trash && input.trim() && (
+                        <button className="btn" onClick={() => setInputQuery("")}>
+                          Clear search
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <footer className="statusbar">
+          <span className="sb-left">
+            <span>{total === 0 ? "0 books" : total > PAGE_SIZE ? `${offset + 1}–${end} of ${total}` : `${total} ${total === 1 ? "book" : "books"}`}</span>
+            {selected.size > 0 && <span className="muted"> · {selected.size} selected</span>}
+            {phone && !selecting && selected.size === 0 && items.length > 0 && (
+              <button className="linklike sb-select" onClick={() => setSelecting(true)}>
+                Select
+              </button>
             )}
-          </tbody>
-        </table>
+          </span>
+          {total > PAGE_SIZE && (
+            <span className="pager">
+              <button className="icon-btn small" onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0} aria-label="Previous page">
+                <Icon name="chevronLeft" size={14} />
+              </button>
+              <button className="icon-btn small" onClick={() => setOffset(offset + PAGE_SIZE)} disabled={offset + PAGE_SIZE >= total} aria-label="Next page">
+                <Icon name="chevronRight" size={14} />
+              </button>
+            </span>
+          )}
+          {stats && (
+            <span className="sb-counts">
+              <a href={routeHref({ scope: "downloaded" })}><i className="dot ok" />{stats.liberated} downloaded</a>
+              <a href={routeHref({ scope: "not-downloaded" })}><i className="dot accent" />{stats.notLiberated} to do</a>
+              {stats.partial > 0 && <span><i className="dot warn" />{stats.partial} partial</span>}
+              {stats.error > 0 && <a href={routeHref({ scope: "needs-attention" })}><i className="dot bad" />{stats.error} {stats.error === 1 ? "error" : "errors"}</a>}
+              {stats.unavailable > 0 && <a href={routeHref({ scope: "unavailable" })}><i className="dot gray" />{stats.unavailable} unavailable</a>}
+            </span>
+          )}
+          {status && !phone && (
+            <span className="sb-run muted" title={`Last run ${formatTime(status.lastRun)}`}>
+              {humanize(status.state)}
+            </span>
+          )}
+        </footer>
       </div>
 
-      <div className="pager">
-        <span className="muted">{total === 0 ? "0 books" : `${offset + 1}-${end} of ${total}`}</span>
-        <button onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0}>
-          Previous
-        </button>
-        <button onClick={() => setOffset(offset + PAGE_SIZE)} disabled={offset + PAGE_SIZE >= total}>
-          Next
-        </button>
-      </div>
-      {detail && (
-        <BookDetails
-          book={detail}
-          onChange={patchRow}
-          onClose={() => setDetail(null)}
-          onSearch={(next, nextSort) => {
-            setDetail(null);
-            setTrash(false);
-            setInput(next);
-            if (nextSort) setSort(nextSort);
-            resetView();
-          }}
-        />
+      {panel && (
+        <aside className="inspector" aria-label="Inspector">
+          <div className="seg-tabs" role="tablist">
+            <button role="tab" aria-selected={inspectorTab === "details"} className={inspectorTab === "details" ? "active" : ""} onClick={() => setInspectorTab("details")}>
+              Details
+            </button>
+            <button role="tab" aria-selected={inspectorTab === "queue"} className={inspectorTab === "queue" ? "active" : ""} onClick={() => setInspectorTab("queue")}>
+              Queue
+            </button>
+          </div>
+          <div className="inspector-body">
+            {inspectorTab === "queue" ? (
+              <QueueMini />
+            ) : detailsView ? (
+              detailsView
+            ) : (
+              <div className="empty">
+                <Icon name="library" size={36} />
+                <strong>No book selected</strong>
+                <span>Select a book to see its details.</span>
+              </div>
+            )}
+          </div>
+        </aside>
       )}
+      {!panel && detailsView}
     </div>
   );
 }

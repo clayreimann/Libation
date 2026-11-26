@@ -16,9 +16,12 @@ import { RatingEditor } from "./RatingEditor";
 import { SeriesPanel } from "./SeriesPanel";
 import { Cover } from "./Cover";
 import { usePlayer } from "./Player";
+import { Icon } from "./Icon";
+import { lampLabel, lampState } from "./StatusLamp";
 
 interface Props {
   book: Book;
+  variant?: "panel" | "drawer" | "sheet";
   onChange: (b: Book) => void;
   onClose: () => void;
   onSearch: (q: string, sort?: SortState) => void;
@@ -30,7 +33,7 @@ function ratingText(r: { overall: number; performance: number; story: number }):
   return r.overall > 0 ? `${stars(r.overall)} ${r.overall.toFixed(1)} (performance ${r.performance.toFixed(1)}, story ${r.story.toFixed(1)})` : "none";
 }
 
-export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
+export function BookDetails({ book, variant = "drawer", onChange, onClose, onSearch }: Props) {
   const player = usePlayer();
   const [detail, setDetail] = useState<BookDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -73,10 +76,11 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
   }, [book.asin, hasAudio, refresh]);
 
   useEffect(() => {
+    if (variant === "panel") return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, variant]);
 
   const run = async (label: string, fn: () => Promise<Book | unknown>, done?: string) => {
     setBusy(true);
@@ -147,15 +151,14 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
   );
 
   const rows: [string, React.ReactNode][] = [
-    ["Authors", book.authors.join(", ") || "none"],
     ["Narrators", book.narrators.join(", ") || "none"],
     ["Series", seriesLinks],
     ["Length", formatLength(book.lengthInMinutes)],
+    ["Purchased", formatDate(book.dateAdded) || "unknown"],
     ["Publisher", d?.publisher || "unknown"],
     ["Language", d?.language || "unknown"],
     ["Published", formatDate(d?.datePublished) || "unknown"],
     ["Abridged", d ? (d.isAbridged ? "yes" : "no") : "..."],
-    ["Date added", formatTime(book.dateAdded)],
     ["Account", book.account],
     ["Locale", book.locale],
     ["Content type", humanize(book.contentType)],
@@ -164,7 +167,6 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
     ["Spatial audio", book.isSpatial ? "yes" : "no"],
     ["Rating", ratingText(book.productRating)],
     ["My rating", ratingText(book.myRating)],
-    ["Book status", <span className={`pill book-${book.bookStatus}`}>{book.bookStatus}</span>],
     ["Availability", book.absentFromLastScan ? <span className="pill warn">Unavailable: absent from the last scan</span> : "in library"],
     ["PDF status", book.pdfStatus ? <span className={`pill book-${book.pdfStatus}`}>{book.pdfStatus}</span> : "no PDF"],
     [
@@ -183,30 +185,65 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
     ],
   ];
 
+  const state = lampState(book);
+  const head = (
+    <>
+      <div className="insp-head">
+        <Cover asin={book.asin} pictureId={book.pictureId} size="large" />
+        <div className="insp-title">
+          <h2>{book.title}</h2>
+          {book.subtitle && <div className="muted">{book.subtitle}</div>}
+          <div className="insp-author">{book.authors.join(", ")}</div>
+          <div className="insp-pills">
+            <span className={`status-pill s-${state}`}>{lampLabel(book)}</span>
+            {book.isAudiblePlus && <span className="status-pill s-plus">Audible Plus</span>}
+            {book.pdfStatus && <span className={`status-pill ${book.pdfStatus === "Liberated" ? "s-green" : "s-red"}`}>PDF {book.pdfStatus === "Liberated" ? "downloaded" : "not downloaded"}</span>}
+          </div>
+        </div>
+      </div>
+      <div className="insp-actions">
+        {d?.audioFileExists && (
+          <button className="btn primary" onClick={() => player.play(book)} disabled={player.playing?.asin === book.asin}>
+            <Icon name="play" size={14} /> {player.playing?.asin === book.asin ? "Playing" : "Play"}
+          </button>
+        )}
+        {!book.inTrash && book.bookStatus !== "Liberated" && (
+          <button className="btn primary" onClick={() => void run("Liberate", () => api.liberateBook(book.asin), "Queued for liberation.")} disabled={busy}>
+            Liberate
+          </button>
+        )}
+      </div>
+    </>
+  );
+
+  const Wrapper = variant === "panel" ? "div" : "aside";
   return (
     <>
-      <div className="backdrop" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-label={`Details for ${book.title}`}>
-        <div className="drawer-head">
-          <div>
-            <h2>{book.title}</h2>
-            {book.subtitle && <div className="muted">{book.subtitle}</div>}
+      {variant !== "panel" && <div className="backdrop" onClick={onClose} />}
+      <Wrapper className={`details details-${variant}`} role={variant === "panel" ? undefined : "dialog"} aria-label={`Details for ${book.title}`}>
+        {variant !== "panel" && (
+          <div className="sheet-bar">
+            <button className="btn subtle back" onClick={onClose} aria-label="Close details">
+              <Icon name={variant === "sheet" ? "chevronLeft" : "close"} size={16} /> {variant === "sheet" ? "Library" : "Close"}
+            </button>
           </div>
-          <button onClick={onClose} aria-label="Close details">
-            Close
-          </button>
-        </div>
-
-        <Cover asin={book.asin} pictureId={book.pictureId} size="large" />
+        )}
+        {head}
         {book.parentAsin && (
           <p>
-            <button onClick={() => onSearch(seriesQuery(book.parentAsin!))}>Show episodes of this podcast</button>
+            <button className="btn" onClick={() => onSearch(seriesQuery(book.parentAsin!))}>Show episodes of this podcast</button>
           </p>
         )}
         {detailError && <p className="error">Details unavailable: {detailError}</p>}
-        {description && <p className="description">{description}</p>}
+        {description && (
+          <>
+            <h3>Description</h3>
+            <p className="description">{description}</p>
+          </>
+        )}
 
-        <dl className="drawer-dl">
+        <h3>Details</h3>
+        <dl className="kv">
           {rows.map(([k, v]) => (
             <div key={k}>
               <dt>{k}</dt>
@@ -255,7 +292,7 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
         </form>
         {dirty && <p className="muted small">Will save as: {normalized || "(no tags)"}</p>}
 
-        <h3>Status</h3>
+        <h3>Download status</h3>
         <select
           value={statusValue(book.bookStatus)}
           disabled={busy}
@@ -286,15 +323,11 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
         </form>
         <p className="muted small">An existing audio file on the server{books ? <>, inside <code>{books}</code></> : ""}.</p>
 
+        <h3>More</h3>
         <div className="row drawer-actions">
-          {d?.audioFileExists && (
-            <button className="primary" onClick={() => player.play(book)} disabled={player.playing?.asin === book.asin}>
-              {player.playing?.asin === book.asin ? "Playing" : "Play"}
-            </button>
-          )}
-          {!book.inTrash && (
+          {!book.inTrash && book.bookStatus === "Liberated" && (
             <button onClick={() => void run("Liberate", () => api.liberateBook(book.asin), "Queued for liberation.")} disabled={busy}>
-              Liberate
+              Download again
             </button>
           )}
           {canConvertToMp3(book, files) && (
@@ -322,7 +355,7 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
             )}
           </p>
         )}
-      </aside>
+      </Wrapper>
     </>
   );
 }

@@ -12,16 +12,16 @@ export interface Column {
 
 export const columns: readonly Column[] = [
   { id: "authors", label: "Authors", sort: "author", defaultOn: true },
-  { id: "narrators", label: "Narrators", sort: "narrator", defaultOn: false },
-  { id: "series", label: "Series", sort: "series", defaultOn: true },
+  { id: "narrators", label: "Narrators", sort: "narrator", defaultOn: true },
   { id: "length", label: "Length", sort: "length", defaultOn: true },
-  { id: "status", label: "Status", sort: "status", defaultOn: true },
+  { id: "series", label: "Series", sort: "series", defaultOn: true },
+  { id: "status", label: "Status", sort: "status", defaultOn: false },
   { id: "myRating", label: "My rating", defaultOn: false },
   { id: "rating", label: "Rating", sort: "rating", defaultOn: false },
   { id: "category", label: "Category", defaultOn: false },
   { id: "purchased", label: "Purchased", sort: "purchaseDate", defaultOn: true },
   { id: "lastDownload", label: "Last download", sort: "lastDownload", defaultOn: false },
-  { id: "tags", label: "Tags", defaultOn: true },
+  { id: "tags", label: "Tags", defaultOn: false },
 ];
 
 const KEY = "libation.columns";

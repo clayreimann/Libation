@@ -3,7 +3,7 @@ import { Popover } from "./Popover";
 
 export function SyntaxHelp({ onPick }: { onPick: (text: string) => void }) {
   return (
-    <Popover label="?" title="Search syntax" className="wide">
+    <Popover label="Syntax" title="Search syntax" className="wide">
       {(close) => (
         <div className="syntax">
           <ul className="plain small">
