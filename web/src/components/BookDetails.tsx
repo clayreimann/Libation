@@ -11,6 +11,7 @@ import { canRate } from "../rating";
 import { seriesSort } from "../series";
 import type { SortState } from "../sort";
 import { BookmarksExport } from "./BookmarksExport";
+import { ProgressPanel } from "./ProgressPanel";
 import { RatingEditor } from "./RatingEditor";
 import { SeriesPanel } from "./SeriesPanel";
 import { Cover } from "./Cover";
@@ -228,6 +229,8 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
         <SeriesPanel book={book} onShow={(id) => onSearch(seriesQuery(id), seriesSort)} />
 
         {canRate(book) && <RatingEditor asin={book.asin} current={book.myRating} onSaved={(b) => { onChange(b); setRefresh((n) => n + 1); }} />}
+
+        {!book.inTrash && <ProgressPanel asin={book.asin} lengthMinutes={book.lengthInMinutes} disabled={busy} />}
 
         <BookmarksExport asin={book.asin} />
 

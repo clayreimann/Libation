@@ -6,6 +6,7 @@ export type BulkOp =
   | { kind: "liberate" }
   | { kind: "absUpload" }
   | { kind: "convertMp3" }
+  | { kind: "pushProgress"; force: boolean }
   | { kind: "trash" }
   | { kind: "purge" }
   | { kind: "pdfStatus"; status: "liberated" | "notLiberated" }
@@ -44,6 +45,12 @@ export function BulkMenu({ count, trash, disabled, onRun }: Props) {
                 <>
                   <li>
                     <button onClick={() => act({ kind: "absUpload" })}>Upload to Audiobookshelf</button>
+                  </li>
+                  <li>
+                    <button onClick={() => act({ kind: "pushProgress", force: false })} title="Queues a push of each liberated book's Audible position; Audiobookshelf's newer progress is kept">Push Audible progress to Audiobookshelf</button>
+                  </li>
+                  <li>
+                    <button onClick={() => act({ kind: "pushProgress", force: true })} title="Replaces Audiobookshelf progress even where it is newer">Push progress, overwriting newer</button>
                   </li>
                   <li>
                     <button onClick={() => act({ kind: "convertMp3" })} title="Only liberated books with an m4b and no mp3 are queued">Convert to MP3</button>

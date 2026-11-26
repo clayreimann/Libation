@@ -38,6 +38,7 @@ interface BulkState {
   total: number;
   running: boolean;
   summary: BulkSummary | null;
+  okWord?: string;
 }
 
 
@@ -160,15 +161,15 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
     }
   };
 
-  const runAction = useCallback(async (label: string, asins: string[], run: (o: { signal: AbortSignal; onProgress: (d: number, t: number) => void }) => Promise<BulkSummary>) => {
+  const runAction = useCallback(async (label: string, asins: string[], run: (o: { signal: AbortSignal; onProgress: (d: number, t: number) => void }) => Promise<BulkSummary>, okWord?: string) => {
     const ctl = new AbortController();
     abort.current = ctl;
-    setBulk({ label, done: 0, total: asins.length, running: true, summary: null });
+    setBulk({ label, done: 0, total: asins.length, running: true, summary: null, okWord });
     const summary = await run({
       signal: ctl.signal,
       onProgress: (done, total) => setBulk((b) => (b ? { ...b, done, total } : b)),
     });
-    setBulk({ label, done: asins.length, total: asins.length, running: false, summary });
+    setBulk({ label, done: asins.length, total: asins.length, running: false, summary, okWord });
     setSelected(new Set(notOk(summary)));
     setReload((n) => n + 1);
   }, []);
@@ -180,6 +181,8 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
         return runAction("Queueing", asins, (o) => api.bulkLiberate(asins, o));
       case "absUpload":
         return runAction("Queueing Audiobookshelf uploads", asins, (o) => api.bulkAbsUpload(asins, o));
+      case "pushProgress":
+        return runAction("Queueing progress pushes", asins, (o) => api.bulkPushProgress(asins, op.force, o), "queued");
       case "convertMp3":
         return runAction("Queueing MP3 conversions", asins, (o) => api.bulkConvertMp3(asins, o));
       case "trash":
@@ -448,7 +451,12 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
           <div className="bar">
             <div style={{ width: `${bulk.total ? (bulk.done / bulk.total) * 100 : 0}%` }} />
           </div>
-          {bulk.summary && !bulk.running && <BulkReport s={bulk.summary} />}
+          {bulk.summary && !bulk.running && <BulkReport s={bulk.summary} okWord={bulk.okWord} />}
+          {bulk.summary && !bulk.running && bulk.okWord === "queued" && (
+            <p className="muted small">
+              Pushed, skipped and failed outcomes are in each job's log on the <a href="#/queue">queue</a>.
+            </p>
+          )}
         </div>
       )}
 
@@ -507,9 +515,9 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
   );
 }
 
-function BulkReport({ s }: { s: BulkSummary }) {
+function BulkReport({ s, okWord = "updated" }: { s: BulkSummary; okWord?: string }) {
   const failed = s.failed.reduce((n, f) => n + f.asins.length, 0);
-  const parts = [`${s.updated} updated`];
+  const parts = [`${s.updated} ${okWord}`];
   if (s.conflict.length) parts.push(`${s.conflict.length} conflict`);
   if (s.notFound.length) parts.push(`${s.notFound.length} not found`);
   if (failed) parts.push(`${failed} failed`);

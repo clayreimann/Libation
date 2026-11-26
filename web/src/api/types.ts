@@ -71,3 +71,10 @@ const covered: [Uncovered] extends [never] ? true : never = true;
 void covered;
 
 export const eventTypes: readonly EventName[] = eventNames;
+
+export type BookProgress = Fix<S["BookProgressDto"]>;
+export type ProgressPush = Fix<S["ProgressPushDto"]>;
+export type ProgressPushRequest = Fix<S["ProgressPushRequest"]>;
+export type InactiveScan = Fix<S["InactiveScanDto"]>;
+export type InactiveBook = Fix<S["InactiveBookDto"]>;
+export type RemoveFromAudible = Fix<S["RemoveFromAudibleDto"]>;

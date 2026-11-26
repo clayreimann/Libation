@@ -1,6 +1,6 @@
 import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, AudioFile, Chapter, AccountPatch, AbsLibrary, AbsTest, AbsTestRequest, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, Bookmark, LoginStartRequest, MoveTo, QualityApply, QualityScan, QueueJob, RatingRequest, SeriesGroup, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
+import type { Account, AudioFile, Chapter, AccountPatch, AbsLibrary, AbsTest, AbsTestRequest, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, Bookmark, BookProgress, ProgressPush, LoginStartRequest, MoveTo, QualityApply, QualityScan, QueueJob, RatingRequest, SeriesGroup, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
 
 export interface ApiErrorDetail {
   code?: string | null;
@@ -111,6 +111,8 @@ export const api = {
   startQualityScan: (body?: { asins?: string[]; widevine?: boolean }) => request<QualityScan>("POST", "/api/library/quality-scan", body),
   cancelQualityScan: () => request<QualityScan>("DELETE", "/api/library/quality-scan"),
   applyQuality: (asins: string[]) => request<QualityApply>("POST", "/api/library/quality-scan/apply", { asins }),
+  progress: (asin: string, signal?: AbortSignal) => request<BookProgress>("GET", `${book(asin)}/progress`, undefined, signal),
+  pushProgress: (asin: string, force: boolean) => request<ProgressPush>("POST", `${book(asin)}/progress/push-abs`, force ? { force: true } : {}),
   bookmarks: (asin: string, signal?: AbortSignal) => request<Bookmark[]>("GET", `${book(asin)}/bookmarks`, undefined, signal),
   bookmarksUrl: (asin: string, format: ExportFormat) => `${book(asin)}/bookmarks?format=${format}`,
   getBook: (asin: string, signal?: AbortSignal) => request<BookDetail>("GET", book(asin), undefined, signal),
@@ -136,6 +138,7 @@ export const api = {
   bulkRestore: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/restore", asins, {}, o),
   bulkPurge: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/purge", asins, {}, o),
   bulkAbsUpload: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/audiobookshelf/upload", asins, {}, o),
+  bulkPushProgress: (asins: string[], force: boolean, o?: BulkOpts) => chunked("POST", "/api/library/progress/push-abs", asins, { force }, o),
   bulkLiberate: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/liberate", asins, {}, o),
   bulkConvertMp3: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/convert-mp3", asins, {}, o),
   bulkSetStatus: (asins: string[], status: LiberatedChoice, o?: BulkOpts) => chunked("PUT", "/api/library/status", asins, { status }, o),
