@@ -97,6 +97,10 @@ The command:
 
 Libation does not record which books it has already uploaded, so every run re-checks each candidate against the server. That costs a couple of search requests per book, which is noticeable on a large library but makes repeat runs safe to retry.
 
+## Listening progress
+
+Libation can also copy where you are in a book on Audible to Audiobookshelf, so you can listen on Audible and carry on in Audiobookshelf. Right-click liberated books in the grid and choose **Push Audible progress to Audiobookshelf**, or turn on **After uploading a book, also push its Audible listening progress** to do it automatically after each upload. See [Listening Progress](/docs/features/listening-progress).
+
 ## Duplicate handling
 
 Before uploading, Libation searches the target Audiobookshelf library for an existing item with a matching title (and author when available). If a match is found, or Audiobookshelf reports that the destination already exists, Libation skips the upload and continues.
