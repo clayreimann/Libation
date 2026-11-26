@@ -67,9 +67,42 @@ const lastFileKey = (asin: string) => `player.${asin}.file`;
 const positionKey = (asin: string, file: number) => `player.${asin}.pos.${file}`;
 const speedKey = "player.speed";
 
-export function savePosition(asin: string, file: number, time: number): void {
+const savedAtKey = (asin: string) => `player.${asin}.at`;
+
+export function savePosition(asin: string, file: number, time: number, now: number = Date.now()): void {
   writePref(lastFileKey(asin), file);
   writePref(positionKey(asin, file), Math.max(0, Math.round(time * 10) / 10));
+  writePref(savedAtKey(asin), now);
+}
+
+/** When this browser last saved a position for the book, in ms since the epoch; undefined when never. */
+export function loadSavedAt(asin: string): number | undefined {
+  const v = readPref(savedAtKey(asin));
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/** Maps a position in the whole book to a file and a time in it, using each file's duration. */
+export function bookTarget(durations: readonly (number | null | undefined)[], positionSec: number): SeekTarget {
+  let rest = Math.max(0, positionSec);
+  for (let i = 0; i < durations.length; i++) {
+    const d = durations[i];
+    if (d == null || !Number.isFinite(d) || d <= 0) return { fileIndex: i, time: rest };
+    if (rest < d || i === durations.length - 1) return { fileIndex: i, time: Math.min(rest, d) };
+    rest -= d;
+  }
+  return { fileIndex: 0, time: 0 };
+}
+
+/**
+ * Whether to start from Audible's position instead of this browser's: Audible has one, and it is
+ * newer than the last local save (or there is none). A position that differs by under 30s is not worth a jump.
+ */
+export function preferAudible(audible: { positionMs: number; lastUpdated?: string | null } | null | undefined, localAt: number | undefined, localBookSec: number): boolean {
+  if (!audible || audible.positionMs <= 0) return false;
+  if (Math.abs(audible.positionMs / 1000 - localBookSec) < 30) return false;
+  if (localAt === undefined) return true;
+  const updated = audible.lastUpdated ? Date.parse(audible.lastUpdated) : NaN;
+  return Number.isFinite(updated) && updated > localAt;
 }
 
 export function loadPosition(asin: string, fileCount: number): SavedPosition {

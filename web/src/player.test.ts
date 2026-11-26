@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { chapterAt, clampTime, formatClock, loadPosition, nextTarget, previousTarget, resumeTime, savePosition, shouldSave, type PlayerChapter } from "./player";
+import { bookTarget, chapterAt, clampTime, formatClock, loadPosition, loadSavedAt, nextTarget, preferAudible, previousTarget, resumeTime, savePosition, shouldSave, type PlayerChapter } from "./player";
 
 const mem = new Map<string, string>();
 vi.stubGlobal("localStorage", {
@@ -83,5 +83,30 @@ describe("resumeTime / clampTime / shouldSave", () => {
     expect(shouldSave(0, 1000, 0, 5)).toBe(false);
     expect(shouldSave(0, 6000, 0, 5)).toBe(true);
     expect(shouldSave(0, 6000, 5, 5.1)).toBe(false);
+  });
+});
+
+describe("resume from Audible", () => {
+  it("maps a book position onto split files", () => {
+    expect(bookTarget([100, 200, 300], 50)).toEqual({ fileIndex: 0, time: 50 });
+    expect(bookTarget([100, 200, 300], 150)).toEqual({ fileIndex: 1, time: 50 });
+    expect(bookTarget([100, 200, 300], 900)).toEqual({ fileIndex: 2, time: 300 });
+    expect(bookTarget([100, null, 300], 150)).toEqual({ fileIndex: 1, time: 50 });
+    expect(bookTarget([3600], 1200)).toEqual({ fileIndex: 0, time: 1200 });
+  });
+  it("records when a position was saved", () => {
+    savePosition("B1", 0, 10, 1234);
+    expect(loadSavedAt("B1")).toBe(1234);
+    expect(loadSavedAt("B2")).toBeUndefined();
+  });
+  it("prefers Audible only when it is newer and far enough away", () => {
+    const at = Date.parse("2026-11-26T04:00:00Z");
+    expect(preferAudible({ positionMs: 600_000, lastUpdated: "2026-11-26T05:00:00Z" }, undefined, 0)).toBe(true);
+    expect(preferAudible({ positionMs: 600_000, lastUpdated: "2026-11-26T05:00:00Z" }, at, 0)).toBe(true);
+    expect(preferAudible({ positionMs: 600_000, lastUpdated: "2026-11-26T03:00:00Z" }, at, 0)).toBe(false);
+    expect(preferAudible({ positionMs: 600_000, lastUpdated: "2026-11-26T05:00:00Z" }, at, 590)).toBe(false);
+    expect(preferAudible({ positionMs: 0, lastUpdated: null }, undefined, 0)).toBe(false);
+    expect(preferAudible(null, undefined, 0)).toBe(false);
+    expect(preferAudible({ positionMs: 600_000, lastUpdated: null }, at, 0)).toBe(false);
   });
 });

@@ -19,12 +19,17 @@ const paths: Record<string, string> = {
   menu: "M3 6h14M3 10h14M3 14h14",
   check: "M4 10l4 4 8-8",
   refresh: "M16 10a6 6 0 1 1-2-4.5M16 3v3.5h-3.5",
+  back30: "M4 10a6 6 0 1 0 2-4.5M4 3v3.5h3.5",
+  fwd30: "M16 10a6 6 0 1 1-2-4.5M16 3v3.5h-3.5",
+  prevTrack: "M5 4v12M16 4 7 10l9 6Z",
+  nextTrack: "M15 4v12M4 4l9 6-9 6Z",
+  list: "M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01",
 };
 
 export type IconName = keyof typeof paths;
 
 export function Icon({ name, size = 18, className }: { name: IconName; size?: number; className?: string }) {
-  const filled = name === "play";
+  const filled = name === "play" || name === "prevTrack" || name === "nextTrack";
   return (
     <svg
       className={`icon ${className ?? ""}`}
