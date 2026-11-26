@@ -1,57 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api/client";
 import type { Settings } from "../api/types";
-import { GROUPS, FIXUP_DEPENDENTS, TEMPLATE_FIELDS, booksFixedByEnvironment, buildPatch, toDraft, type Draft, type Field } from "../settingsForm";
+import { GROUPS, FIXUP_DEPENDENTS, TEMPLATE_FIELDS, booksFixedByEnvironment, buildPatch, toDraft, withTokenClear, type Draft } from "../settingsForm";
+import { AbsSettings } from "./AbsSettings";
+import { FieldInput } from "./FieldInput";
 import { TemplateField } from "./TemplateField";
-
-interface FieldProps {
-  field: Field;
-  draft: Draft;
-  errors: Record<string, string>;
-  disabled?: boolean;
-  set: (key: string, v: string | boolean) => void;
-}
-
-function FieldInput({ field, draft, errors, disabled, set }: FieldProps) {
-  const id = `s-${field.key}`;
-  const error = errors[field.key];
-  const value = draft[field.key];
-  const err = error && (
-    <div className="error small" role="alert">
-      {error}
-    </div>
-  );
-  if (field.kind === "bool") {
-    return (
-      <div className="field">
-        <label className="check-label" htmlFor={id}>
-          <input id={id} type="checkbox" checked={value === true} disabled={disabled} onChange={(e) => set(field.key, e.target.checked)} /> {field.label}
-        </label>
-        {field.hint && <div className="muted small">{field.hint}</div>}
-        {err}
-      </div>
-    );
-  }
-  return (
-    <div className="field">
-      <label htmlFor={id}>{field.label}</label>
-      {field.kind === "select" ? (
-        <select id={id} value={String(value)} disabled={disabled} onChange={(e) => set(field.key, e.target.value)}>
-          {!field.options!.includes(String(value)) && <option value={String(value)}>{String(value)}</option>}
-          {field.options!.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input id={id} type="text" inputMode={field.kind === "number" ? "numeric" : undefined} value={String(value)} disabled={disabled} aria-invalid={!!error} onChange={(e) => set(field.key, e.target.value)} />
-      )}
-      {field.hint && <div className="muted small">{field.hint}</div>}
-      {err}
-    </div>
-  );
-}
 
 export function SettingsPage() {
   const [saved, setSaved] = useState<Draft | null>(null);
@@ -64,12 +17,14 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [clearToken, setClearToken] = useState(false);
 
   const load = (s: Settings) => {
     const d = toDraft(s);
     setSettings(s);
     setSaved(d);
     setDraft(d);
+    setClearToken(false);
   };
 
   useEffect(() => {
@@ -77,7 +32,7 @@ export function SettingsPage() {
   }, []);
 
   const skip = useMemo(() => (booksLocked ? new Set(["books"]) : new Set<string>()), [booksLocked]);
-  const built = useMemo(() => (saved ? buildPatch(saved, draft, skip) : null), [saved, draft, skip]);
+  const built = useMemo(() => (saved ? withTokenClear(buildPatch(saved, draft, skip), clearToken) : null), [saved, draft, skip, clearToken]);
 
   if (loadError) return <p className="error">{loadError}</p>;
   if (!saved || !settings || !built) return <p className="muted">Loading...</p>;
@@ -192,11 +147,13 @@ export function SettingsPage() {
         </section>
       ))}
 
+      <AbsSettings settings={settings} draft={draft} errors={shown} clearToken={clearToken} set={set} setClearToken={(v) => { setClearToken(v); setDone(false); }} />
+
       <div className="savebar">
         <button type="submit" className="primary" disabled={!dirty || saving}>
           {saving ? "Saving..." : "Save"}
         </button>
-        <button type="button" disabled={!dirty || saving} onClick={() => { setDraft(saved); setErrors({}); setFormError(null); }}>
+        <button type="button" disabled={!dirty || saving} onClick={() => { setDraft(saved); setClearToken(false); setErrors({}); setFormError(null); }}>
           Discard changes
         </button>
         {done && !dirty && <span className="muted" role="status">Saved.</span>}

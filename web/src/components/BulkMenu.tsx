@@ -4,6 +4,7 @@ import { Popover } from "./Popover";
 
 export type BulkOp =
   | { kind: "liberate" }
+  | { kind: "absUpload" }
   | { kind: "trash" }
   | { kind: "purge" }
   | { kind: "pdfStatus"; status: "liberated" | "notLiberated" }
@@ -40,6 +41,9 @@ export function BulkMenu({ count, trash, disabled, onRun }: Props) {
               )}
               {!trash && (
                 <>
+                  <li>
+                    <button onClick={() => act({ kind: "absUpload" })}>Upload to Audiobookshelf</button>
+                  </li>
                   <li>
                     <button onClick={() => act({ kind: "status", status: "liberated" })}>Set status: liberated</button>
                   </li>

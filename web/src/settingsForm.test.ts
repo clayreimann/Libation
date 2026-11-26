@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { booksFixedByEnvironment, buildPatch, isDirty, toDraft } from "./settingsForm";
+import { booksFixedByEnvironment, buildPatch, isDirty, toDraft, withTokenClear } from "./settingsForm";
 import type { Settings } from "./api/types";
 
 const settings = {
@@ -46,6 +46,30 @@ describe("buildPatch", () => {
 
   it("skips locked keys", () => {
     expect(buildPatch(saved, { ...saved, books: "/other" }, new Set(["books"])).patch).toEqual({});
+  });
+});
+
+describe("audiobookshelf fields", () => {
+  const abs = { ...settings, audiobookshelf: { enabled: false, serverUrl: "http://a", libraryId: "l", folderId: "f", tokenSet: true } } as unknown as Settings;
+  const saved = toDraft(abs);
+
+  it("never puts a token in the draft and sends one only when typed", () => {
+    expect(saved["audiobookshelf.apiToken"]).toBe("");
+    expect(buildPatch(saved, { ...saved }).changed).toEqual([]);
+    expect(buildPatch(saved, { ...saved, "audiobookshelf.apiToken": " tok " }).patch).toEqual({ audiobookshelf: { apiToken: "tok" } });
+  });
+
+  it("clears url, library and folder with null", () => {
+    const b = buildPatch(saved, { ...saved, "audiobookshelf.serverUrl": "", "audiobookshelf.libraryId": "", "audiobookshelf.folderId": "" });
+    expect(b.patch).toEqual({ audiobookshelf: { serverUrl: null, libraryId: null, folderId: null } });
+  });
+
+  it("adds a null token for a clear unless a new one was typed", () => {
+    expect(withTokenClear(buildPatch(saved, saved), true).patch).toEqual({ audiobookshelf: { apiToken: null } });
+    const typed = buildPatch(saved, { ...saved, "audiobookshelf.apiToken": "n" });
+    expect(withTokenClear(typed, true)).toBe(typed);
+    const plain = buildPatch(saved, saved);
+    expect(withTokenClear(plain, false)).toBe(plain);
   });
 });
 

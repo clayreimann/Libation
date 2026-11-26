@@ -173,6 +173,8 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
     switch (op.kind) {
       case "liberate":
         return runAction("Queueing", asins, (o) => api.bulkLiberate(asins, o));
+      case "absUpload":
+        return runAction("Queueing Audiobookshelf uploads", asins, (o) => api.bulkAbsUpload(asins, o));
       case "trash":
         return runAction(trash ? "Restoring" : "Trashing", asins, (o) => (trash ? api.bulkRestore(asins, o) : api.bulkTrash(asins, o)));
       case "purge":

@@ -33,7 +33,7 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
   }, []);
   const [tags, setTags] = useState(book.tags);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ text: string; bad: boolean } | null>(null);
+  const [msg, setMsg] = useState<{ text: string; bad: boolean; queue?: boolean } | null>(null);
 
   useEffect(() => {
     setTags(book.tags);
@@ -73,6 +73,21 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) setMsg({ text: "Already queued.", bad: false });
       else setMsg({ text: `${label}: ${(e as Error).message}`, bad: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const upload = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const result = (await api.absUpload([book.asin])).results[0]?.result;
+      if (result === "ok") setMsg({ text: "Upload to Audiobookshelf queued.", bad: false, queue: true });
+      else if (result === "conflict") setMsg({ text: "Not uploaded: the book is not liberated or already has a queued job.", bad: true });
+      else setMsg({ text: "Not uploaded: the daemon does not know this book.", bad: true });
+    } catch (e) {
+      setMsg({ text: `Upload to Audiobookshelf: ${(e as Error).message}`, bad: true });
     } finally {
       setBusy(false);
     }
@@ -235,11 +250,26 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
               Liberate
             </button>
           )}
+          {!book.inTrash && (
+            <button onClick={() => void upload()} disabled={busy}>
+              Upload to Audiobookshelf
+            </button>
+          )}
           <button onClick={() => void run(book.inTrash ? "Restore" : "Trash", () => (book.inTrash ? api.restore(book.asin) : api.trash(book.asin)))} disabled={busy}>
             {book.inTrash ? "Restore" : "Move to trash"}
           </button>
         </div>
-        {msg && <p className={msg.bad ? "error" : "muted"}>{msg.text}</p>}
+        {msg && (
+          <p className={msg.bad ? "error" : "muted"}>
+            {msg.text}
+            {msg.queue && (
+              <>
+                {" "}
+                <a href="#/queue">View queue</a>
+              </>
+            )}
+          </p>
+        )}
       </aside>
     </>
   );

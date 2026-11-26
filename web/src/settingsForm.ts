@@ -110,9 +110,19 @@ export const GROUPS: Group[] = [
   },
 ];
 
-export const TEXT_KEYS = ["books", "inProgress", ...TEMPLATE_FIELDS.map((f) => f.key)];
+export const ABS_FIELDS: Field[] = [
+  bool("audiobookshelf.enabled", "Upload automatically after each liberation"),
+  bool("audiobookshelf.includePdfs", "Upload PDFs too"),
+  bool("audiobookshelf.pushProgressAfterUpload", "Push Audible listening progress after each upload"),
+];
 
-export const allFields = (groups: readonly Group[] = GROUPS): Field[] => groups.flatMap((g) => g.fields);
+export const ABS_TOKEN = "audiobookshelf.apiToken";
+
+const NULL_WHEN_EMPTY = new Set(["inProgress", "audiobookshelf.serverUrl", "audiobookshelf.libraryId", "audiobookshelf.folderId"]);
+
+export const TEXT_KEYS = ["books", "inProgress", ...TEMPLATE_FIELDS.map((f) => f.key), "audiobookshelf.serverUrl", ABS_TOKEN, "audiobookshelf.libraryId", "audiobookshelf.folderId"];
+
+export const allFields = (groups: readonly Group[] = GROUPS): Field[] => [...groups.flatMap((g) => g.fields), ...ABS_FIELDS];
 
 const NUMERIC = new Set(allFields().filter((f) => f.kind === "number").map((f) => f.key));
 
@@ -152,10 +162,8 @@ export function buildPatch(saved: Draft, draft: Draft, skip: ReadonlySet<string>
         continue;
       }
       out = Number(text);
-    } else if (key === "inProgress") {
-      out = String(value).trim() === "" ? null : String(value).trim();
     } else if (typeof value === "string" && TEXT_KEYS.includes(key)) {
-      out = value.trim();
+      out = value.trim() === "" && NULL_WHEN_EMPTY.has(key) ? null : value.trim();
     }
     changed.push(key);
     const path = key.split(".");
@@ -173,3 +181,10 @@ export const isDirty = (saved: Draft, draft: Draft, skip?: ReadonlySet<string>):
 
 /** True when the daemon refuses `books` because LIBATION_BOOKS_DIR sets it. */
 export const booksFixedByEnvironment = (fields: Record<string, string> | undefined): boolean => /LIBATION_BOOKS_DIR/.test(fields?.books ?? "");
+
+/** Adds `apiToken: null` to the patch when the saved token should be cleared and no new one was typed. */
+export function withTokenClear(built: Built, clear: boolean): Built {
+  if (!clear || built.changed.includes(ABS_TOKEN)) return built;
+  const patch = { ...built.patch, audiobookshelf: { ...built.patch.audiobookshelf, apiToken: null } };
+  return { ...built, patch, changed: [...built.changed, ABS_TOKEN] };
+}
