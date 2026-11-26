@@ -59,6 +59,11 @@ public sealed record BookProgressResult(ProgressOutcome Outcome, BookProgressDto
 
 public sealed record ProgressPushResult(ProgressOutcome Outcome, ProgressPushDto? Push = null, string? Error = null);
 
+public static class RemoveFromAudibleResults
+{
+	public const string Removed = "removed", NotPlus = "notPlus", NotFound = "notFound", Failed = "failed";
+}
+
 public interface IEngineData
 {
 	IReadOnlyList<AccountDto> GetAccounts();
@@ -171,4 +176,7 @@ public interface IEngineData
 
 	/// <summary>Pushes Audible's position to Audiobookshelf now; NotConfigured when no server URL and token are saved. Per-book failures come back as a failed push, not ServiceFailed.</summary>
 	Task<ProgressPushResult> PushProgress(string asin, bool force, bool dryRun, CancellationToken ct);
+
+	/// <summary>One item per ASIN, in order. Removes Audible Plus books from the Audible account one at a time, then deletes each locally as desktop's Remove from Audible Library does; irreversible. Continues past failures; <paramref name="publish"/> receives BooksRemovedFromAudible.</summary>
+	Task<IReadOnlyList<RemoveFromAudibleItemDto>> RemoveFromAudible(IReadOnlyList<string> asins, Action<EngineEvent> publish);
 }

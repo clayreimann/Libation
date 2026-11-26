@@ -409,3 +409,12 @@ public sealed record BulkProgressPushRequest(IReadOnlyList<string>? Asins, bool?
 
 /// <summary>Outcome is pushed, skipped or failed; Reason explains a skip or failure.</summary>
 public sealed record ProgressPushDto(string Asin, string Outcome, string? Reason = null, double? PositionSec = null);
+
+/// <summary>Body of <c>POST /api/library/remove-from-audible</c>; at most 100 ASINs. Confirm must be exactly <c>remove {N} from audible</c>, N counting distinct ASINs.</summary>
+public sealed record RemoveFromAudibleRequest(IReadOnlyList<string>? Asins, string? Confirm);
+
+/// <summary>Result is removed, notPlus, notFound or failed; Error explains failed, or a removed book that could not be deleted locally.</summary>
+public sealed record RemoveFromAudibleItemDto(string Asin, string Result, string? Error = null);
+
+/// <summary>One item per distinct ASIN, in request order.</summary>
+public sealed record RemoveFromAudibleDto(IReadOnlyList<RemoveFromAudibleItemDto> Results);

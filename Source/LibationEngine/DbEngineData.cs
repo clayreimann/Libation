@@ -7,8 +7,10 @@ using LibationFileManager;
 
 namespace LibationEngine;
 
-public sealed class DbEngineData(IAudibleReviews? reviews = null, IAudibleQuality? quality = null, IAudibleRecords? records = null, IProgressSync? progress = null) : IEngineData
+public sealed class DbEngineData(IAudibleReviews? reviews = null, IAudibleQuality? quality = null, IAudibleRecords? records = null, IProgressSync? progress = null, IAudibleRemoval? removal = null) : IEngineData
 {
+	private readonly IAudibleRemoval audibleRemoval = removal ?? new AudibleRemoval();
+	private readonly SemaphoreSlim removalGate = new(1, 1);
 	private readonly IAudibleReviews audibleReviews = reviews ?? new AudibleReviews();
 	private readonly QualityScanner qualityScanner = new(quality ?? new AudibleQuality());
 	private readonly IAudibleRecords audibleRecords = records ?? new AudibleRecords();
@@ -564,6 +566,64 @@ public sealed class DbEngineData(IAudibleReviews? reviews = null, IAudibleQualit
 	{
 		var range = record as AudibleApi.Common.IRangeAnnotation;
 		return new(record.GetType().Name, record.Start.TotalSeconds, range?.End.TotalSeconds, range?.Text, (record as AudibleApi.Common.Clip)?.Title, record.Created);
+	}
+
+	public async Task<IReadOnlyList<RemoveFromAudibleItemDto>> RemoveFromAudible(IReadOnlyList<string> asins, Action<EngineEvent> publish)
+	{
+		await removalGate.WaitAsync();
+		try
+		{
+			var results = new List<RemoveFromAudibleItemDto>(asins.Count);
+			var removed = new List<string>();
+			foreach (var asin in asins)
+			{
+				var item = await RemoveOneFromAudible(asin);
+				results.Add(item);
+				if (item.Result == RemoveFromAudibleResults.Removed)
+					removed.Add(asin);
+			}
+			if (removed.Count > 0)
+				publish(new BooksRemovedFromAudible(removed));
+			return results;
+		}
+		finally
+		{
+			removalGate.Release();
+		}
+	}
+
+	private async Task<RemoveFromAudibleItemDto> RemoveOneFromAudible(string asin)
+	{
+		if (Find(asin) is not { } lb)
+			return new(asin, RemoveFromAudibleResults.NotFound);
+		if (!lb.IsAudiblePlus)
+			return new(asin, RemoveFromAudibleResults.NotPlus);
+
+		try
+		{
+			if (!await audibleRemoval.RemoveAsync(lb, CancellationToken.None))
+			{
+				Serilog.Log.Logger.Warning("Audible declined to remove {Asin} from the account", asin);
+				return new(asin, RemoveFromAudibleResults.Failed, "Audible declined to remove the book.");
+			}
+		}
+		catch (Exception ex)
+		{
+			Serilog.Log.Logger.Error(ex, "Failed to remove {Asin} from the Audible account", asin);
+			return new(asin, RemoveFromAudibleResults.Failed, $"Audible could not be reached: {ex.Message}");
+		}
+
+		Serilog.Log.Logger.Information("Removed {Asin} from the Audible account", asin);
+		try
+		{
+			await new[] { lb }.PermanentlyDeleteBooksAsync();
+			return new(asin, RemoveFromAudibleResults.Removed);
+		}
+		catch (Exception ex)
+		{
+			Serilog.Log.Logger.Error(ex, "Removed {Asin} from Audible but could not delete it from the library", asin);
+			return new(asin, RemoveFromAudibleResults.Removed, $"Removed from Audible but could not be deleted from the library: {ex.Message}");
+		}
 	}
 
 	private static LibraryBook? Find(string asin)

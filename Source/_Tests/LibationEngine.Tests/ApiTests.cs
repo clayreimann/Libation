@@ -220,6 +220,13 @@ public partial class ApiTests
 		public Task<IReadOnlyList<BulkItemDto>> BulkPurge(IReadOnlyList<string> asins)
 			=> Bulk("bulkpurge", asins);
 
+		public Task<IReadOnlyList<RemoveFromAudibleItemDto>> RemoveFromAudible(IReadOnlyList<string> asins, Action<EngineEvent> publish)
+		{
+			Calls.Add($"removefromaudible:{string.Join(',', asins)}");
+			publish(new BooksRemovedFromAudible(asins));
+			return Task.FromResult<IReadOnlyList<RemoveFromAudibleItemDto>>(asins.Select(a => new RemoveFromAudibleItemDto(a, RemoveFromAudibleResults.Removed)).ToList());
+		}
+
 		public Task<AudiobookshelfTestDto> TestAudiobookshelf(string? url, string? token, CancellationToken ct)
 			=> new DbEngineData().TestAudiobookshelf(url, token, ct);
 

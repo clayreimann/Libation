@@ -123,6 +123,7 @@ public static class ApiEndpoints
 		["BulkItemDto.Result"] = [BulkResults.Ok, BulkResults.NotFound, BulkResults.Conflict],
 		["LocateScanDto.State"] = ["idle", "running", "completed", "failed"],
 		["QualityScanDto.State"] = ["idle", "running", "cancelling", "completed", "cancelled", "failed"],
+		["RemoveFromAudibleItemDto.Result"] = [RemoveFromAudibleResults.Removed, RemoveFromAudibleResults.NotPlus, RemoveFromAudibleResults.NotFound, RemoveFromAudibleResults.Failed],
 		["BookmarkDto.Type"] = ["Clip", "Note", "Bookmark", "LastHeard"],
 		["CancelJobDto.Outcome"] = ["removed", "cancelling"],
 		["AccountDto.AuthState"] = [AuthStates.SignedIn, AuthStates.NeedsLogin],
@@ -726,6 +727,25 @@ public static class ApiEndpoints
 			.Produces<QualityApplyDto>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
 			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapPost("/library/remove-from-audible", async (RemoveFromAudibleRequest? body) =>
+		{
+			if (body?.Asins is null || body.Asins.Count == 0)
+				return Error("asins is required and must not be empty.", StatusCodes.Status400BadRequest);
+			var asins = Distinct(body.Asins);
+			if (asins.Any(a => a.Length == 0))
+				return Error("asins must not contain blank entries.", StatusCodes.Status400BadRequest);
+			if (asins.Count > RemoveFromAudibleConfirmation.MaxAsins)
+				return Error($"At most {RemoveFromAudibleConfirmation.MaxAsins} asins per request.", StatusCodes.Status400BadRequest);
+			var phrase = RemoveFromAudibleConfirmation.Phrase(asins.Count);
+			if (!string.Equals(body.Confirm, phrase, StringComparison.Ordinal))
+				return Results.Json(new ErrorDto($"Removing from Audible cannot be undone. Set confirm to exactly \"{phrase}\".", "confirmationRequired"), statusCode: StatusCodes.Status400BadRequest);
+			return Results.Json(new RemoveFromAudibleDto(await data.RemoveFromAudible(asins, scheduler.Events.Publish)));
+		}).WithSummary("Removes Audible Plus books from the Audible account, as desktop's Remove from Audible Library, then deletes them from the library permanently (not the trash). IRREVERSIBLE and outside Libation: the only way back is re-adding them in Audible. confirm must be exactly \"remove {N} from audible\", N counting distinct asins, else 400 with code confirmationRequired and the phrase in the message. At most 100 asins. Books are processed one at a time and failures do not stop the rest. 200 with a result per asin: removed, notPlus (not an Audible Plus book, never sent to Audible), notFound or failed (error says why). Every attempt is logged. A BooksRemovedFromAudible event lists the removed asins.")
+			.WithName("removeFromAudible").WithTags("library")
+			.Accepts<RemoveFromAudibleRequest>("application/json")
+			.Produces<RemoveFromAudibleDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest);
 
 		api.MapGet("/library/{asin}/bookmarks", async (string asin, string? format, CancellationToken ct) =>
 		{
