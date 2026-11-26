@@ -48,6 +48,10 @@ public sealed record QualityScanStart(QualityOutcome Outcome, QualityScanDto? Sc
 
 public sealed record QualityApplyResult(QualityOutcome Outcome, QualityApplyDto? Applied = null);
 
+public enum InactiveOutcome { Ok, Invalid, Busy, NotRunning }
+
+public sealed record InactiveScanStart(InactiveOutcome Outcome, InactiveScanDto? Scan = null, string? Error = null);
+
 public enum BookmarksOutcome { Ok, NoSuchBook, AudibleFailed }
 
 /// <summary>FilePath is the exported temp file, null when the book has no records to export.</summary>
@@ -179,4 +183,11 @@ public interface IEngineData
 
 	/// <summary>One item per ASIN, in order. Removes Audible Plus books from the Audible account one at a time, then deletes each locally as desktop's Remove from Audible Library does; irreversible. Continues past failures; <paramref name="publish"/> receives BooksRemovedFromAudible.</summary>
 	Task<IReadOnlyList<RemoveFromAudibleItemDto>> RemoveFromAudible(IReadOnlyList<string> asins, Action<EngineEvent> publish);
+
+	/// <summary>Starts a read-only background Audible scan for library books no longer in the account, as desktop's Scan library and remove books; <paramref name="accountIds"/> defaults to accounts with library scan on. Nothing is removed.</summary>
+	InactiveScanStart StartInactiveScan(IReadOnlyList<string>? accountIds, Action<EngineEvent> publish);
+	InactiveScanDto GetInactiveScan();
+
+	/// <summary>NotRunning when no scan is running.</summary>
+	InactiveScanStart CancelInactiveScan(Action<EngineEvent> publish);
 }

@@ -124,6 +124,7 @@ public static class ApiEndpoints
 		["LocateScanDto.State"] = ["idle", "running", "completed", "failed"],
 		["QualityScanDto.State"] = ["idle", "running", "cancelling", "completed", "cancelled", "failed"],
 		["RemoveFromAudibleItemDto.Result"] = [RemoveFromAudibleResults.Removed, RemoveFromAudibleResults.NotPlus, RemoveFromAudibleResults.NotFound, RemoveFromAudibleResults.Failed],
+		["InactiveScanDto.State"] = ["idle", "running", "cancelling", "completed", "cancelled", "failed"],
 		["BookmarkDto.Type"] = ["Clip", "Note", "Bookmark", "LastHeard"],
 		["CancelJobDto.Outcome"] = ["removed", "cancelling"],
 		["AccountDto.AuthState"] = [AuthStates.SignedIn, AuthStates.NeedsLogin],
@@ -726,6 +727,40 @@ public static class ApiEndpoints
 			.Accepts<QualityApplyRequest>("application/json")
 			.Produces<QualityApplyDto>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapPost("/library/inactive-scan", (InactiveScanRequest? body) =>
+		{
+			if (body?.Accounts is { } accounts && (accounts.Count == 0 || accounts.Any(a => string.IsNullOrWhiteSpace(a))))
+				return Error("accounts must list account ids, or be omitted.", StatusCodes.Status400BadRequest);
+			var start = data.StartInactiveScan(body?.Accounts?.Select(a => a.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), scheduler.Events.Publish);
+			return start.Outcome switch
+			{
+				InactiveOutcome.Invalid => Error(start.Error!, StatusCodes.Status400BadRequest),
+				InactiveOutcome.Busy => Error("An inactive book scan is already running.", StatusCodes.Status409Conflict),
+				_ => Results.Json(start.Scan, statusCode: StatusCodes.Status202Accepted)
+			};
+		}).WithSummary("Scans Audible in the background for library books that are no longer in the account, as desktop's Scan library and remove books. Read-only: nothing is removed. Only books that are not downloaded are compared, and a scan that could not see an account's whole library fails rather than flagging books. accounts limits the scan to those account ids (default: accounts with library scan on). Progress arrives as InactiveScanProgress events. To remove what it finds, POST them to /library/trash. 202, 400 bad or unknown accounts or nothing to compare, 409 already running.")
+			.WithName("startInactiveScan").WithTags("library")
+			.Accepts<InactiveScanRequest>("application/json")
+			.Produces<InactiveScanDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapGet("/library/inactive-scan", () => Results.Json(data.GetInactiveScan()))
+			.WithSummary("State of the last or running inactive book scan; results ([{asin, title, authors, account}]) appear once it is completed.")
+			.WithName("getInactiveScan").WithTags("library")
+			.Produces<InactiveScanDto>(StatusCodes.Status200OK);
+
+		api.MapDelete("/library/inactive-scan", () =>
+		{
+			var cancel = data.CancelInactiveScan(scheduler.Events.Publish);
+			return cancel.Outcome is InactiveOutcome.NotRunning
+				? Error("No inactive book scan is running.", StatusCodes.Status409Conflict)
+				: Results.Json(cancel.Scan);
+		}).WithSummary("Cancels the running inactive book scan. 200 with the scan, now cancelling, 409 when none is running.")
+			.WithName("cancelInactiveScan").WithTags("library")
+			.Produces<InactiveScanDto>(StatusCodes.Status200OK)
 			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapPost("/library/remove-from-audible", async (RemoveFromAudibleRequest? body) =>

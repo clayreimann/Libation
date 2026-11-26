@@ -39,7 +39,10 @@ public static class LibraryCommands
 		ScanEnd += (_, __) => Scanning = false;
 	}
 
-	public static async Task<List<LibraryBook>> FindInactiveBooks(IEnumerable<LibraryBook> existingLibrary, params Account[] accounts)
+	public static Task<List<LibraryBook>> FindInactiveBooks(IEnumerable<LibraryBook> existingLibrary, params Account[] accounts)
+		=> FindInactiveBooks(existingLibrary, allowInteractiveLogin: true, accounts);
+
+	public static async Task<List<LibraryBook>> FindInactiveBooks(IEnumerable<LibraryBook> existingLibrary, bool allowInteractiveLogin, params Account[] accounts)
 	{
 		logRestart();
 
@@ -64,7 +67,7 @@ public static class LibraryCommands
 			try
 			{
 				logTime($"pre {nameof(scanAccountsAsync)} all");
-				var scan = await scanAccountsAsync(accounts, libraryOptions, allowInteractiveLogin: true);
+				var scan = await scanAccountsAsync(accounts, libraryOptions, allowInteractiveLogin);
 				logTime($"post {nameof(scanAccountsAsync)} all");
 
 				var libraryItems = scan.Items;

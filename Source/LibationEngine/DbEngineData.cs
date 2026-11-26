@@ -7,8 +7,9 @@ using LibationFileManager;
 
 namespace LibationEngine;
 
-public sealed class DbEngineData(IAudibleReviews? reviews = null, IAudibleQuality? quality = null, IAudibleRecords? records = null, IProgressSync? progress = null, IAudibleRemoval? removal = null) : IEngineData
+public sealed class DbEngineData(IAudibleReviews? reviews = null, IAudibleQuality? quality = null, IAudibleRecords? records = null, IProgressSync? progress = null, IAudibleRemoval? removal = null, IAudibleInventory? inventory = null) : IEngineData
 {
+	private readonly InactiveScanner inactiveScanner = new(inventory ?? new AudibleInventory());
 	private readonly IAudibleRemoval audibleRemoval = removal ?? new AudibleRemoval();
 	private readonly SemaphoreSlim removalGate = new(1, 1);
 	private readonly IAudibleReviews audibleReviews = reviews ?? new AudibleReviews();
@@ -469,6 +470,42 @@ public sealed class DbEngineData(IAudibleReviews? reviews = null, IAudibleQualit
 		}
 		return new(QualityOutcome.Ok, new(books.Count, missing, settings.WidevineEnabled, settings.XHeAacRequested, settings.AccountsMarkedForReRegistration));
 	}
+
+	public InactiveScanStart StartInactiveScan(IReadOnlyList<string>? accountIds, Action<EngineEvent> publish)
+	{
+		List<Account> all;
+		using (var persister = AudibleApiStorage.GetAccountsSettingsPersister())
+			all = persister.AccountsSettings.Accounts.ToList();
+
+		List<Account> accounts;
+		if (accountIds is null)
+			accounts = all.Where(a => a.LibraryScan).ToList();
+		else
+		{
+			var unknown = accountIds.FirstOrDefault(id => !all.Any(a => string.Equals(a.AccountId, id, StringComparison.OrdinalIgnoreCase)));
+			if (unknown is not null)
+				return new(InactiveOutcome.Invalid, Error: $"No such account: {unknown}");
+			accounts = all.Where(a => accountIds.Any(id => string.Equals(a.AccountId, id, StringComparison.OrdinalIgnoreCase))).ToList();
+		}
+		if (accounts.Count == 0)
+			return new(InactiveOutcome.Invalid, Error: "No accounts to scan.");
+
+		var scanned = accounts.Select(a => a.AccountId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var candidates = DbContexts.GetLibrary_Flat_NoTracking()
+			.Where(lb => !lb.Book.HasLiberated() && scanned.Contains(lb.Account))
+			.ToList();
+		if (candidates.Count == 0)
+			return new(InactiveOutcome.Invalid, Error: "No books that are not downloaded to compare.");
+
+		return inactiveScanner.TryStart(candidates, accounts, publish)
+			? new(InactiveOutcome.Ok, inactiveScanner.Current)
+			: new(InactiveOutcome.Busy);
+	}
+
+	public InactiveScanDto GetInactiveScan() => inactiveScanner.Current;
+
+	public InactiveScanStart CancelInactiveScan(Action<EngineEvent> publish)
+		=> inactiveScanner.Cancel(publish) is { } scan ? new(InactiveOutcome.Ok, scan) : new(InactiveOutcome.NotRunning);
 
 	public async Task<BookmarksResult> GetBookmarks(string asin, CancellationToken ct)
 	{

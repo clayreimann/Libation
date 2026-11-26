@@ -418,3 +418,11 @@ public sealed record RemoveFromAudibleItemDto(string Asin, string Result, string
 
 /// <summary>One item per distinct ASIN, in request order.</summary>
 public sealed record RemoveFromAudibleDto(IReadOnlyList<RemoveFromAudibleItemDto> Results);
+
+/// <summary>Body of <c>POST /api/library/inactive-scan</c>; Accounts are account ids (default: every account with library scan on).</summary>
+public sealed record InactiveScanRequest(IReadOnlyList<string>? Accounts);
+
+public sealed record InactiveBookDto(string Asin, string Title, IReadOnlyList<string> Authors, string Account);
+
+/// <summary>State is idle, running, cancelling, completed, cancelled or failed. Total counts the books compared; Scanned is set once the Audible scan has finished. Results is null until completed, and in events.</summary>
+public sealed record InactiveScanDto(string State, int Total, int? Scanned, IReadOnlyList<InactiveBookDto>? Results, string? Error, DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt);

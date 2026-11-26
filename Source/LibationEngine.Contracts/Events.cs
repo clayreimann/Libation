@@ -30,4 +30,5 @@ public sealed record AccountSignedIn(string AccountId, string? Locale) : EngineE
 
 public sealed record LocateScanProgress(LocateScanDto Scan) : EngineEvent;
 public sealed record QualityScanProgress(QualityScanDto Scan) : EngineEvent;
+public sealed record InactiveScanProgress(InactiveScanDto Scan) : EngineEvent;
 public sealed record BooksRemovedFromAudible(IReadOnlyList<string> Asins) : EngineEvent;

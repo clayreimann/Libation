@@ -220,6 +220,27 @@ public partial class ApiTests
 		public Task<IReadOnlyList<BulkItemDto>> BulkPurge(IReadOnlyList<string> asins)
 			=> Bulk("bulkpurge", asins);
 
+		public bool InactiveRunning;
+
+		public InactiveScanStart StartInactiveScan(IReadOnlyList<string>? accountIds, Action<EngineEvent> publish)
+		{
+			Calls.Add($"inactivescan:{(accountIds is null ? "*" : string.Join(',', accountIds))}");
+			if (accountIds?.Contains("busy") == true)
+				return new(InactiveOutcome.Busy);
+			if (accountIds?.Contains("nobody") == true)
+				return new(InactiveOutcome.Invalid, Error: "No such account: nobody");
+			var scan = new InactiveScanDto("running", 3, null, null, null, DateTimeOffset.UnixEpoch, null);
+			publish(new InactiveScanProgress(scan));
+			InactiveRunning = true;
+			return new(InactiveOutcome.Ok, scan);
+		}
+
+		public InactiveScanDto GetInactiveScan()
+			=> new("completed", 3, 3, [new("B000000001", "Title", ["Author"], "a@example.com")], null, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
+
+		public InactiveScanStart CancelInactiveScan(Action<EngineEvent> publish)
+			=> InactiveRunning ? new(InactiveOutcome.Ok, new("cancelling", 3, null, null, null, DateTimeOffset.UnixEpoch, null)) : new(InactiveOutcome.NotRunning);
+
 		public Task<IReadOnlyList<RemoveFromAudibleItemDto>> RemoveFromAudible(IReadOnlyList<string> asins, Action<EngineEvent> publish)
 		{
 			Calls.Add($"removefromaudible:{string.Join(',', asins)}");
