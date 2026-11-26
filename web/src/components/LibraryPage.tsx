@@ -8,6 +8,7 @@ import { formatDate, formatLength, stars } from "../format";
 import { groupPodcasts, needsParents, type ParentRow } from "../podcasts";
 import { defaultQuery } from "../quickFilters";
 import { useQuickFilters } from "../useQuickFilters";
+import { seriesSort } from "../series";
 import { loadSort, saveSort, toggleSort, type SortKey, type SortState } from "../sort";
 import { useLive } from "../live";
 import { BookDetails } from "./BookDetails";
@@ -17,6 +18,7 @@ import { CountsBar } from "./CountsBar";
 import { Cover } from "./Cover";
 import { LocatePanel } from "./LocatePanel";
 import { Popover } from "./Popover";
+import { SeriesBrowser } from "./SeriesBrowser";
 import { QuickFilters } from "./QuickFilters";
 import { SyntaxHelp } from "./SyntaxHelp";
 
@@ -177,6 +179,8 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
         return runAction("Queueing", asins, (o) => api.bulkLiberate(asins, o));
       case "absUpload":
         return runAction("Queueing Audiobookshelf uploads", asins, (o) => api.bulkAbsUpload(asins, o));
+      case "convertMp3":
+        return runAction("Queueing MP3 conversions", asins, (o) => api.bulkConvertMp3(asins, o));
       case "trash":
         return runAction(trash ? "Restoring" : "Trashing", asins, (o) => (trash ? api.bulkRestore(asins, o) : api.bulkTrash(asins, o)));
       case "purge":
@@ -210,6 +214,13 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
     const next = toggleColumn(visible, id);
     setVisible(next);
     saveVisible(next);
+  };
+
+  const showSeries = (id: string, next: SortState = seriesSort) => {
+    setTrash(false);
+    setInput(seriesQuery(id));
+    setSort(next);
+    resetView();
   };
 
   const pickSyntax = (text: string) => {
@@ -386,6 +397,7 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
             </div>
           )}
         </Popover>
+        {!trash && <Popover label="Series">{(close) => <SeriesBrowser onPick={(id) => { close(); showSeries(id); }} />}</Popover>}
         <Popover label="Locate audiobooks" className="wide">{() => <LocatePanel />}</Popover>
         <Popover label="Columns">
           {() => (
@@ -480,10 +492,11 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
           book={detail}
           onChange={patchRow}
           onClose={() => setDetail(null)}
-          onSearch={(next) => {
+          onSearch={(next, nextSort) => {
             setDetail(null);
             setTrash(false);
             setInput(next);
+            if (nextSort) setSort(nextSort);
             resetView();
           }}
         />

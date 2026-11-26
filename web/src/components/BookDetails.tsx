@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type LiberatedChoice } from "../api/client";
-import type { Book, BookDetail } from "../api/types";
+import type { AudioFile, Book, BookDetail } from "../api/types";
 import { descriptionText } from "../description";
 import { audibleUrl, seriesQuery } from "../filters";
 import { formatDate, formatLength, formatTime, humanize, stars } from "../format";
 import { normalizeTags } from "../tags";
 import { booksFolder } from "../booksFolder";
+import { canConvertToMp3, convertOutcome } from "../convert";
+import { canRate } from "../rating";
+import { seriesSort } from "../series";
+import type { SortState } from "../sort";
+import { RatingEditor } from "./RatingEditor";
+import { SeriesPanel } from "./SeriesPanel";
 import { Cover } from "./Cover";
 import { usePlayer } from "./Player";
 
@@ -13,7 +19,7 @@ interface Props {
   book: Book;
   onChange: (b: Book) => void;
   onClose: () => void;
-  onSearch: (q: string) => void;
+  onSearch: (q: string, sort?: SortState) => void;
 }
 
 const statusValue = (s: string) => (s === "Liberated" ? "liberated" : s === "NotLiberated" ? "notLiberated" : "error");
@@ -29,6 +35,7 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
   const [refresh, setRefresh] = useState(0);
   const [books, setBooks] = useState("");
   const [locatePath, setLocatePath] = useState("");
+  const [files, setFiles] = useState<AudioFile[]>([]);
 
   useEffect(() => {
     void booksFolder().then(setBooks);
@@ -53,6 +60,15 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
   useEffect(() => {
     setDetail(null);
   }, [book.asin]);
+
+  const hasAudio = detail?.asin === book.asin && detail.audioFileExists;
+  useEffect(() => {
+    setFiles([]);
+    if (!hasAudio) return;
+    const ctl = new AbortController();
+    api.audioFiles(book.asin, ctl.signal).then(setFiles, () => undefined);
+    return () => ctl.abort();
+  }, [book.asin, hasAudio, refresh]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -90,6 +106,20 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
       else setMsg({ text: "Not uploaded: the daemon does not know this book.", bad: true });
     } catch (e) {
       setMsg({ text: `Upload to Audiobookshelf: ${(e as Error).message}`, bad: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const convert = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await api.convertBook(book.asin);
+      setMsg(convertOutcome("ok"));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) setMsg(convertOutcome("conflict"));
+      else setMsg({ text: `Convert to MP3: ${(e as Error).message}`, bad: true });
     } finally {
       setBusy(false);
     }
@@ -194,6 +224,10 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
           </>
         )}
 
+        <SeriesPanel book={book} onShow={(id) => onSearch(seriesQuery(id), seriesSort)} />
+
+        {canRate(book) && <RatingEditor asin={book.asin} current={book.myRating} onSaved={(b) => { onChange(b); setRefresh((n) => n + 1); }} />}
+
         <h3>Tags</h3>
         <form
           className="row"
@@ -255,6 +289,11 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
           {!book.inTrash && (
             <button onClick={() => void run("Liberate", () => api.liberateBook(book.asin), "Queued for liberation.")} disabled={busy}>
               Liberate
+            </button>
+          )}
+          {canConvertToMp3(book, files) && (
+            <button onClick={() => void convert()} disabled={busy} title="Re-encode the m4b to mp3 with the saved MP3 settings">
+              Convert to MP3
             </button>
           )}
           {!book.inTrash && (

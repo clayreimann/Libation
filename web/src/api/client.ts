@@ -1,6 +1,6 @@
 import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, AudioFile, Chapter, AccountPatch, AbsLibrary, AbsTest, AbsTestRequest, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, LoginStartRequest, MoveTo, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
+import type { Account, AudioFile, Chapter, AccountPatch, AbsLibrary, AbsTest, AbsTestRequest, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, LoginStartRequest, MoveTo, QueueJob, RatingRequest, SeriesGroup, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
 
 export interface ApiErrorDetail {
   code?: string | null;
@@ -102,6 +102,11 @@ export const api = {
   audioFiles: (asin: string, signal?: AbortSignal) => request<AudioFile[]>("GET", `${book(asin)}/audio/files`, undefined, signal),
   chapters: (asin: string, signal?: AbortSignal) => request<Chapter[]>("GET", `${book(asin)}/chapters`, undefined, signal),
   audioUrl: (asin: string, file: number) => `${book(asin)}/audio?file=${file}`,
+  series: (q: string, signal?: AbortSignal) => request<SeriesGroup[]>("GET", `/api/library/series${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`, undefined, signal),
+  seriesById: (id: string, signal?: AbortSignal) => request<SeriesGroup>("GET", `/api/library/series/${encodeURIComponent(id)}`, undefined, signal),
+  podcastEpisodes: (asin: string, signal?: AbortSignal) => request<Book[]>("GET", `/api/library/podcasts/${encodeURIComponent(asin)}/episodes`, undefined, signal),
+  convertBook: (asin: string) => request<QueueJob>("POST", `${book(asin)}/convert-mp3`),
+  setRating: (asin: string, body: RatingRequest) => request<BookDetail>("PUT", `${book(asin)}/rating`, body),
   getBook: (asin: string, signal?: AbortSignal) => request<BookDetail>("GET", book(asin), undefined, signal),
   setTags: (asin: string, tags: string) => request<Book>("PUT", `${book(asin)}/tags`, { tags }),
   setStatus: (asin: string, status: LiberatedChoice) => request<Book>("PUT", `${book(asin)}/status`, { status }),
@@ -126,6 +131,7 @@ export const api = {
   bulkPurge: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/purge", asins, {}, o),
   bulkAbsUpload: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/audiobookshelf/upload", asins, {}, o),
   bulkLiberate: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/liberate", asins, {}, o),
+  bulkConvertMp3: (asins: string[], o?: BulkOpts) => chunked("POST", "/api/library/convert-mp3", asins, {}, o),
   bulkSetStatus: (asins: string[], status: LiberatedChoice, o?: BulkOpts) => chunked("PUT", "/api/library/status", asins, { status }, o),
   bulkSetPdfStatus: (asins: string[], status: PdfChoice, o?: BulkOpts) => chunked("PUT", "/api/library/pdf-status", asins, { status }, o),
   bulkAddTags: (asins: string[], tags: string, o?: BulkOpts) => chunked("PUT", "/api/library/tags", asins, { add: tags }, o),

@@ -218,3 +218,14 @@ body:has(.player) main { padding-bottom: 180px; }
 .player-seek input { flex: 1; }
 .player-chapters { margin: 8px 0 0; padding-left: 24px; }
 .player-chapters button.current { font-weight: 700; color: var(--accent); }
+.series-block { margin-bottom: 12px; }
+.series-books { margin: 0; padding-left: 0; list-style: none; }
+.series-books li { padding: 2px 0; overflow-wrap: anywhere; }
+.series-books li.current { font-weight: 700; color: var(--accent); }
+.series-pos { display: inline-block; min-width: 3em; color: var(--muted); }
+.series-browser { width: min(360px, 80vw); max-height: 60vh; overflow: auto; }
+.series-browser input { width: 100%; margin-bottom: 6px; }
+.rating-editor { display: grid; gap: 4px; }
+.rating-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+button.star { border: 0; background: none; padding: 0 2px; font-size: 20px; line-height: 1; color: var(--muted); }
+button.star.on { color: var(--warn); }
