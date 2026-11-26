@@ -147,7 +147,7 @@ public static class AudibleListeningProgressService
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 			var (accountId, locale) = group.Key;
-			var label = $"{accountId.ToMask()} ({locale})";
+			var label = AccountLabel(accountId, locale);
 
 			try
 			{
@@ -205,6 +205,8 @@ public static class AudibleListeningProgressService
 					{ "isFinished", p.IsFinished },
 				})) },
 		};
+
+	public static string AccountLabel(string accountId, string locale) => $"{accountId.ToMask()} ({locale})";
 
 	internal static string Truncate(string? text, int maxLength = 280)
 		=> string.IsNullOrEmpty(text) ? "(empty)" : text.Length <= maxLength ? text : text[..maxLength] + "...";

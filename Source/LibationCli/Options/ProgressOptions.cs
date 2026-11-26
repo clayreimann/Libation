@@ -133,22 +133,27 @@ public class ProgressPushAbsOptions : ProgressOptionsBase
 			return;
 		}
 
-		if (await GetProgressAsync() is not { } progress || progress.Count == 0)
+		var books = SelectLibraryBooks();
+		if (books.Count == 0)
+		{
+			Console.Error.WriteLine("No matching titles in the library. Run 'libationcli scan' first.");
+			Environment.ExitCode = (int)ExitCode.RunTimeError;
 			return;
+		}
 
-		var results = await AudiobookshelfProgressSync.PushAsync(
-			config.AudiobookshelfServerUrl!,
-			config.AudiobookshelfApiToken!,
-			libraryId!,
-			progress,
+		Console.Error.WriteLine($"Reading listening progress from Audible for {books.Count} title(s)...");
+		var results = await AudiobookshelfProgressPush.PushAsync(
+			books,
+			new AbsConnection(config.AudiobookshelfServerUrl!, config.AudiobookshelfApiToken!, libraryId),
 			Force,
 			DryRun,
+			AudiobookshelfProgressPush.DefaultReader(allowInteractiveLogin: false),
 			r =>
 			{
-				if (r.Outcome is AudiobookshelfProgressSync.Outcome.Failed)
-					Console.Error.WriteLine(r.Message);
-				else
-					Console.WriteLine(r.Message);
+				if (r.Failed)
+					Console.Error.WriteLine($"{r.Label}: {r.Message}");
+				else if (r.Outcome is not AudiobookshelfProgressSync.Outcome.NoAudiblePosition)
+					Console.WriteLine($"{r.Label}: {r.Message}");
 			});
 
 		Console.WriteLine();
@@ -156,7 +161,7 @@ public class ProgressPushAbsOptions : ProgressOptionsBase
 		foreach (var group in results.GroupBy(r => r.Outcome).OrderBy(g => g.Key))
 			Console.WriteLine($"  {group.Key,-18} {group.Count()}");
 
-		if (results.Any(r => r.Outcome is AudiobookshelfProgressSync.Outcome.Failed))
+		if (results.Any(r => r.Failed))
 			Environment.ExitCode = (int)ExitCode.RunTimeError;
 	}
 }
