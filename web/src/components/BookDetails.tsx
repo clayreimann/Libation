@@ -10,6 +10,7 @@ import { canConvertToMp3, convertOutcome } from "../convert";
 import { canRate } from "../rating";
 import { seriesSort } from "../series";
 import type { SortState } from "../sort";
+import { BookmarksExport } from "./BookmarksExport";
 import { RatingEditor } from "./RatingEditor";
 import { SeriesPanel } from "./SeriesPanel";
 import { Cover } from "./Cover";
@@ -227,6 +228,8 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
         <SeriesPanel book={book} onShow={(id) => onSearch(seriesQuery(id), seriesSort)} />
 
         {canRate(book) && <RatingEditor asin={book.asin} current={book.myRating} onSaved={(b) => { onChange(b); setRefresh((n) => n + 1); }} />}
+
+        <BookmarksExport asin={book.asin} />
 
         <h3>Tags</h3>
         <form

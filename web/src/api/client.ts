@@ -1,6 +1,6 @@
 import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, AudioFile, Chapter, AccountPatch, AbsLibrary, AbsTest, AbsTestRequest, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, LoginStartRequest, MoveTo, QueueJob, RatingRequest, SeriesGroup, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
+import type { Account, AudioFile, Chapter, AccountPatch, AbsLibrary, AbsTest, AbsTestRequest, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, Bookmark, LoginStartRequest, MoveTo, QualityApply, QualityScan, QueueJob, RatingRequest, SeriesGroup, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
 
 export interface ApiErrorDetail {
   code?: string | null;
@@ -107,6 +107,12 @@ export const api = {
   podcastEpisodes: (asin: string, signal?: AbortSignal) => request<Book[]>("GET", `/api/library/podcasts/${encodeURIComponent(asin)}/episodes`, undefined, signal),
   convertBook: (asin: string) => request<QueueJob>("POST", `${book(asin)}/convert-mp3`),
   setRating: (asin: string, body: RatingRequest) => request<BookDetail>("PUT", `${book(asin)}/rating`, body),
+  qualityScan: (signal?: AbortSignal) => request<QualityScan>("GET", "/api/library/quality-scan", undefined, signal),
+  startQualityScan: (body?: { asins?: string[]; widevine?: boolean }) => request<QualityScan>("POST", "/api/library/quality-scan", body),
+  cancelQualityScan: () => request<QualityScan>("DELETE", "/api/library/quality-scan"),
+  applyQuality: (asins: string[]) => request<QualityApply>("POST", "/api/library/quality-scan/apply", { asins }),
+  bookmarks: (asin: string, signal?: AbortSignal) => request<Bookmark[]>("GET", `${book(asin)}/bookmarks`, undefined, signal),
+  bookmarksUrl: (asin: string, format: ExportFormat) => `${book(asin)}/bookmarks?format=${format}`,
   getBook: (asin: string, signal?: AbortSignal) => request<BookDetail>("GET", book(asin), undefined, signal),
   setTags: (asin: string, tags: string) => request<Book>("PUT", `${book(asin)}/tags`, { tags }),
   setStatus: (asin: string, status: LiberatedChoice) => request<Book>("PUT", `${book(asin)}/status`, { status }),

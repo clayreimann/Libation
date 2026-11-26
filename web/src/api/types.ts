@@ -17,6 +17,10 @@ export type Account = Fix<S["AccountDto"]>;
 export type Book = Fix<S["BookDto"]>;
 export type BookDetail = Fix<S["BookDetailDto"]>;
 export type LocateScan = Fix<S["LocateScanDto"]>;
+export type QualityScan = Fix<S["QualityScanDto"]>;
+export type QualityResult = Fix<S["QualityResultDto"]>;
+export type QualityApply = Fix<S["QualityApplyDto"]>;
+export type Bookmark = Fix<S["BookmarkDto"]>;
 export type Stats = Fix<S["BackupCountsDto"]>;
 export type AsinList = Fix<S["LibraryAsinsDto"]>;
 export type LibraryPage = Fix<S["LibraryPageDto"]>;
@@ -54,7 +58,7 @@ export type AuthState = Account["authState"];
 const eventNames = [
   "StateChanged", "ScanStarted", "ScanFinished", "LiberateStarted", "LiberateFinished", "CycleFinished",
   "NextRunScheduled", "BookStarted", "BookProgress", "BookFinished", "QueueChanged", "QueuePaused", "QueueResumed",
-  "QueueWaiting", "QueueWaitEnded", "QueueDispatchPaused", "QueueDispatchResumed", "BookLog", "LocateScanProgress", "AccountNeedsLogin",
+  "QueueWaiting", "QueueWaitEnded", "QueueDispatchPaused", "QueueDispatchResumed", "BookLog", "LocateScanProgress", "QualityScanProgress", "AccountNeedsLogin",
 ] as const satisfies readonly (keyof S)[];
 
 type EventName = (typeof eventNames)[number];

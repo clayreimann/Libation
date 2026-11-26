@@ -141,6 +141,7 @@ describe("locate scan event", () => {
   it("is subscribed and parsed", async () => {
     const { eventTypes } = await import("./api/types");
     expect(eventTypes).toContain("LocateScanProgress");
+    expect(eventTypes).toContain("QualityScanProgress");
     expect(eventTypes).toEqual(expect.arrayContaining(["BookLog", "QueueDispatchPaused", "QueueDispatchResumed"]));
     const evt = parseEvent("LocateScanProgress", '{"scan":{"state":"running","found":2}}');
     expect(evt).toMatchObject({ type: "LocateScanProgress", scan: { found: 2 } });

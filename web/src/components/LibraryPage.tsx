@@ -19,6 +19,7 @@ import { Cover } from "./Cover";
 import { LocatePanel } from "./LocatePanel";
 import { Popover } from "./Popover";
 import { SeriesBrowser } from "./SeriesBrowser";
+import { QualityPanel } from "./QualityPanel";
 import { QuickFilters } from "./QuickFilters";
 import { SyntaxHelp } from "./SyntaxHelp";
 
@@ -398,6 +399,7 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
           )}
         </Popover>
         {!trash && <Popover label="Series">{(close) => <SeriesBrowser onPick={(id) => { close(); showSeries(id); }} />}</Popover>}
+        {!trash && <Popover label="Find better quality" className="wide">{() => <QualityPanel />}</Popover>}
         <Popover label="Locate audiobooks" className="wide">{() => <LocatePanel />}</Popover>
         <Popover label="Columns">
           {() => (

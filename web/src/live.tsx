@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { api } from "./api/client";
-import { eventTypes, type LocateScan, type Status } from "./api/types";
+import { eventTypes, type LocateScan, type QualityScan, type Status } from "./api/types";
 import {
   applyQueueEvent,
   applySnapshot,
@@ -17,6 +17,7 @@ interface Live {
   statusError: string | null;
   queue: QueueView;
   locateScan: LocateScan | null;
+  qualityScan: QualityScan | null;
   accountEvents: number;
   refreshStatus: () => void;
   setStatus: (s: Status) => void;
@@ -42,6 +43,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [locateScan, setLocateScan] = useState<LocateScan | null>(null);
+  const [qualityScan, setQualityScan] = useState<QualityScan | null>(null);
   const [accountEvents, setAccountEvents] = useState(0);
   const [queue, dispatch] = useReducer(reduce, emptyQueue);
   const bookListeners = useRef(new Set<() => void>());
@@ -67,6 +69,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     refreshStatus();
     refreshQueue();
     api.locateScan().then(setLocateScan, () => undefined);
+    api.qualityScan().then(setQualityScan, () => undefined);
 
     const es = new EventSource("/api/events");
     es.onopen = () => {
@@ -88,6 +91,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           setLocateScan(evt.scan);
           if (evt.scan.state !== "running") bookListeners.current.forEach((fn) => fn());
         }
+        if (evt.type === "QualityScanProgress") setQualityScan((cur) => ({ ...evt.scan, results: evt.scan.results ?? (evt.scan.state === "running" ? null : cur?.results) }));
         if (evt.type === "BookFinished" || evt.type === "CycleFinished") bookListeners.current.forEach((fn) => fn());
       });
     }
@@ -103,8 +107,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ connected, status, statusError, queue, locateScan, accountEvents, refreshStatus, setStatus, onBookEvent }),
-    [connected, status, statusError, queue, locateScan, accountEvents, refreshStatus, onBookEvent],
+    () => ({ connected, status, statusError, queue, locateScan, qualityScan, accountEvents, refreshStatus, setStatus, onBookEvent }),
+    [connected, status, statusError, queue, locateScan, qualityScan, accountEvents, refreshStatus, onBookEvent],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
