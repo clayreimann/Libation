@@ -12,7 +12,7 @@ namespace LibationEngine.Host;
 /// <summary>Kestrel host for <c>/health</c> and, when enabled, <c>/api</c>.</summary>
 public static class DaemonHost
 {
-	public static WebApplication Build(DaemonOptions options, CycleState state, CycleScheduler scheduler, LiberationQueue queue, IEngineData? data = null, string? apiToken = null, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null, LoginSessions? logins = null, Func<string, LiberationJob?>? createUploadJob = null, Func<string, ConvertJobResult>? createConvertJob = null)
+	public static WebApplication Build(DaemonOptions options, CycleState state, CycleScheduler scheduler, LiberationQueue queue, IEngineData? data = null, string? apiToken = null, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null, LoginSessions? logins = null, Func<string, LiberationJob?>? createUploadJob = null, Func<string, ConvertJobResult>? createConvertJob = null, Func<string, bool, LiberationJob?>? createProgressJob = null)
 	{
 		var builder = WebApplication.CreateSlimBuilder();
 		builder.WebHost.UseUrls(ListenUrl.Normalize(options.ListenUrl));
@@ -32,7 +32,7 @@ public static class DaemonHost
 		{
 			if (apiToken is not null)
 				ApiEndpoints.RequireToken(app, apiToken);
-			ApiEndpoints.Map(app, options, state, scheduler, data ?? new DbEngineData(), queue, createBookJob, authMonitor, logins, createUploadJob, createConvertJob);
+			ApiEndpoints.Map(app, options, state, scheduler, data ?? new DbEngineData(), queue, createBookJob, authMonitor, logins, createUploadJob, createConvertJob, createProgressJob);
 		}
 		return app;
 	}

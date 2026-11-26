@@ -317,6 +317,7 @@ public static class SettingsWriter
 	{
 		setBool("audiobookshelf.enabled", a.Enabled, () => c.AudiobookshelfEnabled, v => c.AudiobookshelfEnabled = v);
 		setBool("audiobookshelf.includePdfs", a.IncludePdfs, () => c.AudiobookshelfIncludePdfs, v => c.AudiobookshelfIncludePdfs = v);
+		setBool("audiobookshelf.pushProgressAfterUpload", a.PushProgressAfterUpload, () => c.AudiobookshelfPushProgressAfterUpload, v => c.AudiobookshelfPushProgressAfterUpload = v);
 
 		bool Present(string name, out bool isNull)
 		{

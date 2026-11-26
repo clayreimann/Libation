@@ -289,6 +289,25 @@ public partial class ApiTests
 				: new(QualityOutcome.Ok, new(asins.Count(a => a == "B000000001"), asins.Where(a => a != "B000000001").ToList(), true, true, false)));
 		}
 
+		public bool ProgressFail, ProgressNotConfigured;
+		public string PushOutcome = "pushed";
+
+		public Task<BookProgressResult> GetProgress(string asin, CancellationToken ct)
+		{
+			Calls.Add($"progress:{asin}");
+			return Task.FromResult(GetBook(asin) is null ? new BookProgressResult(ProgressOutcome.NoSuchBook)
+				: ProgressFail ? new(ProgressOutcome.ServiceFailed, Error: "Progress could not be read: offline")
+				: new(ProgressOutcome.Ok, new(new(3832820, DateTimeOffset.UnixEpoch), null, "abs-item")));
+		}
+
+		public Task<ProgressPushResult> PushProgress(string asin, bool force, bool dryRun, CancellationToken ct)
+		{
+			Calls.Add($"progresspush:{asin}:{force}:{dryRun}");
+			return Task.FromResult(GetBook(asin) is null ? new ProgressPushResult(ProgressOutcome.NoSuchBook)
+				: ProgressNotConfigured ? new(ProgressOutcome.NotConfigured)
+				: new(ProgressOutcome.Ok, new(asin, PushOutcome, PushOutcome == "pushed" ? null : "Audiobookshelf has newer progress", 3832.82)));
+		}
+
 		private static readonly IReadOnlyList<BookmarkDto> FakeBookmarks =
 		[
 			new("Clip", 10.5, 20, "a note", "A clip", DateTimeOffset.UnixEpoch),
@@ -381,6 +400,12 @@ public partial class ApiTests
 					"B000000001" => new(ConvertOutcome.Ok, Job(asin)),
 					"B000000002" => new(ConvertOutcome.Conflict),
 					_ => new(ConvertOutcome.NotFound)
+				},
+				CreateProgressJob = (asin, force) => asin switch
+				{
+					"B000000001" => Liberated(Job(asin)),
+					"B000000002" => Job(asin),
+					_ => null
 				},
 				ScanAccounts = (selection, _) =>
 				{

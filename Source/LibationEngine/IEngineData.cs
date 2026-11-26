@@ -53,6 +53,12 @@ public enum BookmarksOutcome { Ok, NoSuchBook, AudibleFailed }
 /// <summary>FilePath is the exported temp file, null when the book has no records to export.</summary>
 public sealed record BookmarksResult(BookmarksOutcome Outcome, IReadOnlyList<BookmarkDto>? Records = null, string? FilePath = null, string? Error = null);
 
+public enum ProgressOutcome { Ok, NoSuchBook, NotConfigured, ServiceFailed }
+
+public sealed record BookProgressResult(ProgressOutcome Outcome, BookProgressDto? Progress = null, string? Error = null);
+
+public sealed record ProgressPushResult(ProgressOutcome Outcome, ProgressPushDto? Push = null, string? Error = null);
+
 public interface IEngineData
 {
 	IReadOnlyList<AccountDto> GetAccounts();
@@ -159,4 +165,10 @@ public interface IEngineData
 
 	/// <summary>Writes the records to a new temp file with desktop's exporter; the caller deletes it.</summary>
 	Task<BookmarksResult> ExportBookmarks(string asin, ExportFormat format, CancellationToken ct);
+
+	/// <summary>Both services' positions for the book; Audiobookshelf is null when not configured. ServiceFailed when either call fails.</summary>
+	Task<BookProgressResult> GetProgress(string asin, CancellationToken ct);
+
+	/// <summary>Pushes Audible's position to Audiobookshelf now; NotConfigured when no server URL and token are saved. Per-book failures come back as a failed push, not ServiceFailed.</summary>
+	Task<ProgressPushResult> PushProgress(string asin, bool force, bool dryRun, CancellationToken ct);
 }

@@ -258,7 +258,7 @@ public sealed record LibrarySettingsDto(
 	bool SavePodcastsToParentFolder);
 
 /// <summary>Enabled is auto-upload after liberation; the API token is never returned, only whether one is set.</summary>
-public sealed record AudiobookshelfSettingsDto(bool Enabled, bool IncludePdfs, bool ServerConfigured, string? ServerUrl, bool TokenSet, string? LibraryId, string? FolderId);
+public sealed record AudiobookshelfSettingsDto(bool Enabled, bool IncludePdfs, bool ServerConfigured, string? ServerUrl, bool TokenSet, string? LibraryId, string? FolderId, bool PushProgressAfterUpload);
 
 public sealed record Mp3SettingsDto(
 	bool TargetBitrate,
@@ -334,7 +334,7 @@ public sealed record QueuePatch(string? DailyDownloadLimit, int? DailyDownloadLi
 public sealed record LibraryPatch(bool? ImportEpisodes, bool? ImportPlusTitles, bool? DownloadEpisodes, bool? AutoDownloadEpisodes, bool? SavePodcastsToParentFolder);
 
 /// <summary>ApiToken is write-only. Null clears ServerUrl, ApiToken, LibraryId or FolderId; naming a new LibraryId without a FolderId clears the folder.</summary>
-public sealed record AudiobookshelfPatch(bool? Enabled, bool? IncludePdfs, string? ServerUrl, string? ApiToken, string? LibraryId, string? FolderId);
+public sealed record AudiobookshelfPatch(bool? Enabled, bool? IncludePdfs, string? ServerUrl, string? ApiToken, string? LibraryId, string? FolderId, bool? PushProgressAfterUpload);
 
 public sealed record ReplacementPatch(string? Character, string? Replacement, string? Description);
 
@@ -393,3 +393,19 @@ public sealed record AudioFileDto(int Index, string Name, string ContentType, lo
 
 /// <summary>StartSec runs across all files; FileStartSec is within the file at FileIndex. DurationSec is null when the file's length is unknown.</summary>
 public sealed record ChapterDto(int Index, string Title, double StartSec, double? DurationSec, int FileIndex, double FileStartSec);
+
+public sealed record AudibleProgressDto(long PositionMs, DateTimeOffset? LastUpdated);
+
+public sealed record AudiobookshelfProgressDto(double CurrentTimeSec, bool IsFinished, DateTimeOffset? LastUpdate);
+
+/// <summary>Either side is null when that service has no position for the book.</summary>
+public sealed record BookProgressDto(AudibleProgressDto? Audible, AudiobookshelfProgressDto? Audiobookshelf, string? AbsItemId);
+
+/// <summary>Body of <c>POST /api/library/{asin}/progress/push-abs</c>; Force overwrites newer server progress and DryRun changes nothing.</summary>
+public sealed record ProgressPushRequest(bool? Force, bool? DryRun);
+
+/// <summary>Body of <c>POST /api/library/progress/push-abs</c>; at most 5000 ASINs.</summary>
+public sealed record BulkProgressPushRequest(IReadOnlyList<string>? Asins, bool? Force);
+
+/// <summary>Outcome is pushed, skipped or failed; Reason explains a skip or failure.</summary>
+public sealed record ProgressPushDto(string Asin, string Outcome, string? Reason = null, double? PositionSec = null);

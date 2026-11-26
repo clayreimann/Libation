@@ -81,9 +81,10 @@ public partial class ApiTests
 			var abs = before.RootElement.GetProperty("audiobookshelf");
 			Assert.IsFalse(abs.GetProperty("tokenSet").GetBoolean());
 			Assert.AreEqual(JsonValueKind.Null, abs.GetProperty("serverUrl").ValueKind);
+			Assert.IsFalse(abs.GetProperty("pushProgressAfterUpload").GetBoolean());
 		}
 
-		var response = await Patch(h, $$$"""{"audiobookshelf":{"enabled":true,"includePdfs":true,"serverUrl":"https://abs.example.com/library/abc","apiToken":"{{{GoodToken}}}","libraryId":"lib1","folderId":"fol1"}}""");
+		var response = await Patch(h, $$$"""{"audiobookshelf":{"enabled":true,"includePdfs":true,"pushProgressAfterUpload":true,"serverUrl":"https://abs.example.com/library/abc","apiToken":"{{{GoodToken}}}","libraryId":"lib1","folderId":"fol1"}}""");
 		var text = await response.Content.ReadAsStringAsync();
 		Assert.AreEqual(HttpStatusCode.OK, response.StatusCode, text);
 		Assert.DoesNotContain("SECRETTOKEN", text);
@@ -92,6 +93,7 @@ public partial class ApiTests
 			var abs = doc.RootElement.GetProperty("audiobookshelf");
 			Assert.IsTrue(abs.GetProperty("enabled").GetBoolean());
 			Assert.IsTrue(abs.GetProperty("includePdfs").GetBoolean());
+			Assert.IsTrue(abs.GetProperty("pushProgressAfterUpload").GetBoolean());
 			Assert.IsTrue(abs.GetProperty("tokenSet").GetBoolean());
 			Assert.IsTrue(abs.GetProperty("serverConfigured").GetBoolean());
 			Assert.AreEqual("https://abs.example.com", abs.GetProperty("serverUrl").GetString());
@@ -386,10 +388,10 @@ public partial class ApiTests
 		CollectionAssert.AreEqual(new[] { "ok" }, Required("AudiobookshelfTestDto"));
 		CollectionAssert.AreEqual(new[] { "folders", "id", "mediaType", "name" }, Required("AudiobookshelfLibraryDto"));
 		CollectionAssert.AreEqual(new[] { "id", "path" }, Required("AudiobookshelfFolderDto"));
-		CollectionAssert.IsSubsetOf(new[] { "enabled", "includePdfs", "serverConfigured", "tokenSet" }, Required("AudiobookshelfSettingsDto"));
+		CollectionAssert.IsSubsetOf(new[] { "enabled", "includePdfs", "pushProgressAfterUpload", "serverConfigured", "tokenSet" }, Required("AudiobookshelfSettingsDto"));
 		CollectionAssert.DoesNotContain(Required("AudiobookshelfSettingsDto"), "serverUrl");
 		var paths = doc.RootElement.GetProperty("paths");
-		foreach (var path in new[] { "/api/audiobookshelf/test", "/api/audiobookshelf/libraries", "/api/audiobookshelf/upload" })
+		foreach (var path in new[] { "/api/audiobookshelf/test", "/api/audiobookshelf/libraries", "/api/audiobookshelf/upload", "/api/library/{asin}/progress", "/api/library/{asin}/progress/push-abs", "/api/library/progress/push-abs" })
 			Assert.IsTrue(paths.TryGetProperty(path, out _), path);
 	}
 }

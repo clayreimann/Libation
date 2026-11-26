@@ -163,7 +163,7 @@ public static class ApiEndpoints
 			await next();
 		});
 
-	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null, LoginSessions? logins = null, Func<string, LiberationJob?>? createUploadJob = null, Func<string, ConvertJobResult>? createConvertJob = null)
+	public static void Map(WebApplication app, DaemonOptions options, CycleState state, CycleScheduler scheduler, IEngineData data, LiberationQueue queue, Func<string, LiberationJob?>? createBookJob = null, AccountAuthMonitor? authMonitor = null, LoginSessions? logins = null, Func<string, LiberationJob?>? createUploadJob = null, Func<string, ConvertJobResult>? createConvertJob = null, Func<string, bool, LiberationJob?>? createProgressJob = null)
 	{
 		logins ??= new LoginSessions(new AudibleLoginBackend());
 		IReadOnlyList<AccountDto> Accounts()
@@ -757,6 +757,79 @@ public static class ApiEndpoints
 			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
 			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
 			.Produces<ErrorDto>(StatusCodes.Status502BadGateway);
+
+		api.MapGet("/library/{asin}/progress", async (string asin, CancellationToken ct) =>
+		{
+			var result = await data.GetProgress(asin, ct);
+			return result.Outcome switch
+			{
+				ProgressOutcome.NoSuchBook => NoSuchBook(),
+				ProgressOutcome.ServiceFailed => Error(result.Error!, StatusCodes.Status502BadGateway),
+				_ => Results.Json(result.Progress),
+			};
+		}).WithSummary("The book's listening position on Audible and on Audiobookshelf, fetched live; a side with no position, or Audiobookshelf when it is not configured, is null. positionMs is milliseconds, currentTimeSec seconds. 200, 404 unknown ASIN, 502 when Audible or Audiobookshelf fails.")
+			.WithName("getBookProgress").WithTags("library")
+			.Produces<BookProgressDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
+			.Produces<ErrorDto>(StatusCodes.Status502BadGateway);
+
+		api.MapPost("/library/{asin}/progress/push-abs", async (string asin, ProgressPushRequest? body, CancellationToken ct) =>
+		{
+			var result = await data.PushProgress(asin, body?.Force ?? false, body?.DryRun ?? false, ct);
+			return result.Outcome switch
+			{
+				ProgressOutcome.NoSuchBook => NoSuchBook(),
+				ProgressOutcome.NotConfigured => Error("Audiobookshelf has no saved server URL and API token.", StatusCodes.Status409Conflict),
+				_ => Results.Json(result.Push),
+			};
+		}).WithSummary("Pushes the book's Audible listening position to Audiobookshelf now and waits for the result. outcome is pushed, skipped or failed, with the reason for the last two; a skip because the server has newer progress is overridden by force, and dryRun reports without changing anything. 200 whatever the outcome, 404 unknown ASIN, 409 when no Audiobookshelf server URL and token are saved.")
+			.WithName("pushBookProgressToAudiobookshelf").WithTags("audiobookshelf")
+			.Accepts<ProgressPushRequest>("application/json")
+			.Produces<ProgressPushDto>(StatusCodes.Status200OK)
+			.Produces<ErrorDto>(StatusCodes.Status404NotFound)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
+
+		api.MapPost("/library/progress/push-abs", (BulkProgressPushRequest? body) =>
+		{
+			if (Validate(body?.Asins) is { } invalid)
+				return invalid;
+			var abs = data.GetSettings().Audiobookshelf;
+			if (!abs.ServerConfigured || !abs.TokenSet)
+				return Error("Audiobookshelf has no saved server URL and API token.", StatusCodes.Status409Conflict);
+			var force = body!.Force ?? false;
+			var results = new List<BulkItemDto>();
+			lock (enqueueLock)
+			{
+				var active = queue.Jobs.GetAllItems().Except(queue.Jobs.Completed)
+					.Select(j => j.LibraryBook.Book.AudibleProductId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+				var jobs = new List<LiberationJob>();
+				foreach (var asin in Distinct(body.Asins!))
+				{
+					if (active.Contains(asin))
+						results.Add(new(asin, BulkResults.Conflict));
+					else if (createProgressJob?.Invoke(asin, force) is not { } job)
+						results.Add(new(asin, BulkResults.NotFound));
+					else if (!AudiobookshelfUploadJob.IsLiberated(job))
+						results.Add(new(asin, BulkResults.Conflict));
+					else
+					{
+						jobs.Add(job);
+						results.Add(new(asin, BulkResults.Ok));
+					}
+				}
+				if (jobs.Count > 0)
+				{
+					queue.Jobs.Enqueue(jobs);
+					queue.StartOrWake();
+				}
+			}
+			return Results.Json(BulkResults.Summarize(results), statusCode: StatusCodes.Status202Accepted);
+		}).WithSummary("Queues push-progress jobs that send each liberated book's Audible listening position to Audiobookshelf, as the grid's Push Audible progress. Each job's log holds its outcome; a book that fails does not stop the queue. conflict means the book is not liberated or already has a queued job; notFound is an unknown ASIN. 202 with a result per ASIN, 400 bad body or over 5000 ASINs, 409 when no Audiobookshelf server URL and token are saved.")
+			.WithName("bulkPushProgressToAudiobookshelf").WithTags("audiobookshelf")
+			.Accepts<BulkProgressPushRequest>("application/json")
+			.Produces<BulkResultDto>(StatusCodes.Status202Accepted)
+			.Produces<ErrorDto>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorDto>(StatusCodes.Status409Conflict);
 
 		api.MapPut("/library/tags", async (BulkTagsRequest? body) =>
 		{

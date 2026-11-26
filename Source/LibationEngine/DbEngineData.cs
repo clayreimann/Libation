@@ -7,11 +7,12 @@ using LibationFileManager;
 
 namespace LibationEngine;
 
-public sealed class DbEngineData(IAudibleReviews? reviews = null, IAudibleQuality? quality = null, IAudibleRecords? records = null) : IEngineData
+public sealed class DbEngineData(IAudibleReviews? reviews = null, IAudibleQuality? quality = null, IAudibleRecords? records = null, IProgressSync? progress = null) : IEngineData
 {
 	private readonly IAudibleReviews audibleReviews = reviews ?? new AudibleReviews();
 	private readonly QualityScanner qualityScanner = new(quality ?? new AudibleQuality());
 	private readonly IAudibleRecords audibleRecords = records ?? new AudibleRecords();
+	private readonly IProgressSync progressSync = progress ?? new ProgressSync();
 
 	public IReadOnlyList<AccountDto> GetAccounts()
 	{
@@ -506,6 +507,44 @@ public sealed class DbEngineData(IAudibleReviews? reviews = null, IAudibleQualit
 		}
 		return new(BookmarksOutcome.Ok, FilePath: path);
 	}
+
+	public async Task<BookProgressResult> GetProgress(string asin, CancellationToken ct)
+	{
+		if (Find(asin) is not { } lb)
+			return new(ProgressOutcome.NoSuchBook);
+		try
+		{
+			var snapshot = await progressSync.ReadAsync(lb, AbsConnection.From(LibationFileManager.Configuration.Instance), ct);
+			return new(ProgressOutcome.Ok, new(
+				snapshot.Audible is { } a ? new(a.PositionMs, a.LastUpdated) : null,
+				snapshot.Audiobookshelf is { } s ? new(s.CurrentTimeSeconds, s.IsFinished, s.LastUpdate) : null,
+				snapshot.AbsItemId));
+		}
+		catch (Exception ex) when (ex is not OperationCanceledException)
+		{
+			return new(ProgressOutcome.ServiceFailed, Error: $"Progress could not be read: {ex.Message}");
+		}
+	}
+
+	public async Task<ProgressPushResult> PushProgress(string asin, bool force, bool dryRun, CancellationToken ct)
+	{
+		if (Find(asin) is not { } lb)
+			return new(ProgressOutcome.NoSuchBook);
+		if (AbsConnection.From(LibationFileManager.Configuration.Instance) is not { } connection)
+			return new(ProgressOutcome.NotConfigured);
+		try
+		{
+			var result = (await progressSync.PushAsync([lb], connection, force, dryRun, ct))[0];
+			return new(ProgressOutcome.Ok, ToPushDto(result));
+		}
+		catch (Exception ex) when (ex is not OperationCanceledException)
+		{
+			return new(ProgressOutcome.Ok, new(asin, "failed", ex.Message));
+		}
+	}
+
+	internal static ProgressPushDto ToPushDto(BookPushResult r)
+		=> new(r.Asin, r.Pushed ? "pushed" : r.Failed ? "failed" : "skipped", r.Outcome is AudiobookshelfProgressSync.Outcome.Updated ? null : r.Message, r.PositionSeconds);
 
 	private async Task<(BookmarksOutcome Outcome, LibraryBook? Book, IReadOnlyList<AudibleApi.Common.IRecord>? Records, string? Error)> FetchRecords(string asin, CancellationToken ct)
 	{

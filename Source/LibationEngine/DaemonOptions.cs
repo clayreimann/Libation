@@ -28,6 +28,9 @@ public sealed record DaemonJobs(
 	/// <summary>Builds a convert-only job for one book by ASIN.</summary>
 	public Func<string, ConvertJobResult>? CreateConvertJob { get; init; }
 
+	/// <summary>Builds a push-Audible-progress job for one book by ASIN (second argument is force), or null when the book is not in the library.</summary>
+	public Func<string, bool, LiberationJob?>? CreateProgressJob { get; init; }
+
 	/// <summary>Scans only the selected accounts; when null a subset request scans everything.</summary>
 	public Func<ScanSelection, CancellationToken, Task<int>>? ScanAccounts { get; init; }
 }

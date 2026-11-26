@@ -319,6 +319,12 @@ public sealed class LiberationJob
 		};
 		return upload;
 	});
+	public LiberationJob AddPushProgressToAudiobookshelf(bool force) => AddProcessable(config =>
+	{
+		var push = new PushProgressToAudiobookshelf { Configuration = config, Force = force };
+		push.ResultDetermined += (_, r) => Emit(r.Failed ? JobLogLevel.Error : JobLogLevel.Info, r.Pushed ? "Pushed Audible listening progress to Audiobookshelf" : r.Message);
+		return push;
+	});
 	public LiberationJob AddSimulateBadBookFailure() => AddProcessable<SimulateBadBookFailure>();
 
 	private LiberationJob AddProcessable<T>() where T : Processable, IProcessable<T>

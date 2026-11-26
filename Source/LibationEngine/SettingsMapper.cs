@@ -50,7 +50,8 @@ public static class SettingsMapper
 			string.IsNullOrWhiteSpace(c.AudiobookshelfServerUrl) ? null : c.AudiobookshelfServerUrl,
 			!string.IsNullOrWhiteSpace(c.AudiobookshelfApiToken),
 			string.IsNullOrWhiteSpace(c.AudiobookshelfLibraryId) ? null : c.AudiobookshelfLibraryId,
-			string.IsNullOrWhiteSpace(c.AudiobookshelfFolderId) ? null : c.AudiobookshelfFolderId),
+			string.IsNullOrWhiteSpace(c.AudiobookshelfFolderId) ? null : c.AudiobookshelfFolderId,
+			c.AudiobookshelfPushProgressAfterUpload),
 		new(
 			c.LameTargetBitrate,
 			c.LameBitrate,

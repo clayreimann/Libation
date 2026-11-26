@@ -58,7 +58,7 @@ public static class LibationDaemon
 		scheduler.OnScanSucceeded = selection => authMonitor.ScanSucceeded(selection, accountData.GetAccounts);
 		using var loginSessions = logins ?? new LoginSessions(new AudibleLoginBackend());
 		_ = new QueueEventPublisher(queue, scheduler.Events, time);
-		await using var host = options.Once ? null : DaemonHost.Build(options, state, scheduler, queue, data, apiToken, jobs.CreateBookJob, authMonitor, loginSessions, jobs.CreateUploadJob, jobs.CreateConvertJob);
+		await using var host = options.Once ? null : DaemonHost.Build(options, state, scheduler, queue, data, apiToken, jobs.CreateBookJob, authMonitor, loginSessions, jobs.CreateUploadJob, jobs.CreateConvertJob, jobs.CreateProgressJob);
 		if (host is not null)
 			await host.StartAsync(cts.Token);
 
