@@ -1,6 +1,6 @@
 # Listening Progress
 
-Libation can read where you are in each audiobook (the position Audible syncs between your devices) and either save it as JSON or copy it to [Audiobookshelf](/docs/features/audiobookshelf). It is available from the CLI.
+Libation can read where you are in each audiobook (the position Audible syncs between your devices) and either save it as JSON or copy it to [Audiobookshelf](/docs/features/audiobookshelf). It is available from the CLI and, for Audiobookshelf, from the book grid and the upload step.
 
 Audible does not document this API. Libation uses the endpoint the Audible apps use to sync your position (`/1.0/annotations/lastpositions`), so it may change without notice. It was last checked against a real Audible account in November 2026.
 
@@ -42,6 +42,18 @@ Progress is written for the Audiobookshelf user that owns the API token.
 - Use `--library-id` to match against a different library than the one in Settings.
 
 The run ends with a count of each outcome. It exits with an error code if any update failed.
+
+## Push progress from the book grid
+
+Listen on Audible, then right-click one or more liberated books and choose **Push Audible progress to Audiobookshelf**. The item is enabled when the server URL and API token are set in **Settings -> Audiobookshelf** and at least one selected book is liberated; a library must also be selected there. Selected books that are not liberated are ignored.
+
+When it finishes, a summary lists how many books were pushed, were already in sync, are finished on Audiobookshelf, were not found there, had no Audible position, or failed (with the reason). If Audiobookshelf's progress for some books is newer than Audible's, the dialog also asks whether to overwrite it. Answering Yes repeats the push for just those books, like `--force`. Books finished on Audiobookshelf are never overwritten from here; use the CLI `--force` for that.
+
+The matching and overwrite rules are the same as for the CLI command above, and it uses the same code.
+
+## Push progress after each upload
+
+Turn on **After uploading a book, also push its Audible listening progress** in **Settings -> Audiobookshelf** (off by default). After a book is uploaded successfully, Libation pushes that book's Audible position without overwriting newer Audiobookshelf progress. A new item can take a moment to appear in Audiobookshelf, so Libation tries up to three times, a few seconds apart, before giving up. A failure here never fails the upload or the liberation; it is only logged and shown in the queue status. The setting applies to the GUI, to `libationcli liberate` and to `libationcli abs upload`.
 
 ## Which device the progress came from
 
