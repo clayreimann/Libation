@@ -1,6 +1,6 @@
 import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, AccountPatch, AbsLibrary, AbsTest, AbsTestRequest, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, LoginStartRequest, MoveTo, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
+import type { Account, AudioFile, Chapter, AccountPatch, AbsLibrary, AbsTest, AbsTestRequest, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, LoginStartRequest, MoveTo, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
 
 export interface ApiErrorDetail {
   code?: string | null;
@@ -99,6 +99,9 @@ export const api = {
   trash: (asin: string) => request<Book>("POST", `${book(asin)}/trash`),
   restore: (asin: string) => request<Book>("POST", `${book(asin)}/restore`),
   liberateBook: (asin: string) => request<unknown>("POST", `${book(asin)}/liberate`),
+  audioFiles: (asin: string, signal?: AbortSignal) => request<AudioFile[]>("GET", `${book(asin)}/audio/files`, undefined, signal),
+  chapters: (asin: string, signal?: AbortSignal) => request<Chapter[]>("GET", `${book(asin)}/chapters`, undefined, signal),
+  audioUrl: (asin: string, file: number) => `${book(asin)}/audio?file=${file}`,
   getBook: (asin: string, signal?: AbortSignal) => request<BookDetail>("GET", book(asin), undefined, signal),
   setTags: (asin: string, tags: string) => request<Book>("PUT", `${book(asin)}/tags`, { tags }),
   setStatus: (asin: string, status: LiberatedChoice) => request<Book>("PUT", `${book(asin)}/status`, { status }),

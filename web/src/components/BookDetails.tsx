@@ -7,6 +7,7 @@ import { formatDate, formatLength, formatTime, humanize, stars } from "../format
 import { normalizeTags } from "../tags";
 import { booksFolder } from "../booksFolder";
 import { Cover } from "./Cover";
+import { usePlayer } from "./Player";
 
 interface Props {
   book: Book;
@@ -22,6 +23,7 @@ function ratingText(r: { overall: number; performance: number; story: number }):
 }
 
 export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
+  const player = usePlayer();
   const [detail, setDetail] = useState<BookDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
@@ -245,6 +247,11 @@ export function BookDetails({ book, onChange, onClose, onSearch }: Props) {
         <p className="muted small">An existing audio file on the server{books ? <>, inside <code>{books}</code></> : ""}.</p>
 
         <div className="row drawer-actions">
+          {d?.audioFileExists && (
+            <button className="primary" onClick={() => player.play(book)} disabled={player.playing?.asin === book.asin}>
+              {player.playing?.asin === book.asin ? "Playing" : "Play"}
+            </button>
+          )}
           {!book.inTrash && (
             <button onClick={() => void run("Liberate", () => api.liberateBook(book.asin), "Queued for liberation.")} disabled={busy}>
               Liberate

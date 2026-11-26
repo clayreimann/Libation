@@ -11,6 +11,7 @@ import { useQuickFilters } from "../useQuickFilters";
 import { loadSort, saveSort, toggleSort, type SortKey, type SortState } from "../sort";
 import { useLive } from "../live";
 import { BookDetails } from "./BookDetails";
+import { usePlayer } from "./Player";
 import { BulkMenu, type BulkOp } from "./BulkMenu";
 import { CountsBar } from "./CountsBar";
 import { Cover } from "./Cover";
@@ -47,6 +48,7 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
+  const player = usePlayer();
   const { onBookEvent } = useLive();
   const [input, setInput] = useState(initialQuery ?? "");
   const q = useDebounced(input, 300);
@@ -258,6 +260,11 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
           </td>
         ))}
         <td className="actions" onClick={(e) => e.stopPropagation()}>
+          {b.bookStatus === "Liberated" && !b.inTrash && (
+            <button onClick={() => player.play(b)} title="Play the audiobook">
+              Play
+            </button>
+          )}
           {!b.inTrash && (
             <button onClick={() => rowAction("Liberate", () => api.liberateBook(b.asin))} disabled={busy}>
               Liberate
