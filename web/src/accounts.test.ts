@@ -81,6 +81,13 @@ describe("describeError", () => {
     expect(describeError("loginComplete", 404, "No such pending login").restart).toBe(true);
   });
 
+  it("trusts the retryable flag from the API over the message", () => {
+    const retry = describeError("loginComplete", 400, "Paste the final address.", { retryable: true });
+    expect(retry).toMatchObject({ text: "Paste the final address.", restart: false });
+    const dead = describeError("loginComplete", 400, "Audible refused it.", { retryable: false });
+    expect(dead).toMatchObject({ text: "Audible refused it.", restart: true });
+  });
+
   it("passes plain 400 and 404 messages through for edits", () => {
     expect(describeError("patch", 400, "accountName must not be blank.").text).toBe("accountName must not be blank.");
     expect(describeError("patch", 404, "No such account.").text).toMatch(/no longer exists/);

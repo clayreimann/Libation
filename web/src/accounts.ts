@@ -60,7 +60,7 @@ export interface Described {
 const API_TOKEN_HINT = "Browser sign-in needs the daemon's API token configured: start the daemon with --api-token-file and give the UI the same token.";
 
 /** Turns an API failure into a message; `restart` means the login cannot be retried and must be started again. */
-export function describeError(op: AccountOp, status: number, message: string): Described {
+export function describeError(op: AccountOp, status: number, message: string, detail: { retryable?: boolean | null } = {}): Described {
   const out = (text: string, extra: Partial<Described> = {}): Described => ({ text, restart: false, importManaged: false, ...extra });
   const login = op === "loginStart" || op === "loginComplete" || op === "loginCancel";
 
@@ -80,6 +80,7 @@ export function describeError(op: AccountOp, status: number, message: string): D
 
   if (op === "loginComplete") {
     if (status === 404) return out("This sign-in expired or was already used. Start it again.", { restart: true });
+    if (status === 400 && detail.retryable != null) return out(message, { restart: !detail.retryable });
     if (status === 400) {
       return /not the final/i.test(message) ? out(message) : out("Audible did not accept that sign-in. Start a new one and try again.", { restart: true });
     }

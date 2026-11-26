@@ -196,7 +196,7 @@ export function AccountsPage() {
   const { status, setStatus, refreshStatus, accountEvents } = useLive();
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [locked, setLocked] = useState(false);
+  const [lockedByError, setLocked] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Msg | null>(null);
@@ -204,6 +204,7 @@ export function AccountsPage() {
   const [login, setLogin] = useState<{ start: LoginStart; target: LoginTarget } | null>(null);
   const [starting, setStarting] = useState(false);
 
+  const locked = lockedByError || status?.accountsManagedByImport === true;
   const statusRef = useRef(status);
   statusRef.current = status;
 
@@ -272,7 +273,7 @@ export function AccountsPage() {
     <div className="accounts">
       {locked && (
         <p className="banner warn" role="status">
-          Accounts are managed by import. Editing is disabled; change the imported accounts file and restart the daemon. Signing in again still works.
+          Accounts come from an import file. Adding, renaming, removing and scan toggles are disabled; change the imported file and restart the daemon. Signing in again still works.
         </p>
       )}
       {notice && (
@@ -360,8 +361,10 @@ export function AccountsPage() {
       )}
 
       <h3>Add an account</h3>
-      <AddAccount disabled={starting || !!login} onStart={startLogin} />
-      <p className="muted small">Adding an account signs in through your browser. It needs the daemon's API token.</p>
+      <AddAccount disabled={starting || !!login || locked} onStart={startLogin} />
+      <p className="muted small">
+        {locked ? "Accounts come from an import file, so new ones cannot be added here." : "Adding an account signs in through your browser. It needs the daemon's API token."}
+      </p>
     </div>
   );
 }

@@ -1,11 +1,18 @@
 import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, AccountPatch, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, LoginStartRequest, MoveTo, QuickFilters, Queue, LocateScan, Settings, Stats, Status } from "./types";
+import type { Account, AccountPatch, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, LoginStartRequest, MoveTo, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
+
+export interface ApiErrorDetail {
+  code?: string | null;
+  retryable?: boolean | null;
+  fields?: Record<string, string>;
+}
 
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly detail: ApiErrorDetail = {},
   ) {
     super(message);
   }
@@ -26,8 +33,9 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
     json = undefined;
   }
   if (!res.ok) {
-    const message = (json as { error?: string } | undefined)?.error ?? (res.status === 401 ? "Unauthorized" : `${res.status} ${res.statusText}`);
-    throw new ApiError(res.status, message);
+    const body = json as ({ error?: string } & ApiErrorDetail) | undefined;
+    const message = body?.error ?? (res.status === 401 ? "Unauthorized" : `${res.status} ${res.statusText}`);
+    throw new ApiError(res.status, message, { code: body?.code, retryable: body?.retryable, fields: body?.fields });
   }
   return json as T;
 }
@@ -50,6 +58,8 @@ export const api = {
   completeLogin: (loginId: string, responseUrl: string) => request<Account>("POST", login(loginId), { responseUrl }),
   cancelLogin: (loginId: string) => request<{ loginId: string }>("DELETE", login(loginId)),
   settings: () => request<Settings>("GET", "/api/settings"),
+  patchSettings: (body: SettingsPatch) => request<Settings>("PATCH", "/api/settings", body),
+  previewTemplate: (body: TemplatePreviewRequest, signal?: AbortSignal) => request<TemplatePreview>("POST", "/api/settings/templates/preview", body, signal),
   queue: (signal?: AbortSignal) => request<Queue>("GET", "/api/queue", undefined, signal),
   library: (params: { offset: number; limit: number; q: string; trash: boolean; sort?: SortState | null }, signal?: AbortSignal) => {
     const qs = new URLSearchParams({ offset: String(params.offset), limit: String(params.limit) });

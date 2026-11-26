@@ -47,7 +47,7 @@ export function LoginCard({ login, label, onSignedIn, onClose }: Props) {
       setResponseUrl("");
       onSignedIn(account);
     } catch (e) {
-      const d = describeError("loginComplete", e instanceof ApiError ? e.status : 0, (e as Error).message);
+      const d = describeError("loginComplete", e instanceof ApiError ? e.status : 0, (e as Error).message, e instanceof ApiError ? e.detail : {});
       if (d.restart) {
         settled.current = true;
         setResponseUrl("");
