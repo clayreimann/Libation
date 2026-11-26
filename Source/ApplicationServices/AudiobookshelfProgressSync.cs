@@ -44,6 +44,8 @@ public static class AudiobookshelfProgressSync
 		AlreadyInSync,
 		/// <summary>Audiobookshelf has the book marked finished; never un-finish it without --force.</summary>
 		FinishedOnServer,
+		/// <summary>Audible has no position on file for the title.</summary>
+		NoAudiblePosition,
 		Failed,
 	}
 
@@ -259,11 +261,11 @@ public static class AudiobookshelfProgressSync
 		}
 	}
 
-	private static string Describe(Outcome outcome) => outcome switch
+	internal static string Describe(Outcome outcome) => outcome switch
 	{
-		Outcome.ServerIsNewer => "Audiobookshelf progress is newer; skipped (use --force to overwrite)",
+		Outcome.ServerIsNewer => "Audiobookshelf progress is newer; skipped",
 		Outcome.AlreadyInSync => "already in sync",
-		Outcome.FinishedOnServer => "marked finished on Audiobookshelf; skipped (use --force to overwrite)",
+		Outcome.FinishedOnServer => "marked finished on Audiobookshelf; skipped",
 		_ => outcome.ToString(),
 	};
 

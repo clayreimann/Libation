@@ -79,9 +79,9 @@ public class AudiobookshelfProgressPushTests
 		StringAssert.Contains(results.Single().Message, "500");
 	}
 
-	private sealed record Request(string Method, string Path, string Query, string? Authorization, string Body);
+	internal sealed record Request(string Method, string Path, string Query, string? Authorization, string Body);
 
-	private sealed class StubServer : IDisposable
+	internal sealed class StubServer : IDisposable
 	{
 		private readonly HttpListener listener = new();
 		private readonly int patchStatus;
