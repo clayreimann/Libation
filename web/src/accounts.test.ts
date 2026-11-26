@@ -12,7 +12,7 @@ const acct = (accountId: string, locale: string, authState: Account["authState"]
   additionalLocales: [],
 });
 
-const status = (ids: string[]): Status => ({ state: "idle", intervalSeconds: 60, accountsNeedingLogin: ids });
+const status = (ids: string[]): Status => ({ state: "idle", intervalSeconds: 60, accountsNeedingLogin: ids, accountsManagedByImport: false });
 
 describe("needs-login reduction", () => {
   it("adds an id once from an event", () => {

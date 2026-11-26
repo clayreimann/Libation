@@ -11,7 +11,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Daemon state, last results, next run, interval and version. */
+        /** Daemon state, last results, next run, interval and version. accountsManagedByImport is true when accounts come from LIBATION_ACCOUNTS_IMPORT: signing in again works, adding, renaming and removing do not. */
         get: operations["getStatus"];
         put?: never;
         post?: never;
@@ -63,7 +63,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Lists the open sign-ins, soonest to expire first, so a reloaded page can offer them again: loginId, accountId, locale, url (the sign-in address) and expiresAt. Needs --api-token-file (403 otherwise); never returns a response URL. */
+        get: operations["listAccountLogins"];
         put?: never;
         /** Starts an external-browser sign-in. Open url, sign in, then post the final address-bar URL to /accounts/login/{loginId}. Needs --api-token-file (403 otherwise); 400 bad request, 409 new account while accounts come from an import file, 429 too many pending, 502 Audible unreachable. A login lasts 10 minutes and is held in memory. */
         post: operations["startAccountLogin"];
@@ -82,7 +83,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Completes a sign-in with the final browser URL (treat it like a password; it is never logged or echoed). Single use. 200 with the account, 400 not the final URL (the login stays usable) or Audible rejected it (start again), 403 without an API token, 404 unknown, used or expired. */
+        /** Completes a sign-in with the final browser URL (treat it like a password; it is never logged or echoed). Single use. 200 with the account, 400 with code notFinalUrl (retryable true: the login stays usable) or rejected (retryable false: the login is consumed, start again), 403 without an API token, 404 unknown, used or expired. */
         post: operations["completeAccountLogin"];
         /** Cancels a pending sign-in. 200, 403 without an API token, 404 unknown, used or expired. */
         delete: operations["cancelAccountLogin"];
@@ -177,6 +178,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library/podcasts/{asin}/episodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A podcast parent's episodes in the desktop grid's child order: highest series index first, those without an index before them. trash=true lists the trash instead. 404 when the ASIN is not a podcast parent. */
+        get: operations["getPodcastEpisodes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every series in the library, by name, with its books in series order (lowest index first, unnumbered last). q keeps series whose name contains it, ignoring case. A book in several series appears in each. */
+        get: operations["getLibrarySeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/series/{seriesId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One series by its Audible series id, or 404. */
+        get: operations["getSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/stats": {
         parameters: {
             query?: never;
@@ -228,6 +280,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library/{asin}/audio/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A liberated book's playable audio files in play order: a single m4b or mp3 is one entry, a book split by chapter has one per part. durationSec is read from the file and null for formats without a reader. 404 unknown ASIN, not liberated, or files missing. */
+        get: operations["getBookAudioFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/{asin}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Streams one audio file of a liberated book, chosen by file (default 0, an index from audio/files), with Range support: 206 with Content-Range for a range, 200 for the whole file, 416 for an unsatisfiable one. Sends Accept-Ranges, ETag, Last-Modified and Cache-Control: private. The file is found server-side; no path is accepted. 404 unknown ASIN, not liberated, files missing or bad index. */
+        get: operations["streamBookAudio"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/{asin}/chapters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A liberated book's chapters across all its files: those embedded in the file (m4b chapters, mp3 CHAP frames or a CUESHEET tag), else the .cue beside a single-file book, else one chapter per file titled by file name. startSec is cumulative over the files, fileStartSec within fileIndex. 404 unknown ASIN, not liberated, or files missing. */
+        get: operations["getBookChapters"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/{asin}/tags": {
         parameters: {
             query?: never;
@@ -255,6 +358,23 @@ export interface paths {
         get?: never;
         /** Sets a book's liberated status to liberated or notLiberated. 200 with the book, 400 bad body, 404 unknown ASIN. */
         put: operations["setBookStatus"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/{asin}/rating": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Sets the account's own star rating, 0 to 5 each for overall, performance and story, by sending it to Audible and then storing it, as the desktop grid does. A zero overall changes nothing. 200 with the book, 400 missing or out-of-range values, 404 unknown ASIN, 502 when Audible rejects it or cannot be reached (nothing is stored). */
+        put: operations["setBookRating"];
         post?: never;
         delete?: never;
         options?: never;
@@ -342,6 +462,146 @@ export interface paths {
         put?: never;
         /** Scans a folder under the Books folder in the background for audio files carrying an ASIN, as desktop's Locate audiobooks; matches are recorded and marked liberated. Progress arrives as LocateScanProgress events. 202, 400 bad folder, 409 already running. */
         post: operations["startLocateScan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/quality-scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** State and results of the last or running quality scan. results holds the books whose available bitrate is at least 15% above the downloaded file's. */
+        get: operations["getQualityScan"];
+        put?: never;
+        /** Scans liberated books in the background for a higher quality version on Audible, as desktop's Find better quality: each book's downloaded file (else its last downloaded format) is compared with Audible's best format. asins limits the scan; widevine (default: the Use Widevine setting) asks for Widevine rather than Audible DRM formats. Progress arrives as QualityScanProgress events. 202, 400 bad asins or nothing to scan, 409 already running. */
+        post: operations["startQualityScan"];
+        /** Cancels the running quality scan; results found so far are kept. 200 with the scan, now cancelling, 409 when none is running. */
+        delete: operations["cancelQualityScan"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/quality-scan/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Marks upgrades from the last scan as not liberated (Download Pending), as desktop's Mark books, and enables Widevine, xHE-AAC and account re-registration when the better audio needs them. The next liberate cycle, or POST /library/{asin}/liberate, downloads them. 200 with counts and the settings changed, 400 bad asins, 409 while a scan runs. */
+        post: operations["applyQualityUpgrades"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/inactive-scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** State of the last or running inactive book scan; results ([{asin, title, authors, account}]) appear once it is completed. */
+        get: operations["getInactiveScan"];
+        put?: never;
+        /** Scans Audible in the background for library books that are no longer in the account, as desktop's Scan library and remove books. Read-only: nothing is removed. Only books that are not downloaded are compared, and a scan that could not see an account's whole library fails rather than flagging books. accounts limits the scan to those account ids (default: accounts with library scan on). Progress arrives as InactiveScanProgress events. To remove what it finds, POST them to /library/trash. 202, 400 bad or unknown accounts or nothing to compare, 409 already running. */
+        post: operations["startInactiveScan"];
+        /** Cancels the running inactive book scan. 200 with the scan, now cancelling, 409 when none is running. */
+        delete: operations["cancelInactiveScan"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/remove-from-audible": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Removes Audible Plus books from the Audible account, as desktop's Remove from Audible Library, then deletes them from the library permanently (not the trash). IRREVERSIBLE and outside Libation: the only way back is re-adding them in Audible. confirm must be exactly "remove {N} from audible", N counting distinct asins, else 400 with code confirmationRequired and the phrase in the message. At most 100 asins. Books are processed one at a time and failures do not stop the rest. 200 with a result per asin: removed, notPlus (not an Audible Plus book, never sent to Audible), notFound or failed (error says why). Every attempt is logged. A BooksRemovedFromAudible event lists the removed asins. */
+        post: operations["removeFromAudible"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/{asin}/bookmarks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The book's clips, notes and bookmarks, fetched live from Audible; start and end are seconds. With format=csv|xlsx|json the same records download as desktop's export file (204 when there are none). 200, 400 bad format, 404 unknown ASIN, 502 when Audible fails. */
+        get: operations["getBookBookmarks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/{asin}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The book's listening position on Audible and on Audiobookshelf, fetched live; a side with no position, or Audiobookshelf when it is not configured, is null. positionMs is milliseconds, currentTimeSec seconds. 200, 404 unknown ASIN, 502 when Audible or Audiobookshelf fails. */
+        get: operations["getBookProgress"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/{asin}/progress/push-abs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pushes the book's Audible listening position to Audiobookshelf now and waits for the result. outcome is pushed, skipped or failed, with the reason for the last two; a skip because the server has newer progress is overridden by force, and dryRun reports without changing anything. 200 whatever the outcome, 404 unknown ASIN, 409 when no Audiobookshelf server URL and token are saved. */
+        post: operations["pushBookProgressToAudiobookshelf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/progress/push-abs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queues push-progress jobs that send each liberated book's Audible listening position to Audiobookshelf, as the grid's Push Audible progress. Each job's log holds its outcome; a book that fails does not stop the queue. conflict means the book is not liberated or already has a queued job; notFound is an unknown ASIN. 202 with a result per ASIN, 400 bad body or over 5000 ASINs, 409 when no Audiobookshelf server URL and token are saved. */
+        post: operations["bulkPushProgressToAudiobookshelf"];
         delete?: never;
         options?: never;
         head?: never;
@@ -474,10 +734,113 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Curated read-only settings: Books and working folders, naming templates, download, queue and library options. No secrets. */
+        /** Curated settings: Books and working folders (with whether each exists and is writable), naming templates, download, MP3, queue, library, Audiobookshelf (audiobookshelf.tokenSet says whether an API token is saved; the token is never returned) and logging options, and character replacements. Secrets are never returned. */
         get: operations["getSettings"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Changes the settings named in the body; absent keys are untouched and every key is validated before any is applied. Body mirrors GET /api/settings, so naming.folderTemplate is {"naming":{"folderTemplate":"..."}}. A null inProgress resets it; audiobookshelf.serverUrl, apiToken, libraryId and folderId accept null to clear (apiToken is write-only); other keys reject null. 200 with the updated settings (restartRequired lists keys that need a restart), 400 with fields keyed by dotted setting name, 409 when the config is read-only or Settings.json cannot be written. */
+        patch: operations["patchSettings"];
+        trace?: never;
+    };
+    "/api/settings/templates/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Checks a naming template and renders it as the app's template editor does, for the library book with the given asin or a sample book. kind is folder, file, chapterFile or chapterTitle. 200 with valid, errors, warnings and preview (null when invalid), 400 bad body, 404 unknown asin. */
+        post: operations["previewTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audiobookshelf/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Tests an Audiobookshelf connection with {"url":"...","token":"..."}, both optional and using the saved value when omitted, so unsaved settings can be checked. 200 with ok, serverVersion and user, or ok false with error and code (badUrl, unreachable, unauthorized, serverError, notConfigured); the token is never echoed. 400 for a blank field or a url other than the saved one without a token. */
+        post: operations["testAudiobookshelf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audiobookshelf/libraries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Book libraries on the saved Audiobookshelf server with their folders, for choosing audiobookshelf.libraryId and folderId. 200, 409 when no server URL and token are saved, 502 when the server cannot be reached or rejects the token (code is unreachable, unauthorized or serverError). */
+        get: operations["getAudiobookshelfLibraries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audiobookshelf/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queues upload-only jobs for books that are already liberated, which run through the queue like any other job. conflict means the book is not liberated or already has a queued job; notFound is an unknown ASIN. 202 with a result per ASIN, 400 bad body or over 5000 ASINs, 409 when Audiobookshelf is not enabled and fully configured. */
+        post: operations["uploadToAudiobookshelf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/convert-mp3": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queues convert-only jobs that re-encode liberated books to mp3 with the saved mp3 settings, as desktop's Convert to Mp3. conflict means the book is not liberated, has no m4b still to convert, is not a product (podcast episode), is absent from the last scan or already has a job; notFound is an unknown ASIN. 202 with a result per ASIN, 400 bad body or over 5000 ASINs. */
+        post: operations["bulkConvertToMp3"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/{asin}/convert-mp3": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queues one convert-only mp3 job for a liberated book. 202 with the job, 404 unknown ASIN, 409 not convertible or already queued. */
+        post: operations["convertBookToMp3"];
         delete?: never;
         options?: never;
         head?: never;
@@ -493,7 +856,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Runs a library scan now, without liberating. An optional body {"accounts":["id or name"]} scans only those accounts, as the CLI's scan does; no body scans all. 202, 400 bad body or unknown account, or 409 if busy. */
+        /** Runs a library scan now, without liberating. An optional body {"accounts":["id or name"],"locale":"uk"} scans only those accounts, as the CLI's scan does; locale limits the scan to one marketplace, for an id that exists in several, and alone scans every account in it. No body scans all. 202, 400 bad body or unknown account or marketplace, or 409 if busy. */
         post: operations["scan"];
         delete?: never;
         options?: never;
@@ -713,10 +1076,74 @@ export interface components {
             accountName?: null | string;
             libraryScan?: null | boolean;
         };
+        AccountSignedIn: {
+            accountId: string;
+            locale?: null | string;
+            /** Format: date-time */
+            at: string;
+        };
+        AudibleProgressDto: {
+            /** Format: int64 */
+            positionMs: number | string;
+            /** Format: date-time */
+            lastUpdated?: null | string;
+        };
+        AudiobookshelfFolderDto: {
+            id: string;
+            path: string;
+        };
+        AudiobookshelfLibraryDto: {
+            id: string;
+            name: string;
+            mediaType: string;
+            folders: components["schemas"]["AudiobookshelfFolderDto"][];
+        };
+        AudiobookshelfPatch: {
+            enabled?: null | boolean;
+            includePdfs?: null | boolean;
+            serverUrl?: null | string;
+            apiToken?: null | string;
+            libraryId?: null | string;
+            folderId?: null | string;
+            pushProgressAfterUpload?: null | boolean;
+        };
+        AudiobookshelfProgressDto: {
+            /** Format: double */
+            currentTimeSec: number | string;
+            isFinished: boolean;
+            /** Format: date-time */
+            lastUpdate?: null | string;
+        };
         AudiobookshelfSettingsDto: {
             enabled: boolean;
             includePdfs: boolean;
             serverConfigured: boolean;
+            serverUrl?: null | string;
+            tokenSet: boolean;
+            libraryId?: null | string;
+            folderId?: null | string;
+            pushProgressAfterUpload: boolean;
+        };
+        AudiobookshelfTestDto: {
+            ok: boolean;
+            serverVersion?: null | string;
+            user?: null | string;
+            error?: null | string;
+            code?: null | string;
+        };
+        AudiobookshelfTestRequest: {
+            url?: null | string;
+            token?: null | string;
+        };
+        AudioFileDto: {
+            /** Format: int32 */
+            index: number | string;
+            name: string;
+            contentType: string;
+            /** Format: int64 */
+            sizeBytes: number | string;
+            /** Format: double */
+            durationSec?: null | number | string;
         };
         BackupCountsDto: {
             /** Format: int32 */
@@ -844,11 +1271,33 @@ export interface components {
             /** Format: date-time */
             at: string;
         };
+        BookmarkDto: {
+            /** @enum {string} */
+            type: "Clip" | "Note" | "Bookmark" | "LastHeard";
+            /** Format: double */
+            start: number | string;
+            /** Format: double */
+            end?: null | number | string;
+            note?: null | string;
+            title?: null | string;
+            /** Format: date-time */
+            created: string;
+        };
         BookProgress: {
             jobId: string;
             asin: string;
             /** Format: int32 */
             percent: number | string;
+            /** Format: date-time */
+            at: string;
+        };
+        BookProgressDto: {
+            audible?: null | components["schemas"]["AudibleProgressDto"];
+            audiobookshelf?: null | components["schemas"]["AudiobookshelfProgressDto"];
+            absItemId?: null | string;
+        };
+        BooksRemovedFromAudible: {
+            asins: string[];
             /** Format: date-time */
             at: string;
         };
@@ -863,6 +1312,10 @@ export interface components {
             asin: string;
             /** @enum {string} */
             result: "ok" | "notFound" | "conflict";
+        };
+        BulkProgressPushRequest: {
+            asins?: null | string[];
+            force?: null | boolean;
         };
         BulkRequest: {
             asins?: null | string[];
@@ -888,6 +1341,19 @@ export interface components {
             /** @enum {string} */
             outcome: "removed" | "cancelling";
         };
+        ChapterDto: {
+            /** Format: int32 */
+            index: number | string;
+            title: string;
+            /** Format: double */
+            startSec: number | string;
+            /** Format: double */
+            durationSec?: null | number | string;
+            /** Format: int32 */
+            fileIndex: number | string;
+            /** Format: double */
+            fileStartSec: number | string;
+        };
         CycleFinished: {
             /** Format: int32 */
             exitCode: number | string;
@@ -901,6 +1367,32 @@ export interface components {
             applyToAll?: boolean;
             /** @default false */
             remember?: boolean;
+        };
+        DownloadPatch: {
+            quality?: null | string;
+            overwriteExisting?: null | boolean;
+            useWidevine?: null | boolean;
+            requestXheAac?: null | boolean;
+            spatialAudioCodec?: null | string;
+            downloadCoverArt?: null | boolean;
+            downloadClipsBookmarks?: null | boolean;
+            clipsBookmarksFileFormat?: null | string;
+            createCueSheet?: null | boolean;
+            saveMetadataToFile?: null | boolean;
+            retainAaxFile?: null | boolean;
+            splitFilesByChapter?: null | boolean;
+            mergeOpeningAndEndCredits?: null | boolean;
+            stripUnabridged?: null | boolean;
+            stripAudibleBrandAudio?: null | boolean;
+            decryptToLossy?: null | boolean;
+            moveMoovToBeginning?: null | boolean;
+            combineNestedChapterTitles?: null | boolean;
+            allowLibationFixup?: null | boolean;
+            useCoverAsFolderIcon?: null | boolean;
+            /** Format: int32 */
+            minimumFileDuration?: null | number | string;
+            creationTime?: null | string;
+            lastWriteTime?: null | string;
         };
         DownloadSettingsDto: {
             quality: string;
@@ -929,9 +1421,17 @@ export interface components {
             lastWriteTime: string;
         };
         /** @description One server-sent event on /api/events; the SSE event name is the name of the matching schema. */
-        EngineEvent: components["schemas"]["AccountNeedsLogin"] | components["schemas"]["BookFinished"] | components["schemas"]["BookLog"] | components["schemas"]["BookProgress"] | components["schemas"]["BookStarted"] | components["schemas"]["CycleFinished"] | components["schemas"]["LiberateFinished"] | components["schemas"]["LiberateStarted"] | components["schemas"]["LocateScanProgress"] | components["schemas"]["NextRunScheduled"] | components["schemas"]["QueueChanged"] | components["schemas"]["QueueDispatchPaused"] | components["schemas"]["QueueDispatchResumed"] | components["schemas"]["QueuePaused"] | components["schemas"]["QueueResumed"] | components["schemas"]["QueueWaitEnded"] | components["schemas"]["QueueWaiting"] | components["schemas"]["ScanFinished"] | components["schemas"]["ScanStarted"] | components["schemas"]["StateChanged"];
+        EngineEvent: components["schemas"]["AccountNeedsLogin"] | components["schemas"]["AccountSignedIn"] | components["schemas"]["BookFinished"] | components["schemas"]["BookLog"] | components["schemas"]["BookProgress"] | components["schemas"]["BookStarted"] | components["schemas"]["BooksRemovedFromAudible"] | components["schemas"]["CycleFinished"] | components["schemas"]["InactiveScanProgress"] | components["schemas"]["LiberateFinished"] | components["schemas"]["LiberateStarted"] | components["schemas"]["LocateScanProgress"] | components["schemas"]["NextRunScheduled"] | components["schemas"]["QualityScanProgress"] | components["schemas"]["QueueChanged"] | components["schemas"]["QueueDispatchPaused"] | components["schemas"]["QueueDispatchResumed"] | components["schemas"]["QueuePaused"] | components["schemas"]["QueueResumed"] | components["schemas"]["QueueWaitEnded"] | components["schemas"]["QueueWaiting"] | components["schemas"]["ScanFinished"] | components["schemas"]["ScanStarted"] | components["schemas"]["StateChanged"];
         ErrorDto: {
             error: string;
+            code?: null | string;
+            retryable?: null | boolean;
+        };
+        FieldErrorsDto: {
+            error: string;
+            fields: {
+                [key: string]: string;
+            };
         };
         FinishedJobDto: {
             id: string;
@@ -943,6 +1443,43 @@ export interface components {
             status: "queued" | "cancelled" | "working" | "completed" | "failed";
             /** Format: date-time */
             finishedAt: string;
+        };
+        FolderCheckDto: {
+            path?: null | string;
+            exists: boolean;
+            writable: boolean;
+        };
+        FoldersDto: {
+            books: components["schemas"]["FolderCheckDto"];
+            inProgress: components["schemas"]["FolderCheckDto"];
+        };
+        InactiveBookDto: {
+            asin: string;
+            title: string;
+            authors: string[];
+            account: string;
+        };
+        InactiveScanDto: {
+            /** @enum {string} */
+            state: "idle" | "running" | "cancelling" | "completed" | "cancelled" | "failed";
+            /** Format: int32 */
+            total: number | string;
+            /** Format: int32 */
+            scanned?: null | number | string;
+            results?: null | components["schemas"]["InactiveBookDto"][];
+            error?: null | string;
+            /** Format: date-time */
+            startedAt?: null | string;
+            /** Format: date-time */
+            finishedAt?: null | string;
+        };
+        InactiveScanProgress: {
+            scan: components["schemas"]["InactiveScanDto"];
+            /** Format: date-time */
+            at: string;
+        };
+        InactiveScanRequest: {
+            accounts?: null | string[];
         };
         JobLogDto: {
             jobId: string;
@@ -980,6 +1517,13 @@ export interface components {
             /** Format: int32 */
             limit: number | string;
             items: components["schemas"]["BookDto"][];
+        };
+        LibraryPatch: {
+            importEpisodes?: null | boolean;
+            importPlusTitles?: null | boolean;
+            downloadEpisodes?: null | boolean;
+            autoDownloadEpisodes?: null | boolean;
+            savePodcastsToParentFolder?: null | boolean;
         };
         LibrarySettingsDto: {
             importEpisodes: boolean;
@@ -1035,6 +1579,38 @@ export interface components {
         MoveRequest: {
             to?: null | string;
         };
+        Mp3Patch: {
+            targetBitrate?: null | boolean;
+            /** Format: int32 */
+            bitrate?: null | number | string;
+            constantBitrate?: null | boolean;
+            matchSourceBitrate?: null | boolean;
+            /** Format: int32 */
+            vbrQuality?: null | number | string;
+            downsampleMono?: null | boolean;
+            encoderQuality?: null | string;
+            /** Format: int32 */
+            maxSampleRate?: null | number | string;
+        };
+        Mp3SettingsDto: {
+            targetBitrate: boolean;
+            /** Format: int32 */
+            bitrate: number | string;
+            constantBitrate: boolean;
+            matchSourceBitrate: boolean;
+            /** Format: int32 */
+            vbrQuality: number | string;
+            downsampleMono: boolean;
+            encoderQuality: string;
+            /** Format: int32 */
+            maxSampleRate: number | string;
+        };
+        NamingPatch: {
+            folderTemplate?: null | string;
+            fileTemplate?: null | string;
+            chapterFileTemplate?: null | string;
+            chapterTitleTemplate?: null | string;
+        };
         NamingSettingsDto: {
             folderTemplate: string;
             fileTemplate: string;
@@ -1054,6 +1630,73 @@ export interface components {
             reason: "badBook" | "licenseGuidance" | "widevineGuidance" | "diskFull";
             jobId?: null | string;
             allowed: string[];
+        };
+        PendingLoginDto: {
+            loginId: string;
+            accountId: string;
+            locale: string;
+            url: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        ProgressPushDto: {
+            asin: string;
+            outcome: string;
+            reason?: null | string;
+            /** Format: double */
+            positionSec?: null | number | string;
+        };
+        ProgressPushRequest: {
+            force?: null | boolean;
+            dryRun?: null | boolean;
+        };
+        QualityApplyDto: {
+            /** Format: int32 */
+            marked: number | string;
+            missing: string[];
+            widevineEnabled: boolean;
+            xHeAacRequested: boolean;
+            accountsMarkedForReRegistration: boolean;
+        };
+        QualityApplyRequest: {
+            asins?: null | string[];
+        };
+        QualityDto: {
+            codec: string;
+            /** Format: int32 */
+            bitrate: number | string;
+        };
+        QualityResultDto: {
+            asin: string;
+            title: string;
+            currentQuality: components["schemas"]["QualityDto"];
+            availableQuality: components["schemas"]["QualityDto"];
+        };
+        QualityScanDto: {
+            /** @enum {string} */
+            state: "idle" | "running" | "cancelling" | "completed" | "cancelled" | "failed";
+            widevine: boolean;
+            /** Format: int32 */
+            total: number | string;
+            /** Format: int32 */
+            scanned: number | string;
+            /** Format: int32 */
+            failed: number | string;
+            results?: null | components["schemas"]["QualityResultDto"][];
+            error?: null | string;
+            /** Format: date-time */
+            startedAt?: null | string;
+            /** Format: date-time */
+            finishedAt?: null | string;
+        };
+        QualityScanProgress: {
+            scan: components["schemas"]["QualityScanDto"];
+            /** Format: date-time */
+            at: string;
+        };
+        QualityScanRequest: {
+            asins?: null | string[];
+            widevine?: null | boolean;
         };
         QueueChanged: {
             queue: components["schemas"]["QueueDto"];
@@ -1082,6 +1725,13 @@ export interface components {
             title: string;
             /** @enum {string} */
             state: "working" | "queued";
+        };
+        QueuePatch: {
+            dailyDownloadLimit?: null | string;
+            /** Format: int32 */
+            dailyDownloadLimitQuantity?: null | number | string;
+            dailyDownloadLimitUnit?: null | string;
+            badBook?: null | string;
         };
         QueuePaused: {
             pause: components["schemas"]["PendingDecisionDto"];
@@ -1157,6 +1807,38 @@ export interface components {
             /** Format: float */
             story: number | string;
         };
+        RatingRequest: {
+            /** Format: int32 */
+            overall?: null | number | string;
+            /** Format: int32 */
+            performance?: null | number | string;
+            /** Format: int32 */
+            story?: null | number | string;
+        };
+        RemoveFromAudibleDto: {
+            results: components["schemas"]["RemoveFromAudibleItemDto"][];
+        };
+        RemoveFromAudibleItemDto: {
+            asin: string;
+            /** @enum {string} */
+            result: "removed" | "notPlus" | "notFound" | "failed";
+            error?: null | string;
+        };
+        RemoveFromAudibleRequest: {
+            asins?: null | string[];
+            confirm?: null | string;
+        };
+        ReplacementDto: {
+            character: string;
+            replacement: string;
+            description: string;
+            mandatory: boolean;
+        };
+        ReplacementPatch: {
+            character?: null | string;
+            replacement?: null | string;
+            description?: null | string;
+        };
         ScanFinished: {
             /** Format: int32 */
             exitCode: number | string;
@@ -1165,10 +1847,16 @@ export interface components {
         };
         ScanRequest: {
             accounts?: null | string[];
+            locale?: null | string;
         };
         ScanStarted: {
             /** Format: date-time */
             at: string;
+        };
+        SeriesBookDto: {
+            asin: string;
+            title: string;
+            order?: null | string;
         };
         SeriesDto: {
             name: string;
@@ -1176,6 +1864,15 @@ export interface components {
             /** Format: float */
             index: number | string;
             asin: string;
+        };
+        SeriesGroupDto: {
+            seriesId: string;
+            name: string;
+            /** Format: int32 */
+            bookCount: number | string;
+            /** Format: int32 */
+            liberatedCount: number | string;
+            books: components["schemas"]["SeriesBookDto"][];
         };
         SettingsDto: {
             books?: null | string;
@@ -1185,6 +1882,23 @@ export interface components {
             queue: components["schemas"]["QueueSettingsDto"];
             library: components["schemas"]["LibrarySettingsDto"];
             audiobookshelf: components["schemas"]["AudiobookshelfSettingsDto"];
+            mp3: components["schemas"]["Mp3SettingsDto"];
+            logLevel: string;
+            replacementCharacters: components["schemas"]["ReplacementDto"][];
+            folders: components["schemas"]["FoldersDto"];
+            restartRequired?: null | string[];
+        };
+        SettingsPatchRequest: {
+            books?: null | string;
+            inProgress?: null | string;
+            naming?: null | components["schemas"]["NamingPatch"];
+            download?: null | components["schemas"]["DownloadPatch"];
+            mp3?: null | components["schemas"]["Mp3Patch"];
+            queue?: null | components["schemas"]["QueuePatch"];
+            library?: null | components["schemas"]["LibraryPatch"];
+            audiobookshelf?: null | components["schemas"]["AudiobookshelfPatch"];
+            logLevel?: null | string;
+            replacementCharacters?: null | components["schemas"]["ReplacementPatch"][];
         };
         StateChanged: {
             state: string;
@@ -1207,12 +1921,24 @@ export interface components {
             intervalSeconds: number | string;
             version?: null | string;
             accountsNeedingLogin: string[];
+            accountsManagedByImport: boolean;
         };
         StatusRequest: {
             status?: null | string;
         };
         TagsRequest: {
             tags?: null | string;
+        };
+        TemplatePreviewDto: {
+            valid: boolean;
+            errors: string[];
+            warnings: string[];
+            preview?: null | string;
+        };
+        TemplatePreviewRequest: {
+            template?: null | string;
+            kind?: null | string;
+            asin?: null | string;
         };
         VolumeDto: {
             root: string;
@@ -1358,6 +2084,35 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    listAccountLogins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingLoginDto"][];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1726,6 +2481,92 @@ export interface operations {
             };
         };
     };
+    getPodcastEpisodes: {
+        parameters: {
+            query?: {
+                trash?: boolean;
+            };
+            header?: never;
+            path: {
+                asin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDto"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    getLibrarySeries: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesGroupDto"][];
+                };
+            };
+        };
+    };
+    getSeries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                seriesId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesGroupDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
     getLibraryStats: {
         parameters: {
             query?: never;
@@ -1826,6 +2667,126 @@ export interface operations {
             };
         };
     };
+    getBookAudioFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AudioFileDto"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    streamBookAudio: {
+        parameters: {
+            query?: {
+                file?: number | string;
+            };
+            header?: never;
+            path: {
+                asin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mp4": string;
+                    "audio/mpeg": string;
+                };
+            };
+            /** @description Partial Content */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mp4": string;
+                    "audio/mpeg": string;
+                };
+            };
+            /** @description Not Modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Range Not Satisfiable */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getBookChapters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChapterDto"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
     setBookTags: {
         parameters: {
             query?: never;
@@ -1905,6 +2866,59 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    setBookRating: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["RatingRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDetailDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2100,6 +3114,449 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LocateScanDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    getQualityScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityScanDto"];
+                };
+            };
+        };
+    };
+    startQualityScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["QualityScanRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityScanDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    cancelQualityScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityScanDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    applyQualityUpgrades: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["QualityApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityApplyDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    getInactiveScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InactiveScanDto"];
+                };
+            };
+        };
+    };
+    startInactiveScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["InactiveScanRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InactiveScanDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    cancelInactiveScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InactiveScanDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    removeFromAudible: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["RemoveFromAudibleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoveFromAudibleDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    getBookBookmarks: {
+        parameters: {
+            query?: {
+                format?: string;
+            };
+            header?: never;
+            path: {
+                asin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookmarkDto"][];
+                    "text/csv": string;
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                };
+            };
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    getBookProgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookProgressDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    pushBookProgressToAudiobookshelf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["ProgressPushRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgressPushDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    bulkPushProgressToAudiobookshelf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["BulkProgressPushRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkResultDto"];
                 };
             };
             /** @description Bad Request */
@@ -2369,6 +3826,276 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsDto"];
+                };
+            };
+        };
+    };
+    patchSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldErrorsDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    previewTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["TemplatePreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplatePreviewDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    testAudiobookshelf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["AudiobookshelfTestRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AudiobookshelfTestDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    getAudiobookshelfLibraries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AudiobookshelfLibraryDto"][];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    uploadToAudiobookshelf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["BulkRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkResultDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    bulkConvertToMp3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["BulkRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkResultDto"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+        };
+    };
+    convertBookToMp3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueJobDto"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDto"];
                 };
             };
         };

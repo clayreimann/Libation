@@ -117,7 +117,7 @@ describe("job logs", () => {
 });
 
 describe("status and parsing", () => {
-  const status = { state: "idle", lastRun: null, lastSuccess: null, scanExitCode: null, liberateExitCode: null, nextRun: null, intervalSeconds: 60, version: "1", accountsNeedingLogin: [] };
+  const status = { state: "idle", lastRun: null, lastSuccess: null, scanExitCode: null, liberateExitCode: null, nextRun: null, intervalSeconds: 60, version: "1", accountsNeedingLogin: [], accountsManagedByImport: false };
 
   it("applies state and next-run events", () => {
     expect(applyStatusEvent(status, { type: "StateChanged", state: "scanning" })?.state).toBe("scanning");

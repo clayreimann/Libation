@@ -15,7 +15,7 @@
         "tags": [
           "daemon"
         ],
-        "summary": "Daemon state, last results, next run, interval and version.",
+        "summary": "Daemon state, last results, next run, interval and version. accountsManagedByImport is true when accounts come from LIBATION_ACCOUNTS_IMPORT: signing in again works, adding, renaming and removing do not.",
         "operationId": "getStatus",
         "responses": {
           "200": {
@@ -196,6 +196,38 @@
       }
     },
     "/api/accounts/login": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Lists the open sign-ins, soonest to expire first, so a reloaded page can offer them again: loginId, accountId, locale, url (the sign-in address) and expiresAt. Needs --api-token-file (403 otherwise); never returns a response URL.",
+        "operationId": "listAccountLogins",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PendingLoginDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "accounts"
@@ -287,7 +319,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "Completes a sign-in with the final browser URL (treat it like a password; it is never logged or echoed). Single use. 200 with the account, 400 not the final URL (the login stays usable) or Audible rejected it (start again), 403 without an API token, 404 unknown, used or expired.",
+        "summary": "Completes a sign-in with the final browser URL (treat it like a password; it is never logged or echoed). Single use. 200 with the account, 400 with code notFinalUrl (retryable true: the login stays usable) or rejected (retryable false: the login is consumed, start again), 403 without an API token, 404 unknown, used or expired.",
         "operationId": "completeAccountLogin",
         "parameters": [
           {
@@ -749,6 +781,131 @@
         }
       }
     },
+    "/api/library/podcasts/{asin}/episodes": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "A podcast parent's episodes in the desktop grid's child order: highest series index first, those without an index before them. trash=true lists the trash instead. 404 when the ASIN is not a podcast parent.",
+        "operationId": "getPodcastEpisodes",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trash",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BookDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/series": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Every series in the library, by name, with its books in series order (lowest index first, unnumbered last). q keeps series whose name contains it, ignoring case. A book in several series appears in each.",
+        "operationId": "getLibrarySeries",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SeriesGroupDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/series/{seriesId}": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "One series by its Audible series id, or 404.",
+        "operationId": "getSeries",
+        "parameters": [
+          {
+            "name": "seriesId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesGroupDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/library/stats": {
       "get": {
         "tags": [
@@ -860,6 +1017,177 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/audio/files": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "A liberated book's playable audio files in play order: a single m4b or mp3 is one entry, a book split by chapter has one per part. durationSec is read from the file and null for formats without a reader. 404 unknown ASIN, not liberated, or files missing.",
+        "operationId": "getBookAudioFiles",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AudioFileDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/audio": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Streams one audio file of a liberated book, chosen by file (default 0, an index from audio/files), with Range support: 206 with Content-Range for a range, 200 for the whole file, 416 for an unsatisfiable one. Sends Accept-Ranges, ETag, Last-Modified and Cache-Control: private. The file is found server-side; no path is accepted. 404 unknown ASIN, not liberated, files missing or bad index.",
+        "operationId": "streamBookAudio",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "audio/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Partial Content",
+            "content": {
+              "audio/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified"
+          },
+          "416": {
+            "description": "Range Not Satisfiable"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/chapters": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "A liberated book's chapters across all its files: those embedded in the file (m4b chapters, mp3 CHAP frames or a CUESHEET tag), else the .cue beside a single-file book, else one chapter per file titled by file name. startSec is cumulative over the files, fileStartSec within fileIndex. 404 unknown ASIN, not liberated, or files missing.",
+        "operationId": "getBookChapters",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ChapterDto"
+                  }
                 }
               }
             }
@@ -1000,6 +1328,83 @@
           },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/rating": {
+      "put": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Sets the account's own star rating, 0 to 5 each for overall, performance and story, by sending it to Audible and then storing it, as the desktop grid does. A zero overall changes nothing. 200 with the book, 400 missing or out-of-range values, 404 unknown ASIN, 502 when Audible rejects it or cannot be reached (nothing is stored).",
+        "operationId": "setBookRating",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RatingRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
             "content": {
               "application/json": {
                 "schema": {
@@ -1280,6 +1685,581 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LocateScanDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/quality-scan": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Scans liberated books in the background for a higher quality version on Audible, as desktop's Find better quality: each book's downloaded file (else its last downloaded format) is compared with Audible's best format. asins limits the scan; widevine (default: the Use Widevine setting) asks for Widevine rather than Audible DRM formats. Progress arrives as QualityScanProgress events. 202, 400 bad asins or nothing to scan, 409 already running.",
+        "operationId": "startQualityScan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/QualityScanRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualityScanDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "State and results of the last or running quality scan. results holds the books whose available bitrate is at least 15% above the downloaded file's.",
+        "operationId": "getQualityScan",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualityScanDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Cancels the running quality scan; results found so far are kept. 200 with the scan, now cancelling, 409 when none is running.",
+        "operationId": "cancelQualityScan",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualityScanDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/quality-scan/apply": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Marks upgrades from the last scan as not liberated (Download Pending), as desktop's Mark books, and enables Widevine, xHE-AAC and account re-registration when the better audio needs them. The next liberate cycle, or POST /library/{asin}/liberate, downloads them. 200 with counts and the settings changed, 400 bad asins, 409 while a scan runs.",
+        "operationId": "applyQualityUpgrades",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/QualityApplyRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualityApplyDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/inactive-scan": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Scans Audible in the background for library books that are no longer in the account, as desktop's Scan library and remove books. Read-only: nothing is removed. Only books that are not downloaded are compared, and a scan that could not see an account's whole library fails rather than flagging books. accounts limits the scan to those account ids (default: accounts with library scan on). Progress arrives as InactiveScanProgress events. To remove what it finds, POST them to /library/trash. 202, 400 bad or unknown accounts or nothing to compare, 409 already running.",
+        "operationId": "startInactiveScan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/InactiveScanRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveScanDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "State of the last or running inactive book scan; results ([{asin, title, authors, account}]) appear once it is completed.",
+        "operationId": "getInactiveScan",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveScanDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Cancels the running inactive book scan. 200 with the scan, now cancelling, 409 when none is running.",
+        "operationId": "cancelInactiveScan",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveScanDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/remove-from-audible": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Removes Audible Plus books from the Audible account, as desktop's Remove from Audible Library, then deletes them from the library permanently (not the trash). IRREVERSIBLE and outside Libation: the only way back is re-adding them in Audible. confirm must be exactly \"remove {N} from audible\", N counting distinct asins, else 400 with code confirmationRequired and the phrase in the message. At most 100 asins. Books are processed one at a time and failures do not stop the rest. 200 with a result per asin: removed, notPlus (not an Audible Plus book, never sent to Audible), notFound or failed (error says why). Every attempt is logged. A BooksRemovedFromAudible event lists the removed asins.",
+        "operationId": "removeFromAudible",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RemoveFromAudibleRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveFromAudibleDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/bookmarks": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "The book's clips, notes and bookmarks, fetched live from Audible; start and end are seconds. With format=csv|xlsx|json the same records download as desktop's export file (204 when there are none). 200, 400 bad format, 404 unknown ASIN, 502 when Audible fails.",
+        "operationId": "getBookBookmarks",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BookmarkDto"
+                  }
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/progress": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "The book's listening position on Audible and on Audiobookshelf, fetched live; a side with no position, or Audiobookshelf when it is not configured, is null. positionMs is milliseconds, currentTimeSec seconds. 200, 404 unknown ASIN, 502 when Audible or Audiobookshelf fails.",
+        "operationId": "getBookProgress",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookProgressDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/progress/push-abs": {
+      "post": {
+        "tags": [
+          "audiobookshelf"
+        ],
+        "summary": "Pushes the book's Audible listening position to Audiobookshelf now and waits for the result. outcome is pushed, skipped or failed, with the reason for the last two; a skip because the server has newer progress is overridden by force, and dryRun reports without changing anything. 200 whatever the outcome, 404 unknown ASIN, 409 when no Audiobookshelf server URL and token are saved.",
+        "operationId": "pushBookProgressToAudiobookshelf",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ProgressPushRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressPushDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/progress/push-abs": {
+      "post": {
+        "tags": [
+          "audiobookshelf"
+        ],
+        "summary": "Queues push-progress jobs that send each liberated book's Audible listening position to Audiobookshelf, as the grid's Push Audible progress. Each job's log holds its outcome; a book that fails does not stop the queue. conflict means the book is not liberated or already has a queued job; notFound is an unknown ASIN. 202 with a result per ASIN, 400 bad body or over 5000 ASINs, 409 when no Audiobookshelf server URL and token are saved.",
+        "operationId": "bulkPushProgressToAudiobookshelf",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BulkProgressPushRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
                 }
               }
             }
@@ -1621,7 +2601,7 @@
         "tags": [
           "settings"
         ],
-        "summary": "Curated read-only settings: Books and working folders, naming templates, download, queue and library options. No secrets.",
+        "summary": "Curated settings: Books and working folders (with whether each exists and is writable), naming templates, download, MP3, queue, library, Audiobookshelf (audiobookshelf.tokenSet says whether an API token is saved; the token is never returned) and logging options, and character replacements. Secrets are never returned.",
         "operationId": "getSettings",
         "responses": {
           "200": {
@@ -1635,6 +2615,358 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Changes the settings named in the body; absent keys are untouched and every key is validated before any is applied. Body mirrors GET /api/settings, so naming.folderTemplate is {\"naming\":{\"folderTemplate\":\"...\"}}. A null inProgress resets it; audiobookshelf.serverUrl, apiToken, libraryId and folderId accept null to clear (apiToken is write-only); other keys reject null. 200 with the updated settings (restartRequired lists keys that need a restart), 400 with fields keyed by dotted setting name, 409 when the config is read-only or Settings.json cannot be written.",
+        "operationId": "patchSettings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FieldErrorsDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/templates/preview": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Checks a naming template and renders it as the app's template editor does, for the library book with the given asin or a sample book. kind is folder, file, chapterFile or chapterTitle. 200 with valid, errors, warnings and preview (null when invalid), 400 bad body, 404 unknown asin.",
+        "operationId": "previewTemplate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TemplatePreviewRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplatePreviewDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audiobookshelf/test": {
+      "post": {
+        "tags": [
+          "audiobookshelf"
+        ],
+        "summary": "Tests an Audiobookshelf connection with {\"url\":\"...\",\"token\":\"...\"}, both optional and using the saved value when omitted, so unsaved settings can be checked. 200 with ok, serverVersion and user, or ok false with error and code (badUrl, unreachable, unauthorized, serverError, notConfigured); the token is never echoed. 400 for a blank field or a url other than the saved one without a token.",
+        "operationId": "testAudiobookshelf",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AudiobookshelfTestRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AudiobookshelfTestDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audiobookshelf/libraries": {
+      "get": {
+        "tags": [
+          "audiobookshelf"
+        ],
+        "summary": "Book libraries on the saved Audiobookshelf server with their folders, for choosing audiobookshelf.libraryId and folderId. 200, 409 when no server URL and token are saved, 502 when the server cannot be reached or rejects the token (code is unreachable, unauthorized or serverError).",
+        "operationId": "getAudiobookshelfLibraries",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AudiobookshelfLibraryDto"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audiobookshelf/upload": {
+      "post": {
+        "tags": [
+          "audiobookshelf"
+        ],
+        "summary": "Queues upload-only jobs for books that are already liberated, which run through the queue like any other job. conflict means the book is not liberated or already has a queued job; notFound is an unknown ASIN. 202 with a result per ASIN, 400 bad body or over 5000 ASINs, 409 when Audiobookshelf is not enabled and fully configured.",
+        "operationId": "uploadToAudiobookshelf",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BulkRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/convert-mp3": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Queues convert-only jobs that re-encode liberated books to mp3 with the saved mp3 settings, as desktop's Convert to Mp3. conflict means the book is not liberated, has no m4b still to convert, is not a product (podcast episode), is absent from the last scan or already has a job; notFound is an unknown ASIN. 202 with a result per ASIN, 400 bad body or over 5000 ASINs.",
+        "operationId": "bulkConvertToMp3",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BulkRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/{asin}/convert-mp3": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Queues one convert-only mp3 job for a liberated book. 202 with the job, 404 unknown ASIN, 409 not convertible or already queued.",
+        "operationId": "convertBookToMp3",
+        "parameters": [
+          {
+            "name": "asin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueJobDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/scan": {
@@ -1642,7 +2974,7 @@
         "tags": [
           "daemon"
         ],
-        "summary": "Runs a library scan now, without liberating. An optional body {\"accounts\":[\"id or name\"]} scans only those accounts, as the CLI's scan does; no body scans all. 202, 400 bad body or unknown account, or 409 if busy.",
+        "summary": "Runs a library scan now, without liberating. An optional body {\"accounts\":[\"id or name\"],\"locale\":\"uk\"} scans only those accounts, as the CLI's scan does; locale limits the scan to one marketplace, for an id that exists in several, and alone scans every account in it. No body scans all. 202, 400 bad body or unknown account or marketplace, or 409 if busy.",
         "operationId": "scan",
         "requestBody": {
           "content": {
@@ -2198,11 +3530,173 @@
           }
         }
       },
+      "AccountSignedIn": {
+        "required": [
+          "accountId",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string"
+          },
+          "locale": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AudibleProgressDto": {
+        "required": [
+          "positionMs"
+        ],
+        "type": "object",
+        "properties": {
+          "positionMs": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "lastUpdated": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "AudiobookshelfFolderDto": {
+        "required": [
+          "id",
+          "path"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "AudiobookshelfLibraryDto": {
+        "required": [
+          "id",
+          "name",
+          "mediaType",
+          "folders"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mediaType": {
+            "type": "string"
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AudiobookshelfFolderDto"
+            }
+          }
+        }
+      },
+      "AudiobookshelfPatch": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "includePdfs": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "serverUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "apiToken": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "folderId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "pushProgressAfterUpload": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "AudiobookshelfProgressDto": {
+        "required": [
+          "currentTimeSec",
+          "isFinished"
+        ],
+        "type": "object",
+        "properties": {
+          "currentTimeSec": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "double"
+          },
+          "isFinished": {
+            "type": "boolean"
+          },
+          "lastUpdate": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "AudiobookshelfSettingsDto": {
         "required": [
           "enabled",
           "includePdfs",
-          "serverConfigured"
+          "serverConfigured",
+          "tokenSet",
+          "pushProgressAfterUpload"
         ],
         "type": "object",
         "properties": {
@@ -2214,6 +3708,124 @@
           },
           "serverConfigured": {
             "type": "boolean"
+          },
+          "serverUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tokenSet": {
+            "type": "boolean"
+          },
+          "libraryId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "folderId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "pushProgressAfterUpload": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AudiobookshelfTestDto": {
+        "required": [
+          "ok"
+        ],
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "serverVersion": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "user": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "code": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "AudiobookshelfTestRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "token": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "AudioFileDto": {
+        "required": [
+          "index",
+          "name",
+          "contentType",
+          "sizeBytes"
+        ],
+        "type": "object",
+        "properties": {
+          "index": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "durationSec": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ],
+            "format": "double"
           }
         }
       },
@@ -2795,6 +4407,58 @@
           }
         }
       },
+      "BookmarkDto": {
+        "required": [
+          "type",
+          "start",
+          "created"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "Clip",
+              "Note",
+              "Bookmark",
+              "LastHeard"
+            ],
+            "type": "string"
+          },
+          "start": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "double"
+          },
+          "end": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ],
+            "format": "double"
+          },
+          "note": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "created": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "BookProgress": {
         "required": [
           "jobId",
@@ -2817,6 +4481,56 @@
               "string"
             ],
             "format": "int32"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BookProgressDto": {
+        "type": "object",
+        "properties": {
+          "audible": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AudibleProgressDto"
+              }
+            ]
+          },
+          "audiobookshelf": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AudiobookshelfProgressDto"
+              }
+            ]
+          },
+          "absItemId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "BooksRemovedFromAudible": {
+        "required": [
+          "asins",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "asins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "at": {
             "type": "string",
@@ -2865,6 +4579,26 @@
               "conflict"
             ],
             "type": "string"
+          }
+        }
+      },
+      "BulkProgressPushRequest": {
+        "type": "object",
+        "properties": {
+          "asins": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "force": {
+            "type": [
+              "null",
+              "boolean"
+            ]
           }
         }
       },
@@ -2983,6 +4717,62 @@
           }
         }
       },
+      "ChapterDto": {
+        "required": [
+          "index",
+          "title",
+          "startSec",
+          "fileIndex",
+          "fileStartSec"
+        ],
+        "type": "object",
+        "properties": {
+          "index": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "title": {
+            "type": "string"
+          },
+          "startSec": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "double"
+          },
+          "durationSec": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ],
+            "format": "double"
+          },
+          "fileIndex": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "fileStartSec": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "double"
+          }
+        }
+      },
       "CycleFinished": {
         "required": [
           "exitCode",
@@ -3026,6 +4816,152 @@
           "remember": {
             "type": "boolean",
             "default": false
+          }
+        }
+      },
+      "DownloadPatch": {
+        "type": "object",
+        "properties": {
+          "quality": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "overwriteExisting": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "useWidevine": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "requestXheAac": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "spatialAudioCodec": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "downloadCoverArt": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "downloadClipsBookmarks": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "clipsBookmarksFileFormat": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "createCueSheet": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "saveMetadataToFile": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "retainAaxFile": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "splitFilesByChapter": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "mergeOpeningAndEndCredits": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "stripUnabridged": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "stripAudibleBrandAudio": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "decryptToLossy": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "moveMoovToBeginning": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "combineNestedChapterTitles": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "allowLibationFixup": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "useCoverAsFolderIcon": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "minimumFileDuration": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "creationTime": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "lastWriteTime": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -3139,6 +5075,9 @@
             "$ref": "#/components/schemas/AccountNeedsLogin"
           },
           {
+            "$ref": "#/components/schemas/AccountSignedIn"
+          },
+          {
             "$ref": "#/components/schemas/BookFinished"
           },
           {
@@ -3151,7 +5090,13 @@
             "$ref": "#/components/schemas/BookStarted"
           },
           {
+            "$ref": "#/components/schemas/BooksRemovedFromAudible"
+          },
+          {
             "$ref": "#/components/schemas/CycleFinished"
+          },
+          {
+            "$ref": "#/components/schemas/InactiveScanProgress"
           },
           {
             "$ref": "#/components/schemas/LiberateFinished"
@@ -3164,6 +5109,9 @@
           },
           {
             "$ref": "#/components/schemas/NextRunScheduled"
+          },
+          {
+            "$ref": "#/components/schemas/QualityScanProgress"
           },
           {
             "$ref": "#/components/schemas/QueueChanged"
@@ -3206,6 +5154,36 @@
         "properties": {
           "error": {
             "type": "string"
+          },
+          "code": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "retryable": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "FieldErrorsDto": {
+        "required": [
+          "error",
+          "fields"
+        ],
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
           }
         }
       },
@@ -3262,6 +5240,164 @@
           "finishedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "FolderCheckDto": {
+        "required": [
+          "exists",
+          "writable"
+        ],
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "exists": {
+            "type": "boolean"
+          },
+          "writable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "FoldersDto": {
+        "required": [
+          "books",
+          "inProgress"
+        ],
+        "type": "object",
+        "properties": {
+          "books": {
+            "$ref": "#/components/schemas/FolderCheckDto"
+          },
+          "inProgress": {
+            "$ref": "#/components/schemas/FolderCheckDto"
+          }
+        }
+      },
+      "InactiveBookDto": {
+        "required": [
+          "asin",
+          "title",
+          "authors",
+          "account"
+        ],
+        "type": "object",
+        "properties": {
+          "asin": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "account": {
+            "type": "string"
+          }
+        }
+      },
+      "InactiveScanDto": {
+        "required": [
+          "state",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "enum": [
+              "idle",
+              "running",
+              "cancelling",
+              "completed",
+              "cancelled",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "total": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "scanned": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "results": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/InactiveBookDto"
+            }
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "InactiveScanProgress": {
+        "required": [
+          "scan",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "scan": {
+            "$ref": "#/components/schemas/InactiveScanDto"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "InactiveScanRequest": {
+        "type": "object",
+        "properties": {
+          "accounts": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -3411,6 +5547,41 @@
             "items": {
               "$ref": "#/components/schemas/BookDto"
             }
+          }
+        }
+      },
+      "LibraryPatch": {
+        "type": "object",
+        "properties": {
+          "importEpisodes": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "importPlusTitles": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "downloadEpisodes": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "autoDownloadEpisodes": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "savePodcastsToParentFolder": {
+            "type": [
+              "null",
+              "boolean"
+            ]
           }
         }
       },
@@ -3625,6 +5796,151 @@
           }
         }
       },
+      "Mp3Patch": {
+        "type": "object",
+        "properties": {
+          "targetBitrate": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "bitrate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "constantBitrate": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "matchSourceBitrate": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "vbrQuality": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "downsampleMono": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "encoderQuality": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "maxSampleRate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "Mp3SettingsDto": {
+        "required": [
+          "targetBitrate",
+          "bitrate",
+          "constantBitrate",
+          "matchSourceBitrate",
+          "vbrQuality",
+          "downsampleMono",
+          "encoderQuality",
+          "maxSampleRate"
+        ],
+        "type": "object",
+        "properties": {
+          "targetBitrate": {
+            "type": "boolean"
+          },
+          "bitrate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "constantBitrate": {
+            "type": "boolean"
+          },
+          "matchSourceBitrate": {
+            "type": "boolean"
+          },
+          "vbrQuality": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "downsampleMono": {
+            "type": "boolean"
+          },
+          "encoderQuality": {
+            "type": "string"
+          },
+          "maxSampleRate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "NamingPatch": {
+        "type": "object",
+        "properties": {
+          "folderTemplate": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "fileTemplate": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "chapterFileTemplate": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "chapterTitleTemplate": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "NamingSettingsDto": {
         "required": [
           "folderTemplate",
@@ -3703,6 +6019,288 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "PendingLoginDto": {
+        "required": [
+          "loginId",
+          "accountId",
+          "locale",
+          "url",
+          "expiresAt"
+        ],
+        "type": "object",
+        "properties": {
+          "loginId": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProgressPushDto": {
+        "required": [
+          "asin",
+          "outcome"
+        ],
+        "type": "object",
+        "properties": {
+          "asin": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "positionSec": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "ProgressPushRequest": {
+        "type": "object",
+        "properties": {
+          "force": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "dryRun": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "QualityApplyDto": {
+        "required": [
+          "marked",
+          "missing",
+          "widevineEnabled",
+          "xHeAacRequested",
+          "accountsMarkedForReRegistration"
+        ],
+        "type": "object",
+        "properties": {
+          "marked": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "widevineEnabled": {
+            "type": "boolean"
+          },
+          "xHeAacRequested": {
+            "type": "boolean"
+          },
+          "accountsMarkedForReRegistration": {
+            "type": "boolean"
+          }
+        }
+      },
+      "QualityApplyRequest": {
+        "type": "object",
+        "properties": {
+          "asins": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "QualityDto": {
+        "required": [
+          "codec",
+          "bitrate"
+        ],
+        "type": "object",
+        "properties": {
+          "codec": {
+            "type": "string"
+          },
+          "bitrate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "QualityResultDto": {
+        "required": [
+          "asin",
+          "title",
+          "currentQuality",
+          "availableQuality"
+        ],
+        "type": "object",
+        "properties": {
+          "asin": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "currentQuality": {
+            "$ref": "#/components/schemas/QualityDto"
+          },
+          "availableQuality": {
+            "$ref": "#/components/schemas/QualityDto"
+          }
+        }
+      },
+      "QualityScanDto": {
+        "required": [
+          "state",
+          "widevine",
+          "total",
+          "scanned",
+          "failed"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "enum": [
+              "idle",
+              "running",
+              "cancelling",
+              "completed",
+              "cancelled",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "widevine": {
+            "type": "boolean"
+          },
+          "total": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "scanned": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "failed": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "results": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/QualityResultDto"
+            }
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "QualityScanProgress": {
+        "required": [
+          "scan",
+          "at"
+        ],
+        "type": "object",
+        "properties": {
+          "scan": {
+            "$ref": "#/components/schemas/QualityScanDto"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QualityScanRequest": {
+        "type": "object",
+        "properties": {
+          "asins": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "widevine": {
+            "type": [
+              "null",
+              "boolean"
+            ]
           }
         }
       },
@@ -3813,6 +6411,38 @@
               "queued"
             ],
             "type": "string"
+          }
+        }
+      },
+      "QueuePatch": {
+        "type": "object",
+        "properties": {
+          "dailyDownloadLimit": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "dailyDownloadLimitQuantity": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "dailyDownloadLimitUnit": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "badBook": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -4112,6 +6742,145 @@
           }
         }
       },
+      "RatingRequest": {
+        "type": "object",
+        "properties": {
+          "overall": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "performance": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "story": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "RemoveFromAudibleDto": {
+        "required": [
+          "results"
+        ],
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemoveFromAudibleItemDto"
+            }
+          }
+        }
+      },
+      "RemoveFromAudibleItemDto": {
+        "required": [
+          "asin",
+          "result"
+        ],
+        "type": "object",
+        "properties": {
+          "asin": {
+            "type": "string"
+          },
+          "result": {
+            "enum": [
+              "removed",
+              "notPlus",
+              "notFound",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "RemoveFromAudibleRequest": {
+        "type": "object",
+        "properties": {
+          "asins": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "confirm": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ReplacementDto": {
+        "required": [
+          "character",
+          "replacement",
+          "description",
+          "mandatory"
+        ],
+        "type": "object",
+        "properties": {
+          "character": {
+            "type": "string"
+          },
+          "replacement": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "mandatory": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ReplacementPatch": {
+        "type": "object",
+        "properties": {
+          "character": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "replacement": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "ScanFinished": {
         "required": [
           "exitCode",
@@ -4144,6 +6913,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "locale": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -4156,6 +6931,27 @@
           "at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "SeriesBookDto": {
+        "required": [
+          "asin",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "asin": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "order": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -4189,6 +6985,46 @@
           }
         }
       },
+      "SeriesGroupDto": {
+        "required": [
+          "seriesId",
+          "name",
+          "bookCount",
+          "liberatedCount",
+          "books"
+        ],
+        "type": "object",
+        "properties": {
+          "seriesId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "bookCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "liberatedCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "books": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesBookDto"
+            }
+          }
+        }
+      },
       "SettingsDto": {
         "required": [
           "inProgress",
@@ -4196,7 +7032,11 @@
           "download",
           "queue",
           "library",
-          "audiobookshelf"
+          "audiobookshelf",
+          "mp3",
+          "logLevel",
+          "replacementCharacters",
+          "folders"
         ],
         "type": "object",
         "properties": {
@@ -4223,6 +7063,122 @@
           },
           "audiobookshelf": {
             "$ref": "#/components/schemas/AudiobookshelfSettingsDto"
+          },
+          "mp3": {
+            "$ref": "#/components/schemas/Mp3SettingsDto"
+          },
+          "logLevel": {
+            "type": "string"
+          },
+          "replacementCharacters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReplacementDto"
+            }
+          },
+          "folders": {
+            "$ref": "#/components/schemas/FoldersDto"
+          },
+          "restartRequired": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SettingsPatchRequest": {
+        "type": "object",
+        "properties": {
+          "books": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "inProgress": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "naming": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NamingPatch"
+              }
+            ]
+          },
+          "download": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DownloadPatch"
+              }
+            ]
+          },
+          "mp3": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Mp3Patch"
+              }
+            ]
+          },
+          "queue": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QueuePatch"
+              }
+            ]
+          },
+          "library": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LibraryPatch"
+              }
+            ]
+          },
+          "audiobookshelf": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AudiobookshelfPatch"
+              }
+            ]
+          },
+          "logLevel": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "replacementCharacters": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ReplacementPatch"
+            }
           }
         }
       },
@@ -4246,7 +7202,8 @@
         "required": [
           "state",
           "intervalSeconds",
-          "accountsNeedingLogin"
+          "accountsNeedingLogin",
+          "accountsManagedByImport"
         ],
         "type": "object",
         "properties": {
@@ -4311,6 +7268,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "accountsManagedByImport": {
+            "type": "boolean"
           }
         }
       },
@@ -4329,6 +7289,60 @@
         "type": "object",
         "properties": {
           "tags": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "TemplatePreviewDto": {
+        "required": [
+          "valid",
+          "errors",
+          "warnings"
+        ],
+        "type": "object",
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "preview": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "TemplatePreviewRequest": {
+        "type": "object",
+        "properties": {
+          "template": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "kind": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "asin": {
             "type": [
               "null",
               "string"
@@ -4376,6 +7390,9 @@
     },
     {
       "name": "library"
+    },
+    {
+      "name": "audiobookshelf"
     },
     {
       "name": "settings"
