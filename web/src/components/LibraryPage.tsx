@@ -16,6 +16,8 @@ import { usePlayer } from "./Player";
 import { BulkMenu, type BulkOp } from "./BulkMenu";
 import { CountsBar } from "./CountsBar";
 import { Cover } from "./Cover";
+import { InactivePanel } from "./InactivePanel";
+import { RemoveFromAudible } from "./RemoveFromAudible";
 import { LocatePanel } from "./LocatePanel";
 import { Popover } from "./Popover";
 import { SeriesBrowser } from "./SeriesBrowser";
@@ -70,6 +72,7 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [gathering, setGathering] = useState(false);
   const [hideEpisodes, setHideEpisodes] = useState(false);
+  const [removing, setRemoving] = useState<string[] | null>(null);
   const [detail, setDetail] = useState<Book | null>(null);
   const [sort, setSort] = useState<SortState | null>(loadSort);
   const [visible, setVisible] = useState<ColumnId[]>(loadVisible);
@@ -181,6 +184,8 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
         return runAction("Queueing", asins, (o) => api.bulkLiberate(asins, o));
       case "absUpload":
         return runAction("Queueing Audiobookshelf uploads", asins, (o) => api.bulkAbsUpload(asins, o));
+      case "removeAudible":
+        return setRemoving(asins);
       case "pushProgress":
         return runAction("Queueing progress pushes", asins, (o) => api.bulkPushProgress(asins, op.force, o), "queued");
       case "convertMp3":
@@ -403,6 +408,7 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
         </Popover>
         {!trash && <Popover label="Series">{(close) => <SeriesBrowser onPick={(id) => { close(); showSeries(id); }} />}</Popover>}
         {!trash && <Popover label="Find better quality" className="wide">{() => <QualityPanel />}</Popover>}
+        {!trash && <Popover label="Scan for removed books" className="wide">{() => <InactivePanel onTrashed={() => setReload((n) => n + 1)} />}</Popover>}
         <Popover label="Locate audiobooks" className="wide">{() => <LocatePanel />}</Popover>
         <Popover label="Columns">
           {() => (
@@ -434,6 +440,20 @@ export function LibraryPage({ initialQuery }: { initialQuery?: string }) {
           </button>
           <BulkMenu count={selected.size} trash={trash} disabled={busy} onRun={runBulkOp} />
         </div>
+      )}
+
+      {removing && (
+        <RemoveFromAudible
+          selected={removing}
+          titles={new Map(items.map((b) => [b.asin, b.title]))}
+          onClose={() => setRemoving(null)}
+          onRemoved={(asins) => {
+            const gone = new Set(asins);
+            setSelected((s) => new Set([...s].filter((a) => !gone.has(a))));
+            setDetail((d) => (d && gone.has(d.asin) ? null : d));
+            setReload((n) => n + 1);
+          }}
+        />
       )}
 
       {bulk && (

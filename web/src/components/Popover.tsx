@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 interface Props {
   label: ReactNode;
@@ -10,7 +10,15 @@ interface Props {
 
 export function Popover({ label, children, disabled, className = "", title }: Props) {
   const [open, setOpen] = useState(false);
+  const [startAligned, setStartAligned] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!open) return setStartAligned(false);
+    const el = panel.current;
+    if (el && !startAligned && el.getBoundingClientRect().left < 0) setStartAligned(true);
+  }, [open, startAligned]);
 
   useEffect(() => {
     if (!open) return;
@@ -27,11 +35,11 @@ export function Popover({ label, children, disabled, className = "", title }: Pr
   }, [open]);
 
   return (
-    <div className={`popover ${className}`} ref={ref}>
+    <div className={`popover ${className}${startAligned ? " start" : ""}`} ref={ref}>
       <button onClick={() => setOpen((o) => !o)} disabled={disabled} aria-expanded={open} aria-haspopup="true" title={title}>
         {label}
       </button>
-      {open && <div className="popover-panel">{children(() => setOpen(false))}</div>}
+      {open && <div className="popover-panel" ref={panel}>{children(() => setOpen(false))}</div>}
     </div>
   );
 }

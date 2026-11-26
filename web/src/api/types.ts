@@ -58,7 +58,7 @@ export type AuthState = Account["authState"];
 const eventNames = [
   "StateChanged", "ScanStarted", "ScanFinished", "LiberateStarted", "LiberateFinished", "CycleFinished",
   "NextRunScheduled", "BookStarted", "BookProgress", "BookFinished", "QueueChanged", "QueuePaused", "QueueResumed",
-  "QueueWaiting", "QueueWaitEnded", "QueueDispatchPaused", "QueueDispatchResumed", "BookLog", "LocateScanProgress", "QualityScanProgress", "AccountNeedsLogin",
+  "QueueWaiting", "QueueWaitEnded", "QueueDispatchPaused", "QueueDispatchResumed", "BookLog", "LocateScanProgress", "QualityScanProgress", "InactiveScanProgress", "BooksRemovedFromAudible", "AccountNeedsLogin",
 ] as const satisfies readonly (keyof S)[];
 
 type EventName = (typeof eventNames)[number];

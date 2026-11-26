@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { api } from "./api/client";
-import { eventTypes, type LocateScan, type QualityScan, type Status } from "./api/types";
+import { eventTypes, type InactiveScan, type LocateScan, type QualityScan, type Status } from "./api/types";
 import {
   applyQueueEvent,
   applySnapshot,
@@ -18,6 +18,7 @@ interface Live {
   queue: QueueView;
   locateScan: LocateScan | null;
   qualityScan: QualityScan | null;
+  inactiveScan: InactiveScan | null;
   accountEvents: number;
   refreshStatus: () => void;
   setStatus: (s: Status) => void;
@@ -44,6 +45,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [locateScan, setLocateScan] = useState<LocateScan | null>(null);
   const [qualityScan, setQualityScan] = useState<QualityScan | null>(null);
+  const [inactiveScan, setInactiveScan] = useState<InactiveScan | null>(null);
   const [accountEvents, setAccountEvents] = useState(0);
   const [queue, dispatch] = useReducer(reduce, emptyQueue);
   const bookListeners = useRef(new Set<() => void>());
@@ -70,6 +72,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     refreshQueue();
     api.locateScan().then(setLocateScan, () => undefined);
     api.qualityScan().then(setQualityScan, () => undefined);
+    api.inactiveScan().then(setInactiveScan, () => undefined);
 
     const es = new EventSource("/api/events");
     es.onopen = () => {
@@ -92,6 +95,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           if (evt.scan.state !== "running") bookListeners.current.forEach((fn) => fn());
         }
         if (evt.type === "QualityScanProgress") setQualityScan((cur) => ({ ...evt.scan, results: evt.scan.results ?? (evt.scan.state === "running" ? null : cur?.results) }));
+        if (evt.type === "InactiveScanProgress") setInactiveScan((cur) => ({ ...evt.scan, results: evt.scan.results ?? (evt.scan.state === "running" ? null : cur?.results) }));
+        if (evt.type === "BooksRemovedFromAudible") bookListeners.current.forEach((fn) => fn());
         if (evt.type === "BookFinished" || evt.type === "CycleFinished") bookListeners.current.forEach((fn) => fn());
       });
     }
@@ -107,8 +112,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ connected, status, statusError, queue, locateScan, qualityScan, accountEvents, refreshStatus, setStatus, onBookEvent }),
-    [connected, status, statusError, queue, locateScan, qualityScan, accountEvents, refreshStatus, onBookEvent],
+    () => ({ connected, status, statusError, queue, locateScan, qualityScan, inactiveScan, accountEvents, refreshStatus, setStatus, onBookEvent }),
+    [connected, status, statusError, queue, locateScan, qualityScan, inactiveScan, accountEvents, refreshStatus, onBookEvent],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

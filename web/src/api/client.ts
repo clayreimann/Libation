@@ -1,6 +1,6 @@
 import type { SortState } from "../sort";
 import { runChunked, type BulkSummary, type ChunkOptions } from "../bulk";
-import type { Account, AudioFile, Chapter, AccountPatch, AbsLibrary, AbsTest, AbsTestRequest, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, Bookmark, BookProgress, ProgressPush, LoginStartRequest, MoveTo, QualityApply, QualityScan, QueueJob, RatingRequest, SeriesGroup, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
+import type { Account, AudioFile, Chapter, AccountPatch, AbsLibrary, AbsTest, AbsTestRequest, AsinList, BulkResult, Book, BookDetail, CancelJob, DecisionRequest, FinishedJob, JobLog, LibraryPage, LoginStart, Bookmark, BookProgress, ProgressPush, InactiveScan, RemoveFromAudible, LoginStartRequest, MoveTo, QualityApply, QualityScan, QueueJob, RatingRequest, SeriesGroup, QuickFilters, Queue, LocateScan, Settings, SettingsPatch, Stats, Status, TemplatePreview, TemplatePreviewRequest } from "./types";
 
 export interface ApiErrorDetail {
   code?: string | null;
@@ -113,6 +113,10 @@ export const api = {
   applyQuality: (asins: string[]) => request<QualityApply>("POST", "/api/library/quality-scan/apply", { asins }),
   progress: (asin: string, signal?: AbortSignal) => request<BookProgress>("GET", `${book(asin)}/progress`, undefined, signal),
   pushProgress: (asin: string, force: boolean) => request<ProgressPush>("POST", `${book(asin)}/progress/push-abs`, force ? { force: true } : {}),
+  inactiveScan: (signal?: AbortSignal) => request<InactiveScan>("GET", "/api/library/inactive-scan", undefined, signal),
+  startInactiveScan: () => request<InactiveScan>("POST", "/api/library/inactive-scan"),
+  cancelInactiveScan: () => request<InactiveScan>("DELETE", "/api/library/inactive-scan"),
+  removeFromAudible: (asins: string[], confirm: string) => request<RemoveFromAudible>("POST", "/api/library/remove-from-audible", { asins, confirm }),
   bookmarks: (asin: string, signal?: AbortSignal) => request<Bookmark[]>("GET", `${book(asin)}/bookmarks`, undefined, signal),
   bookmarksUrl: (asin: string, format: ExportFormat) => `${book(asin)}/bookmarks?format=${format}`,
   getBook: (asin: string, signal?: AbortSignal) => request<BookDetail>("GET", book(asin), undefined, signal),

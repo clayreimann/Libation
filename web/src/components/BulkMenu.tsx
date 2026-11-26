@@ -6,6 +6,7 @@ export type BulkOp =
   | { kind: "liberate" }
   | { kind: "absUpload" }
   | { kind: "convertMp3" }
+  | { kind: "removeAudible" }
   | { kind: "pushProgress"; force: boolean }
   | { kind: "trash" }
   | { kind: "purge" }
@@ -66,6 +67,9 @@ export function BulkMenu({ count, trash, disabled, onRun }: Props) {
                   </li>
                   <li>
                     <button onClick={() => act({ kind: "pdfStatus", status: "notLiberated" })}>Set PDF status: not downloaded</button>
+                  </li>
+                  <li>
+                    <button onClick={() => act({ kind: "removeAudible" })} title="Audible Plus books only; irreversible">Remove from Audible...</button>
                   </li>
                   <li>
                     <button onClick={() => { close(); setTagMode("add"); }}>Add tags...</button>
