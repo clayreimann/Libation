@@ -162,6 +162,7 @@ namespace LibationWinForms.Dialogs
 			tab5Audiobookshelf = new System.Windows.Forms.TabPage();
 			absEnabledCb = new System.Windows.Forms.CheckBox();
 			absIncludePdfsCb = new System.Windows.Forms.CheckBox();
+			absPushProgressCb = new System.Windows.Forms.CheckBox();
 			absPlaintextWarningLbl = new System.Windows.Forms.Label();
 			absUrlLbl = new System.Windows.Forms.Label();
 			absUrlTb = new System.Windows.Forms.TextBox();
@@ -1692,6 +1693,7 @@ namespace LibationWinForms.Dialogs
 			tab5Audiobookshelf.BackColor = System.Drawing.SystemColors.Window;
 			tab5Audiobookshelf.Controls.Add(absEnabledCb);
 			tab5Audiobookshelf.Controls.Add(absIncludePdfsCb);
+			tab5Audiobookshelf.Controls.Add(absPushProgressCb);
 			tab5Audiobookshelf.Controls.Add(absPlaintextWarningLbl);
 			tab5Audiobookshelf.Controls.Add(absUrlLbl);
 			tab5Audiobookshelf.Controls.Add(absUrlTb);
@@ -1731,11 +1733,21 @@ namespace LibationWinForms.Dialogs
 			absIncludePdfsCb.Text = "[AudiobookshelfIncludePdfs desc]";
 			absIncludePdfsCb.UseVisualStyleBackColor = true;
 			// 
+			// absPushProgressCb
+			// 
+			absPushProgressCb.AutoSize = true;
+			absPushProgressCb.Location = new System.Drawing.Point(6, 56);
+			absPushProgressCb.Name = "absPushProgressCb";
+			absPushProgressCb.Size = new System.Drawing.Size(207, 19);
+			absPushProgressCb.TabIndex = 13;
+			absPushProgressCb.Text = "[AudiobookshelfPushProgressAfterUpload desc]";
+			absPushProgressCb.UseVisualStyleBackColor = true;
+			// 
 			// absPlaintextWarningLbl
 			// 
 			absPlaintextWarningLbl.AutoSize = true;
 			absPlaintextWarningLbl.ForeColor = System.Drawing.Color.DarkOrange;
-			absPlaintextWarningLbl.Location = new System.Drawing.Point(6, 56);
+			absPlaintextWarningLbl.Location = new System.Drawing.Point(6, 82);
 			absPlaintextWarningLbl.Name = "absPlaintextWarningLbl";
 			absPlaintextWarningLbl.Size = new System.Drawing.Size(327, 15);
 			absPlaintextWarningLbl.TabIndex = 2;
@@ -1744,7 +1756,7 @@ namespace LibationWinForms.Dialogs
 			// absUrlLbl
 			// 
 			absUrlLbl.AutoSize = true;
-			absUrlLbl.Location = new System.Drawing.Point(6, 81);
+			absUrlLbl.Location = new System.Drawing.Point(6, 107);
 			absUrlLbl.Name = "absUrlLbl";
 			absUrlLbl.Size = new System.Drawing.Size(173, 15);
 			absUrlLbl.TabIndex = 3;
@@ -1753,7 +1765,7 @@ namespace LibationWinForms.Dialogs
 			// absUrlTb
 			// 
 			absUrlTb.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
-			absUrlTb.Location = new System.Drawing.Point(90, 78);
+			absUrlTb.Location = new System.Drawing.Point(90, 104);
 			absUrlTb.Name = "absUrlTb";
 			absUrlTb.Size = new System.Drawing.Size(550, 23);
 			absUrlTb.TabIndex = 4;
@@ -1761,7 +1773,7 @@ namespace LibationWinForms.Dialogs
 			// absTokenLbl
 			// 
 			absTokenLbl.AutoSize = true;
-			absTokenLbl.Location = new System.Drawing.Point(6, 110);
+			absTokenLbl.Location = new System.Drawing.Point(6, 136);
 			absTokenLbl.Name = "absTokenLbl";
 			absTokenLbl.Size = new System.Drawing.Size(176, 15);
 			absTokenLbl.TabIndex = 5;
@@ -1770,7 +1782,7 @@ namespace LibationWinForms.Dialogs
 			// absTokenTb
 			// 
 			absTokenTb.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
-			absTokenTb.Location = new System.Drawing.Point(90, 107);
+			absTokenTb.Location = new System.Drawing.Point(90, 133);
 			absTokenTb.Name = "absTokenTb";
 			absTokenTb.Size = new System.Drawing.Size(550, 23);
 			absTokenTb.TabIndex = 6;
@@ -1778,7 +1790,7 @@ namespace LibationWinForms.Dialogs
 			// absConnectBtn
 			// 
 			absConnectBtn.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right;
-			absConnectBtn.Location = new System.Drawing.Point(646, 78);
+			absConnectBtn.Location = new System.Drawing.Point(646, 104);
 			absConnectBtn.Name = "absConnectBtn";
 			absConnectBtn.Size = new System.Drawing.Size(130, 52);
 			absConnectBtn.TabIndex = 7;
@@ -1789,7 +1801,7 @@ namespace LibationWinForms.Dialogs
 			// absStatusLbl
 			// 
 			absStatusLbl.AutoSize = true;
-			absStatusLbl.Location = new System.Drawing.Point(6, 140);
+			absStatusLbl.Location = new System.Drawing.Point(6, 166);
 			absStatusLbl.Name = "absStatusLbl";
 			absStatusLbl.Size = new System.Drawing.Size(0, 15);
 			absStatusLbl.TabIndex = 8;
@@ -1797,7 +1809,7 @@ namespace LibationWinForms.Dialogs
 			// absLibraryLbl
 			// 
 			absLibraryLbl.AutoSize = true;
-			absLibraryLbl.Location = new System.Drawing.Point(6, 166);
+			absLibraryLbl.Location = new System.Drawing.Point(6, 192);
 			absLibraryLbl.Name = "absLibraryLbl";
 			absLibraryLbl.Size = new System.Drawing.Size(172, 15);
 			absLibraryLbl.TabIndex = 9;
@@ -1808,7 +1820,7 @@ namespace LibationWinForms.Dialogs
 			absLibraryCb.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
 			absLibraryCb.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
 			absLibraryCb.FormattingEnabled = true;
-			absLibraryCb.Location = new System.Drawing.Point(90, 163);
+			absLibraryCb.Location = new System.Drawing.Point(90, 189);
 			absLibraryCb.Name = "absLibraryCb";
 			absLibraryCb.Size = new System.Drawing.Size(686, 23);
 			absLibraryCb.TabIndex = 10;
@@ -1817,7 +1829,7 @@ namespace LibationWinForms.Dialogs
 			// absFolderLbl
 			// 
 			absFolderLbl.AutoSize = true;
-			absFolderLbl.Location = new System.Drawing.Point(6, 196);
+			absFolderLbl.Location = new System.Drawing.Point(6, 222);
 			absFolderLbl.Name = "absFolderLbl";
 			absFolderLbl.Size = new System.Drawing.Size(169, 15);
 			absFolderLbl.TabIndex = 11;
@@ -1828,7 +1840,7 @@ namespace LibationWinForms.Dialogs
 			absFolderCb.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
 			absFolderCb.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
 			absFolderCb.FormattingEnabled = true;
-			absFolderCb.Location = new System.Drawing.Point(90, 193);
+			absFolderCb.Location = new System.Drawing.Point(90, 219);
 			absFolderCb.Name = "absFolderCb";
 			absFolderCb.Size = new System.Drawing.Size(686, 23);
 			absFolderCb.TabIndex = 12;
@@ -2030,6 +2042,7 @@ namespace LibationWinForms.Dialogs
 		private System.Windows.Forms.TabPage tab5Audiobookshelf;
 		private System.Windows.Forms.CheckBox absEnabledCb;
 		private System.Windows.Forms.CheckBox absIncludePdfsCb;
+		private System.Windows.Forms.CheckBox absPushProgressCb;
 		private System.Windows.Forms.Label absPlaintextWarningLbl;
 		private System.Windows.Forms.Label absUrlLbl;
 		private System.Windows.Forms.TextBox absUrlTb;

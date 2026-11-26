@@ -1,3 +1,4 @@
+using ApplicationServices;
 using AssertionHelper;
 using DataLayer;
 using FileManager;
@@ -366,5 +367,70 @@ public class UploadToAudiobookshelfTests
 		{
 			Directory.Delete(booksDirectory, recursive: true);
 		}
+	}
+
+	private static BookPushResult PushResult(AudiobookshelfProgressSync.Outcome outcome)
+		=> new("B0TEST0001", "Test Title", outcome, outcome.ToString(), null, null);
+
+	private static UploadToAudiobookshelf ProgressSut(bool pushProgress, Func<LibraryBook, Task<BookPushResult>> pusher)
+	{
+		var config = ConfiguredForAudiobookshelf();
+		config.AudiobookshelfPushProgressAfterUpload = pushProgress;
+		var sut = UploadToAudiobookshelf.Create(config);
+		sut.ProgressPusher = pusher;
+		sut.ProgressPushRetryDelay = TimeSpan.Zero;
+		return sut;
+	}
+
+	[TestMethod]
+	public async Task PushProgressAfterUpload_does_nothing_when_the_setting_is_off()
+	{
+		var calls = 0;
+		var sut = ProgressSut(false, _ => { calls++; return Task.FromResult(PushResult(AudiobookshelfProgressSync.Outcome.Updated)); });
+
+		await sut.PushProgressAfterUploadAsync(LibraryBookWith(LiberatedStatus.Liberated));
+
+		calls.Be(0);
+	}
+
+	[TestMethod]
+	public async Task PushProgressAfterUpload_pushes_once_for_the_uploaded_book_when_the_setting_is_on()
+	{
+		var pushed = new System.Collections.Generic.List<string>();
+		var sut = ProgressSut(true, lb => { pushed.Add(lb.Book.AudibleProductId); return Task.FromResult(PushResult(AudiobookshelfProgressSync.Outcome.Updated)); });
+
+		await sut.PushProgressAfterUploadAsync(LibraryBookWith(LiberatedStatus.Liberated));
+
+		pushed.Should().BeEquivalentTo(["B0TEST0001"]);
+	}
+
+	[TestMethod]
+	public async Task PushProgressAfterUpload_retries_while_the_new_item_is_not_yet_on_the_server_then_gives_up()
+	{
+		var calls = 0;
+		var sut = ProgressSut(true, _ => { calls++; return Task.FromResult(PushResult(AudiobookshelfProgressSync.Outcome.NotOnServer)); });
+
+		await sut.PushProgressAfterUploadAsync(LibraryBookWith(LiberatedStatus.Liberated));
+
+		calls.Be(sut.ProgressPushAttempts);
+	}
+
+	[TestMethod]
+	public async Task PushProgressAfterUpload_does_not_retry_other_outcomes()
+	{
+		var calls = 0;
+		var sut = ProgressSut(true, _ => { calls++; return Task.FromResult(PushResult(AudiobookshelfProgressSync.Outcome.ServerIsNewer)); });
+
+		await sut.PushProgressAfterUploadAsync(LibraryBookWith(LiberatedStatus.Liberated));
+
+		calls.Be(1);
+	}
+
+	[TestMethod]
+	public async Task PushProgressAfterUpload_swallows_a_failing_push()
+	{
+		var sut = ProgressSut(true, _ => throw new InvalidOperationException("boom"));
+
+		await sut.PushProgressAfterUploadAsync(LibraryBookWith(LiberatedStatus.Liberated));
 	}
 }

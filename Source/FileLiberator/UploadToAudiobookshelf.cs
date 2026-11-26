@@ -87,6 +87,7 @@ public class UploadToAudiobookshelf : Processable, IProcessable<UploadToAudioboo
 			{
 				const string message = "Upload to Audiobookshelf completed successfully";
 				OnStatusUpdate(message);
+				await PushProgressAfterUploadAsync(libraryBook);
 				OnOutcomeDetermined(UploadOutcome.Uploaded, message);
 				return new StatusHandler();
 			}
@@ -120,6 +121,47 @@ public class UploadToAudiobookshelf : Processable, IProcessable<UploadToAudioboo
 		{
 			OnCompleted(libraryBook);
 		}
+	}
+
+	internal Func<LibraryBook, Task<BookPushResult>>? ProgressPusher { get; set; }
+	internal int ProgressPushAttempts { get; set; } = 3;
+	internal TimeSpan ProgressPushRetryDelay { get; set; } = TimeSpan.FromSeconds(3);
+
+	/// <summary>Soft-fails; retries while Audiobookshelf has not yet indexed the new item.</summary>
+	internal async Task PushProgressAfterUploadAsync(LibraryBook libraryBook)
+	{
+		if (!Configuration.AudiobookshelfPushProgressAfterUpload)
+			return;
+
+		try
+		{
+			var pusher = ProgressPusher ?? PushViaService;
+			BookPushResult result;
+			for (var attempt = 1; ; attempt++)
+			{
+				result = await pusher(libraryBook);
+				if (result.Outcome is not AudiobookshelfProgressSync.Outcome.NotOnServer || attempt >= ProgressPushAttempts)
+					break;
+				await Task.Delay(ProgressPushRetryDelay);
+			}
+
+			OnStatusUpdate(result.Pushed ? "Pushed Audible listening progress to Audiobookshelf" : $"Audible progress not pushed: {result.Message}");
+			if (result.Failed)
+				Serilog.Log.Logger.Warning("Pushing Audible progress failed for {Book}: {Message}", libraryBook.LogFriendly(), result.Message);
+		}
+		catch (Exception ex)
+		{
+			Serilog.Log.Logger.Error(ex, "Error pushing Audible progress for {Book}; continuing as soft-failure", libraryBook.LogFriendly());
+			OnStatusUpdate($"Audible progress push error: {ex.Message}");
+		}
+	}
+
+	private async Task<BookPushResult> PushViaService(LibraryBook libraryBook)
+	{
+		var connection = AbsConnection.From(Configuration)
+			?? throw new InvalidOperationException("Audiobookshelf is not configured");
+		var results = await AudiobookshelfProgressPush.PushAsync([libraryBook], connection, force: false, readPositions: AudiobookshelfProgressPush.DefaultReader(allowInteractiveLogin: false));
+		return results[0];
 	}
 
 	/// <summary>
