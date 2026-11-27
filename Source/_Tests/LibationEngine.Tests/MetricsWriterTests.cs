@@ -55,4 +55,34 @@ public class MetricsWriterTests
 		if (!OperatingSystem.IsWindows())
 			Assert.AreEqual(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead, File.GetUnixFileMode(path));
 	}
+
+	[TestMethod]
+	public void Accounts_are_written_as_labelled_gauges_after_the_totals()
+	{
+		var text = MetricsWriter.Format(new(10, 5, 4, 0)
+		{
+			Accounts = [new("Second", "uk", true, false, 10, 10), new("Orig", "us", false, true, 10, 5)]
+		});
+
+		StringAssert.StartsWith(text, MetricsWriter.Format(new(10, 5, 4, 0)));
+		StringAssert.Contains(text,
+			"# HELP libation_account_scan_success 1 if the account's last scan succeeded, 0 if it failed.\n" +
+			"# TYPE libation_account_scan_success gauge\n" +
+			"libation_account_scan_success{account=\"Orig\",locale=\"us\"} 0\n" +
+			"libation_account_scan_success{account=\"Second\",locale=\"uk\"} 1\n");
+		StringAssert.Contains(text, "libation_account_needs_login{account=\"Orig\",locale=\"us\"} 1\n");
+		StringAssert.Contains(text, "libation_account_scan_last_success_timestamp_seconds{account=\"Orig\",locale=\"us\"} 5\n");
+	}
+
+	[TestMethod]
+	public void Account_metrics_survive_a_round_trip_including_awkward_names()
+	{
+		using var dir = new TempDir();
+		var writer = new MetricsWriter(dir.File("m.prom"));
+		AccountScanMetric awkward = new("My \"main\" \\ acct", "us", false, true, 20, 7);
+		writer.Write(new(20, 7, 3, 0) { Accounts = [awkward] });
+
+		Assert.AreEqual(awkward, writer.ReadPreviousAccounts().Single());
+		Assert.AreEqual((7L, 0), writer.ReadPrevious());
+	}
 }

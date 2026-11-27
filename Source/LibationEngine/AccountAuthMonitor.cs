@@ -44,6 +44,15 @@ public sealed class AccountAuthMonitor : IDisposable
 				events.Publish(new AccountSignedIn(account.AccountId, account.Locale));
 	}
 
+	/// <summary>Unflags the account if a scan for it just worked, publishing <see cref="AccountSignedIn"/> when it was flagged.</summary>
+	public void AccountScanned(string accountId, string? locale)
+	{
+		if (flagged.TryGetValue(accountId, out var flaggedLocale)
+			&& (flaggedLocale is null || locale is null || string.Equals(flaggedLocale, locale, StringComparison.OrdinalIgnoreCase))
+			&& flagged.TryRemove(accountId, out _))
+			events.Publish(new AccountSignedIn(accountId, locale));
+	}
+
 	/// <summary>Unflags every account, publishing <see cref="AccountSignedIn"/> for each.</summary>
 	public void ClearAll()
 	{

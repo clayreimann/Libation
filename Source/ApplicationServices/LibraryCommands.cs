@@ -132,10 +132,24 @@ public static class LibraryCommands
 
 	public static async Task<(int totalCount, int newCount)> ImportAccountAsync(Account[]? accounts, bool allowInteractiveLogin)
 	{
+		var result = await importAccountsAsync(accounts, allowInteractiveLogin, isolateAccountFailures: false);
+		return (result.TotalCount, result.NewCount);
+	}
+
+	/// <summary>
+	/// Scans and imports each account on its own: one that needs a login or fails to scan is reported in
+	/// <see cref="LibraryScanResult.Accounts"/> instead of stopping the others. Nothing is thrown for a
+	/// failed account, so the caller decides what a partial scan means.
+	/// </summary>
+	public static Task<LibraryScanResult> ImportAccountsIsolatedAsync(Account[]? accounts, bool allowInteractiveLogin)
+		=> importAccountsAsync(accounts, allowInteractiveLogin, isolateAccountFailures: true);
+
+	private static async Task<LibraryScanResult> importAccountsAsync(Account[]? accounts, bool allowInteractiveLogin, bool isolateAccountFailures)
+	{
 		logRestart();
 
 		if (accounts is null || accounts.Length == 0)
-			return (0, 0);
+			return new(0, 0, []);
 
 		await ImportGate.WaitAsync();
 		int newCount = 0;
@@ -162,14 +176,15 @@ public static class LibraryCommands
 					ImageSizes = LibraryOptions.ImageSizeOptions._500 | LibraryOptions.ImageSizeOptions._1215
 				};
 				//Importing only adds and updates, so a partially scanned library is still worth importing.
-				var importItems = (await scanAccountsAsync(accounts, libraryOptions, allowInteractiveLogin)).Items;
+				var scan = await scanAccountsAsync(accounts, libraryOptions, allowInteractiveLogin, isolateAccountFailures);
+				var importItems = scan.Items;
 				logTime($"post {nameof(scanAccountsAsync)} all");
 
 				var totalCount = importItems.Count;
 				Log.Logger.Information($"GetAllLibraryItems: Total count {totalCount}");
 
 				if (totalCount == 0)
-					return default;
+					return new(0, 0, scan.Accounts);
 
 				Log.Logger.Information("Begin long-running import");
 				logTime($"pre {nameof(ImportIntoDbAsync)}");
@@ -177,7 +192,7 @@ public static class LibraryCommands
 				logTime($"post {nameof(ImportIntoDbAsync)}");
 				Log.Logger.Information($"Import complete. New count {newCount}");
 
-				return (totalCount, newCount);
+				return new(totalCount, newCount, scan.Accounts);
 			}
             catch (Exception lfEx) when (AuthenticationExceptionHelper.IsAuthenticationFailure(lfEx))
             {
@@ -287,16 +302,24 @@ public static class LibraryCommands
 
 	/// <summary>Outcome of scanning one or more accounts.</summary>
 	/// <param name="Items">Everything the accounts that did scan returned.</param>
-	/// <param name="FailedAccounts">
-	/// Accounts that could not be scanned. Their books are absent from <paramref name="Items"/> for that reason
-	/// alone, so a caller deciding what to remove must not treat the result as the whole library.
-	/// </param>
-	private sealed record ScanResult(List<ImportItem> Items, IReadOnlyCollection<string> FailedAccounts);
-
-	private static async Task<ScanResult> scanAccountsAsync(Account[] accounts, LibraryOptions libraryOptions, bool allowInteractiveLogin)
+	/// <param name="Accounts">How each account's scan went, in the order the accounts were given.</param>
+	private sealed record ScanResult(List<ImportItem> Items, IReadOnlyList<AccountScanOutcome> Accounts)
 	{
-		var tasks = new List<Task<List<ImportItem>>>();
-		var failedAccounts = new List<string>();
+		/// <summary>
+		/// Accounts that could not be scanned. Their books are absent from <see cref="Items"/> for that reason
+		/// alone, so a caller deciding what to remove must not treat the result as the whole library.
+		/// </summary>
+		public IReadOnlyCollection<string> FailedAccounts { get; init; } = [];
+	}
+
+	/// <param name="isolateAccountFailures">
+	/// False keeps the old contract: without interactive login an authentication failure is thrown, and a library
+	/// read that fails stops the scan. True records either against its account and carries on with the rest.
+	/// </param>
+	private static async Task<ScanResult> scanAccountsAsync(Account[] accounts, LibraryOptions libraryOptions, bool allowInteractiveLogin, bool isolateAccountFailures = false)
+	{
+		var scans = new List<(Account Account, Task<List<ImportItem>> Items)>();
+		var outcomes = new Dictionary<Account, AccountScanOutcome>();
 
 		await using LogArchiver? archiver
 			 = Log.Logger.IsDebugEnabled()
@@ -324,24 +347,50 @@ public static class LibraryCommands
 					accountTasks.Add(scanAccountAsync(apiExtended, account, locale, libraryOptions, archiver));
 				}
 
-				tasks.AddRange(accountTasks);
+				scans.Add((account, combine(accountTasks)));
 			}
-			catch (Exception ex) when (!allowInteractiveLogin && AuthenticationExceptionHelper.IsAuthenticationFailure(ex))
+			catch (Exception ex) when (!isolateAccountFailures && !allowInteractiveLogin && AuthenticationExceptionHelper.IsAuthenticationFailure(ex))
 			{
 				throw;
 			}
 			catch (Exception ex)
 			{
 				//Catch to allow other accounts to continue scanning.
-				Log.Logger.Error(ex, "Failed to scan account");
-				failedAccounts.Add(account.MaskedLogEntry ?? account.AccountId ?? "[unknown account]");
+				Log.Logger.Error(ex, "Failed to scan account {Account}", account.MaskedLogEntry);
+				outcomes[account] = AccountScanOutcome.Failed(account, ex);
 			}
 		}
 
-		// import library in parallel
-		var arrayOfLists = await Task.WhenAll(tasks);
-		var importItems = arrayOfLists.SelectMany(a => a).ToList();
-		return new ScanResult(importItems, failedAccounts);
+		// import library in parallel. Without isolation the first failed read stops the scan, as it always has.
+		if (!isolateAccountFailures)
+			await Task.WhenAll(scans.Select(s => s.Items));
+
+		var importItems = new List<ImportItem>();
+		foreach (var (account, items) in scans)
+		{
+			try
+			{
+				var accountItems = await items;
+				importItems.AddRange(accountItems);
+				outcomes[account] = AccountScanOutcome.Scanned(account, accountItems.Count);
+			}
+			catch (Exception ex)
+			{
+				Log.Logger.Error(ex, "Failed to scan account {Account}", account.MaskedLogEntry);
+				outcomes[account] = AccountScanOutcome.Failed(account, ex);
+			}
+		}
+
+		var ordered = accounts.Where(outcomes.ContainsKey).Select(a => outcomes[a]).ToList();
+		return new ScanResult(importItems, ordered)
+		{
+			FailedAccounts = accounts.Where(a => outcomes.TryGetValue(a, out var o) && !o.Succeeded)
+				.Select(a => a.MaskedLogEntry ?? a.AccountId ?? "[unknown account]")
+				.ToList()
+		};
+
+		static async Task<List<ImportItem>> combine(List<Task<List<ImportItem>>> tasks)
+			=> (await Task.WhenAll(tasks)).SelectMany(t => t).ToList();
 	}
 
 	/// <param name="locale">

@@ -17,13 +17,17 @@ public class CycleSchedulerTests
 		public CycleState State { get; } = new();
 
 		public bool Once;
+		public IReadOnlyList<ApplicationServices.AccountScanOutcome>? Outcomes;
 
 		public CycleScheduler Create() => new(
 			new DaemonOptions(interval ?? TimeSpan.FromMilliseconds(10), reconcile, "http://127.0.0.1:0", dir.Path, Metrics, Once: Once),
 			new DaemonJobs(
 				_ => { Interlocked.Increment(ref ScanCalls); return Task.FromResult(ScanRc); },
 				_ => { Interlocked.Increment(ref LiberateCalls); return Task.FromResult(LiberateRc); },
-				_ => { Interlocked.Increment(ref ReconcileCalls); return Task.FromResult(ReconcileRc); }),
+				_ => { Interlocked.Increment(ref ReconcileCalls); return Task.FromResult(ReconcileRc); })
+			{
+				TakeScanOutcomes = () => Outcomes
+			},
 			State);
 	}
 
@@ -52,6 +56,54 @@ public class CycleSchedulerTests
 		var snap = h.State.Snapshot();
 		Assert.AreEqual("idle", snap.State);
 		Assert.IsNotNull(snap.LastSuccess);
+	}
+
+	private static ApplicationServices.AccountScanOutcome Outcome(string label, bool ok, bool needsLogin = false)
+		=> new(label + "@example.com", label, "us", ok, needsLogin, ok ? 10 : 0, ok ? null : "login required");
+
+	[TestMethod]
+	public async Task A_partly_failed_scan_still_liberates_but_does_not_count_as_a_success()
+	{
+		using var dir = new TempDir();
+		var h = new Harness(dir) { ScanRc = CycleScheduler.ScanPartlyFailedExitCode, Outcomes = [Outcome("Orig", false, needsLogin: true), Outcome("Second", true)] };
+		await h.Create().RunCycleAsync(CancellationToken.None);
+
+		Assert.AreEqual(1, h.LiberateCalls);
+		Assert.AreEqual("0", Read(h.Metrics, "libation_scan_last_success_timestamp_seconds"));
+		Assert.AreEqual("4", Read(h.Metrics, "libation_scan_last_exit_code"));
+		Assert.AreEqual("0", Read(h.Metrics, "libation_account_scan_success{account=\"Orig\",locale=\"us\"}"));
+		Assert.AreEqual("1", Read(h.Metrics, "libation_account_needs_login{account=\"Orig\",locale=\"us\"}"));
+		Assert.AreEqual("1", Read(h.Metrics, "libation_account_scan_success{account=\"Second\",locale=\"us\"}"));
+		Assert.AreEqual("0", Read(h.Metrics, "libation_account_scan_last_success_timestamp_seconds{account=\"Orig\",locale=\"us\"}"));
+		Assert.AreNotEqual("0", Read(h.Metrics, "libation_account_scan_last_success_timestamp_seconds{account=\"Second\",locale=\"us\"}"));
+		Assert.IsNull(h.State.Snapshot().LastSuccess);
+	}
+
+	[TestMethod]
+	public async Task An_account_keeps_its_last_success_across_a_failure_and_a_restart()
+	{
+		using var dir = new TempDir();
+		var h = new Harness(dir) { Outcomes = [Outcome("Orig", true)] };
+		await h.Create().RunCycleAsync(CancellationToken.None);
+		var success = Read(h.Metrics, "libation_account_scan_last_success_timestamp_seconds{account=\"Orig\",locale=\"us\"}");
+		Assert.AreNotEqual("0", success);
+
+		h.ScanRc = 3;
+		h.Outcomes = [Outcome("Orig", false, needsLogin: true)];
+		await h.Create().RunCycleAsync(CancellationToken.None);
+
+		Assert.AreEqual("0", Read(h.Metrics, "libation_account_scan_success{account=\"Orig\",locale=\"us\"}"));
+		Assert.AreEqual(success, Read(h.Metrics, "libation_account_scan_last_success_timestamp_seconds{account=\"Orig\",locale=\"us\"}"));
+	}
+
+	[TestMethod]
+	public async Task A_scan_that_reports_no_accounts_writes_no_account_metrics()
+	{
+		using var dir = new TempDir();
+		var h = new Harness(dir);
+		await h.Create().RunCycleAsync(CancellationToken.None);
+
+		Assert.IsFalse(File.ReadAllText(h.Metrics).Contains("libation_account_"));
 	}
 
 	[TestMethod]

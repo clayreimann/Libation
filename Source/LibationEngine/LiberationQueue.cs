@@ -324,6 +324,7 @@ public sealed partial class LiberationQueue
 		ProcessBookResult result;
 		try
 		{
+			book.ThrottleRecovery ??= _policy.ThrottleRecovery;
 			result = await RunJob(book);
 		}
 		catch (Exception ex)

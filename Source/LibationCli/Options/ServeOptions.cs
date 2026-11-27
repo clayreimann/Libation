@@ -1,10 +1,13 @@
+using ApplicationServices;
 using CommandLine;
 using LibationEngine;
 using LibationEngine.Host;
 using LibationFileManager;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace LibationCli;
@@ -150,25 +153,41 @@ internal class ServeOptions : OptionsBase
 		{
 			MaxConcurrentDownloads = () => 1,
 			OnDiskFull = DiskFullPolicy.WaitForSpace,
-			OnDailyLimit = DailyLimitPolicy.Skip
+			OnDailyLimit = DailyLimitPolicy.Skip,
+			ThrottleRecovery = new ThrottleRecoveryGate()
 		};
 		var queue = new LiberationQueue(policy);
 		_ = new AutoResponder(queue, policy, Console.Error);
 
+		IReadOnlyList<AccountScanOutcome>? lastScan = null;
+		async Task<int> scan(ScanOptions options)
+		{
+			try
+			{
+				return await options.ExecuteAsync();
+			}
+			finally
+			{
+				Volatile.Write(ref lastScan, options.AccountOutcomes);
+			}
+		}
+
 		var jobs = new DaemonJobs(
-			_ => new ScanOptions().ExecuteAsync(),
+			_ => scan(new ScanOptions()),
 			_ => new LiberateOptions { SharedQueue = queue }.ExecuteAsync(),
 			async _ =>
 			{
+				// One account needing a login should not stop the daemon from starting for the others.
 				var rc = await new ScanOptions().ExecuteAsync();
-				return rc != 0 ? rc : await new SetDownloadStatusOptions { SetDownloaded = true }.ExecuteAsync();
+				return rc is not 0 and not (int)ExitCode.ScanPartlyFailed ? rc : await new SetDownloadStatusOptions { SetDownloaded = true }.ExecuteAsync();
 			})
 		{
 			CreateBookJob = asin => new LiberateOptions { SharedQueue = queue }.CreateTargetedJob(queue, asin),
 			CreateUploadJob = asin => AudiobookshelfUploadJob.Create(queue, asin),
 			CreateConvertJob = asin => Mp3ConversionJob.Create(queue, asin),
 			CreateProgressJob = (asin, force) => ProgressPushJob.Create(queue, asin, force),
-			ScanAccounts = (selection, _) => new ScanOptions { AccountNames = selection.Accounts, Locale = selection.Locale }.ExecuteAsync()
+			ScanAccounts = (selection, _) => scan(new ScanOptions { AccountNames = selection.Accounts, Locale = selection.Locale }),
+			TakeScanOutcomes = () => Interlocked.Exchange(ref lastScan, null)
 		};
 
 		Environment.ExitCode = await LibationDaemon.RunAsync(options, jobs, queue: queue);

@@ -33,6 +33,12 @@ public sealed record DaemonJobs(
 
 	/// <summary>Scans only the selected accounts; when null a subset request scans everything.</summary>
 	public Func<ScanSelection, CancellationToken, Task<int>>? ScanAccounts { get; init; }
+
+	/// <summary>
+	/// How each account fared in the scan that just finished, or null when the scan did not say. Called once after
+	/// every scan; what it returns is not returned again.
+	/// </summary>
+	public Func<IReadOnlyList<ApplicationServices.AccountScanOutcome>?>? TakeScanOutcomes { get; init; }
 }
 
 /// <summary>Accounts by login id or name, narrowed to one marketplace by Locale; either may be null but not both.</summary>

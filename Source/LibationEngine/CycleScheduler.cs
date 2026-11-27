@@ -1,3 +1,4 @@
+using ApplicationServices;
 using LibationEngine.Contracts;
 using Serilog;
 
@@ -8,6 +9,12 @@ public enum RunKind { Scan, Cycle }
 public sealed class CycleScheduler
 {
 	public const int ReconcileFailedExitCode = 3;
+
+	/// <summary>
+	/// A scan in which some accounts scanned and some did not. Liberate still runs for the books it found, but the
+	/// overall success time does not move: it means every account scanned.
+	/// </summary>
+	public const int ScanPartlyFailedExitCode = 4;
 
 	private readonly DaemonOptions options;
 	private readonly DaemonJobs jobs;
@@ -21,6 +28,7 @@ public sealed class CycleScheduler
 	private ScanSelection? requestedAccounts;
 	private long successTs;
 	private int liberateRc;
+	private readonly Dictionary<(string Account, string Locale), AccountScanMetric> accountMetrics = new();
 
 	public CycleScheduler(DaemonOptions options, DaemonJobs jobs, CycleState state, TimeProvider? time = null, EventBroadcaster? events = null)
 	{
@@ -33,7 +41,11 @@ public sealed class CycleScheduler
 		metrics = options.MetricsFile is null ? null : new MetricsWriter(options.MetricsFile);
 
 		if (metrics is not null)
+		{
 			(successTs, liberateRc) = metrics.ReadPrevious();
+			foreach (var account in metrics.ReadPreviousAccounts())
+				accountMetrics[(account.Account, account.Locale)] = account;
+		}
 		state.Seed(successTs > 0 ? DateTimeOffset.FromUnixTimeSeconds(successTs) : null, liberateRc);
 	}
 
@@ -41,6 +53,12 @@ public sealed class CycleScheduler
 
 	/// <summary>Raised after a scan that exits 0.</summary>
 	public Action<ScanSelection?>? OnScanSucceeded { get; set; }
+
+	/// <summary>Raised after every scan that reported how each account fared, before <see cref="OnScanSucceeded"/>.</summary>
+	public Action<IReadOnlyList<AccountScanOutcome>>? OnAccountsScanned { get; set; }
+
+	/// <summary>The latest scan result for each account a scan has reported on.</summary>
+	public IReadOnlyList<AccountScanMetric> AccountScans { get { lock (accountMetrics) return accountMetrics.Values.ToList(); } }
 
 	/// <summary>Queues an immediate run; false if a job is running or one is already queued. <paramref name="selection"/> narrows a scan.</summary>
 	public bool TryRequestRun(RunKind kind, ScanSelection? selection = null)
@@ -177,6 +195,7 @@ public sealed class CycleScheduler
 			: await RunJob("scan", jobs.Scan, ct);
 		var now = time.GetUtcNow();
 		state.RecordScan(now, scanRc);
+		RecordAccounts(jobs.TakeScanOutcomes?.Invoke(), now);
 		if (scanRc == 0)
 		{
 			successTs = now.ToUnixTimeSeconds();
@@ -201,8 +220,10 @@ public sealed class CycleScheduler
 		ImportAccounts();
 
 		var scanRc = await ScanAsync(ct);
-		if (scanRc == 0)
+		if (scanRc == 0 || scanRc == ScanPartlyFailedExitCode)
 		{
+			if (scanRc != 0)
+				Log.Logger.Warning("Some accounts failed to scan; liberating what the others found");
 			SetState(DaemonState.Liberating);
 			Events.Publish(new LiberateStarted());
 			liberateRc = await RunJob("liberate", jobs.Liberate, ct);
@@ -219,13 +240,41 @@ public sealed class CycleScheduler
 		return rc;
 	}
 
+	private void RecordAccounts(IReadOnlyList<AccountScanOutcome>? outcomes, DateTimeOffset now)
+	{
+		if (outcomes is null || outcomes.Count == 0)
+			return;
+
+		var ts = now.ToUnixTimeSeconds();
+		lock (accountMetrics)
+			foreach (var o in outcomes)
+			{
+				var key = (o.Label, o.Locale ?? "");
+				var previous = accountMetrics.GetValueOrDefault(key);
+				accountMetrics[key] = new(o.Label, o.Locale ?? "", o.Succeeded, o.NeedsLogin, ts,
+					o.Succeeded ? ts : previous?.LastSuccessTimestamp ?? 0);
+			}
+
+		foreach (var failed in outcomes.Where(o => !o.Succeeded))
+			Log.Logger.Warning("Account {Account} ({Locale}) was not scanned{Reason}", failed.Label, failed.Locale, failed.NeedsLogin ? ": Audible needs it to sign in again" : "");
+
+		try
+		{
+			OnAccountsScanned?.Invoke(outcomes);
+		}
+		catch (Exception ex)
+		{
+			Log.Logger.Warning(ex, "Could not record which accounts scanned");
+		}
+	}
+
 	private void WriteMetrics(long runTs, int scanRc)
 	{
 		if (metrics is null)
 			return;
 		try
 		{
-			metrics.Write(new(runTs, successTs, scanRc, liberateRc));
+			metrics.Write(new(runTs, successTs, scanRc, liberateRc) { Accounts = AccountScans });
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
