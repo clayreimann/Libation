@@ -35,15 +35,31 @@ public class ScanOptions : OptionsBase
 			: $"Scanning Audible library: {_accounts.Length} accounts. This may take a few minutes per account.";
 		Console.WriteLine(intro);
 
-		// CLI/Docker cannot interactive-login; fail closed with the real token/auth error.
-		var (TotalBooksProcessed, NewBooksAdded) = await LibraryCommands.ImportAccountAsync(
-			_accounts,
-			allowInteractiveLogin: false);
+		// CLI/Docker cannot interactive-login. Each account fails on its own, so one that needs a login does not
+		// stop the others from being scanned and imported.
+		var result = await LibraryCommands.ImportAccountsIsolatedAsync(_accounts, allowInteractiveLogin: false);
+		AccountOutcomes = result.Accounts;
 
-		Console.WriteLine("Scan complete.");
-		Console.WriteLine($"Total processed: {TotalBooksProcessed}");
-		Console.WriteLine($"New: {NewBooksAdded}");
+		foreach (var failed in result.Failed)
+		{
+			// stderr is not teed into Serilog, so this is the one place the owner can be told which account in full.
+			var account = _accounts.FirstOrDefault(a => a.AccountId == failed.AccountId);
+			var label = AccountCredentialStatus.FormatAccountLabel(account);
+			Console.Error.WriteLine(failed.NeedsLogin
+				? $"Audible login is required for {label}. It was not scanned."
+				: $"Could not scan {label}: {failed.Error}");
+		}
+
+		Console.WriteLine(result.AllSucceeded ? "Scan complete." : $"Scan finished with {result.Failed.Count()} of {_accounts.Length} accounts failed.");
+		Console.WriteLine($"Total processed: {result.TotalCount}");
+		Console.WriteLine($"New: {result.NewCount}");
+
+		if (!result.AllSucceeded)
+			Environment.ExitCode = (int)(result.AnySucceeded ? ExitCode.ScanPartlyFailed : ExitCode.RunTimeError);
 	}
+
+	/// <summary>How each account's scan went, once <see cref="OptionsBase.ExecuteAsync"/> has run; null if it never got that far.</summary>
+	public IReadOnlyList<AccountScanOutcome>? AccountOutcomes { get; private set; }
 
 	private Account[] getAccounts()
 	{

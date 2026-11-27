@@ -84,6 +84,13 @@ public sealed class LiberationJob
 	/// <summary> A series of Processable actions to perform on this book </summary>
 	private Queue<Func<Processable>> Processes { get; } = new();
 
+	/// <summary>
+	/// When set, Audible throttling on a legacy or non-Widevine registration only switches settings and marks the
+	/// account for a new login once the gate agrees. Null keeps the attended behaviour of recovering at once,
+	/// where someone is there to sign in.
+	/// </summary>
+	public ThrottleRecoveryGate? ThrottleRecovery { get; set; }
+
 	public LiberationJob(LibraryBook libraryBook, Configuration configuration, BadBookSessionContext? badBookSession = null)
 	{
 		LibraryBook = libraryBook;
@@ -111,7 +118,11 @@ public sealed class LiberationJob
 				result = await ExecuteProcessableAsync(processable);
 
 				if (processable is ILicensedDownload { ObtainedLicense: { } license })
+				{
 					obtainedLicense = license;
+					if (result is ProcessBookResult.Success)
+						ThrottleRecovery?.RecordLicensed(LibraryBook.Account);
+				}
 
 				UnlinkProcessable(processable);
 				NextProcessable();
@@ -182,7 +193,9 @@ public sealed class LiberationJob
 		catch (ApiErrorException ex) when (WidevineRecommendation.ShouldRecommendWidevine(ex, Configuration))
 		{
 			Serilog.Log.Logger.Error(ex, "ADRM license unavailable (Sable acr:null) for {Book}", LibraryBook.LogFriendly());
-			if (System.IO.File.Exists(AudibleApiStorage.AccountsSettingsFile))
+			if (!ThrottleRecoveryAllowed())
+				LogAttention($"{procName}:  This title needs Widevine. Libation did not change settings or ask for a new login because of one title; it will once {ThrottleRecovery!.DistinctTitles} different titles on this account need it within {ThrottleRecovery.Window.TotalHours:0} hours. - {LibraryBook.Book}");
+			else if (System.IO.File.Exists(AudibleApiStorage.AccountsSettingsFile))
 			{
 				using var persister = AudibleApiStorage.GetAccountsSettingsPersister();
 				var account = persister.AccountsSettings.GetAccount(LibraryBook.Account, LibraryBook.Book.Locale);
@@ -196,21 +209,29 @@ public sealed class LiberationJob
 			Serilog.Log.Logger.Error(ldex, "Content license was denied for {Book}", LibraryBook.LogFriendly());
 			if (ldex.IsCustomerThrottled)
 			{
-				bool recovered = false;
+				bool handled = false;
 				if (System.IO.File.Exists(AudibleApiStorage.AccountsSettingsFile))
 				{
 					using var persister = AudibleApiStorage.GetAccountsSettingsPersister();
 					var account = persister.AccountsSettings.GetAccount(LibraryBook.Account, LibraryBook.Book.Locale);
 					if (ThrottledDeviceRecovery.ShouldRecover(ldex, account, Configuration.Instance))
 					{
-						ThrottledDeviceRecovery.ApplyRecovery(persister.AccountsSettings, Configuration.Instance, account);
-						LogAttention($"{procName}:  Audible reports throttling on a legacy or non-Widevine registration. Libation updated settings to Android + Widevine and marked account '{LibraryBook.Account.ToMask()}' for re-registration. Sign in on next scan or liberate to complete setup. - {LibraryBook.Book}");
-						result = ProcessBookResult.LicenseDeniedThrottledRecovered;
-						recovered = true;
+						handled = true;
+						if (ThrottleRecoveryAllowed())
+						{
+							ThrottledDeviceRecovery.ApplyRecovery(persister.AccountsSettings, Configuration.Instance, account);
+							LogAttention($"{procName}:  Audible reports throttling on a legacy or non-Widevine registration. Libation updated settings to Android + Widevine and marked account '{LibraryBook.Account.ToMask()}' for re-registration. Sign in on next scan or liberate to complete setup. - {LibraryBook.Book}");
+							result = ProcessBookResult.LicenseDeniedThrottledRecovered;
+						}
+						else
+						{
+							LogAttention($"{procName}:  Audible reports throttling on a legacy or non-Widevine registration for this title. Libation did not change settings or mark account '{LibraryBook.Account.ToMask()}' for re-registration because of one title; it will once {ThrottleRecovery!.DistinctTitles} different titles on this account are throttled within {ThrottleRecovery.Window.TotalHours:0} hours. - {LibraryBook.Book}");
+							result = ProcessBookResult.LicenseDeniedThrottled;
+						}
 					}
 				}
 
-				if (!recovered)
+				if (!handled)
 				{
 					LogAttention($"{procName}:  Audible reports throttling. Try deregistering Libation devices and recreating the account first. Recovery steps: {AppScaffolding.LicenseRecoveryGuidance.DocumentationUrl}. If it persists, wait 24 to 48 hours, sometimes a few days. - {LibraryBook.Book}");
 					result = ProcessBookResult.LicenseDeniedThrottled;
@@ -247,6 +268,10 @@ public sealed class LiberationJob
 
 		return result;
 	}
+
+	/// <summary>True when there is no gate, or the gate says enough titles on this account have now been refused.</summary>
+	private bool ThrottleRecoveryAllowed()
+		=> ThrottleRecovery?.RecordThrottle(LibraryBook.Account, LibraryBook.Book.AudibleProductId) ?? true;
 
 	private volatile bool cancellationRequested;
 

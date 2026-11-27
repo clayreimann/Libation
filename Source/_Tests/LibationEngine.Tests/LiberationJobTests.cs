@@ -147,4 +147,90 @@ public class LiberationJobTests
 		var redacted = LogRedactor.Redact(new string('x', LogRedactor.MaxLength + 50));
 		Assert.AreEqual(LogRedactor.MaxLength + 1, redacted.Length);
 	}
+
+	private sealed class ThrottledStep : Processable
+	{
+		public override string Name => "Download";
+		public override bool Validate(LibraryBook libraryBook) => true;
+
+		public override Task<StatusHandler> ProcessAsync(LibraryBook libraryBook)
+			=> throw new AudibleApi.ContentLicenseDeniedException(new Uri("https://audible.com/licenserequest"), new AudibleApi.Common.ContentLicense
+			{
+				Asin = libraryBook.Book.AudibleProductId,
+				StatusCode = "Denied",
+				LicenseDenialReasons =
+				[
+					new AudibleApi.Common.LicenseDenialReason
+					{
+						ValidationType = "Ownership",
+						RejectionReason = AudibleApi.Common.RejectionReason.CustomerThrottled,
+						Message = "Customer is throttled"
+					}
+				]
+			});
+	}
+
+	private static AudibleUtilities.Account SeedAccount()
+	{
+		AudibleUtilities.AudibleApiStorage.EnsureAccountsSettingsFileExists();
+		var account = new AudibleUtilities.Account("account") { IdentityTokens = new AudibleApi.Authorization.Identity(AudibleApi.Localization.Get("us")) };
+		using var persister = AudibleUtilities.AudibleApiStorage.GetAccountsSettingsPersister();
+		persister.AccountsSettings.Add(account);
+		return account;
+	}
+
+	private static bool AccountRequiresReRegistration()
+	{
+		using var persister = AudibleUtilities.AudibleApiStorage.GetAccountsSettingsPersister();
+		return persister.AccountsSettings.GetAccount("account", "us")!.RequiresReRegistration;
+	}
+
+	[TestMethod]
+	public async Task with_a_gate_one_throttled_title_leaves_settings_and_the_account_alone()
+	{
+		SeedAccount();
+		Configuration.Instance.UseWidevine = false;
+		var job = Job();
+		job.ThrottleRecovery = new ThrottleRecoveryGate();
+		job.AddProcessable(c => new ThrottledStep { Configuration = c });
+
+		var result = await job.ProcessOneAsync();
+
+		Assert.AreEqual(ProcessBookResult.LicenseDeniedThrottled, result);
+		Assert.IsFalse(Configuration.Instance.UseWidevine);
+		Assert.IsFalse(AccountRequiresReRegistration());
+		Assert.AreEqual(1, job.ThrottleRecovery.ThrottledTitleCount("account"));
+	}
+
+	[TestMethod]
+	public async Task with_a_gate_the_account_is_recovered_once_enough_titles_are_throttled()
+	{
+		SeedAccount();
+		Configuration.Instance.UseWidevine = false;
+		var gate = new ThrottleRecoveryGate(distinctTitles: 2);
+		gate.RecordThrottle("account", "B000000002");
+		var job = Job();
+		job.ThrottleRecovery = gate;
+		job.AddProcessable(c => new ThrottledStep { Configuration = c });
+
+		var result = await job.ProcessOneAsync();
+
+		Assert.AreEqual(ProcessBookResult.LicenseDeniedThrottledRecovered, result);
+		Assert.IsTrue(Configuration.Instance.UseWidevine);
+		Assert.IsTrue(AccountRequiresReRegistration());
+	}
+
+	[TestMethod]
+	public async Task without_a_gate_the_desktop_behaviour_of_recovering_at_once_is_kept()
+	{
+		SeedAccount();
+		Configuration.Instance.UseWidevine = false;
+		var job = Job();
+		job.AddProcessable(c => new ThrottledStep { Configuration = c });
+
+		var result = await job.ProcessOneAsync();
+
+		Assert.AreEqual(ProcessBookResult.LicenseDeniedThrottledRecovered, result);
+		Assert.IsTrue(AccountRequiresReRegistration());
+	}
 }

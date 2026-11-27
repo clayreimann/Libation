@@ -48,7 +48,7 @@ public static class LibationDaemon
 		using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context => { context.Cancel = true; cts.Cancel(); });
 		using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, context => { context.Cancel = true; cts.Cancel(); });
 
-		queue ??= new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => 1, OnDiskFull = DiskFullPolicy.WaitForSpace });
+		queue ??= new LiberationQueue(new LiberationPolicy { MaxConcurrentDownloads = () => 1, OnDiskFull = DiskFullPolicy.WaitForSpace, ThrottleRecovery = new ThrottleRecoveryGate() });
 		using var stopQueue = cts.Token.Register(() => _ = queue.CancelAllAsync());
 
 		var state = new CycleState();
@@ -56,6 +56,11 @@ public static class LibationDaemon
 		using var authMonitor = new AccountAuthMonitor(scheduler.Events);
 		var accountData = data ?? new DbEngineData();
 		scheduler.OnScanSucceeded = selection => authMonitor.ScanSucceeded(selection, accountData.GetAccounts);
+		scheduler.OnAccountsScanned = outcomes =>
+		{
+			foreach (var scanned in outcomes.Where(o => o.Succeeded))
+				authMonitor.AccountScanned(scanned.AccountId, scanned.Locale);
+		};
 		using var loginSessions = logins ?? new LoginSessions(new AudibleLoginBackend());
 		_ = new QueueEventPublisher(queue, scheduler.Events, time);
 		await using var host = options.Once ? null : DaemonHost.Build(options, state, scheduler, queue, data, apiToken, jobs.CreateBookJob, authMonitor, loginSessions, jobs.CreateUploadJob, jobs.CreateConvertJob, jobs.CreateProgressJob);

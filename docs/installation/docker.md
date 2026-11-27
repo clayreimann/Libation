@@ -111,6 +111,14 @@ The HTTP API has the same two tools. Both only accept paths under the Books fold
 
 Set `--metrics-file` (or `LIBATION_METRICS_FILE`) to write a Prometheus textfile after every cycle, suitable for node_exporter's textfile collector.
 
+Each account is scanned on its own, so one that needs a new sign-in does not stop the others. When some accounts scan and some don't, the scan exits with code `4`: liberate still runs for the books that were found, but `libation_scan_last_success_timestamp_seconds` only moves when every account scanned. To see which account failed, the file also has per-account gauges labelled `account` (the account's nickname, or its masked login when it has none) and `locale`:
+
+- `libation_account_scan_success`: `1` if the account's last scan worked, else `0`
+- `libation_account_needs_login`: `1` if it failed because Audible needs the account to sign in again
+- `libation_account_scan_last_run_timestamp_seconds` and `libation_account_scan_last_success_timestamp_seconds`
+
+When Audible refuses a download as throttled on a legacy or non-Widevine registration, `serve` doesn't switch settings or mark the account for a new sign-in over one title. It does that only after 3 different titles on the same account are refused within 24 hours, and any licensed download that works on the account resets the count. The desktop app still recovers on the first refusal, because someone is there to sign in.
+
 ### HTTP API
 
 Off by default. `--api` (or `LIBATION_API=1`) serves a JSON API under `/api` on the same `--listen` address: `GET /api/status`, `/api/accounts`, `/api/library`, `/api/library/asins`, `/api/library/stats`, `/api/library/{asin}`, `/api/library/{asin}/cover`, `/api/library/{asin}/audio/files`, `/api/library/{asin}/audio`, `/api/library/{asin}/chapters`, `/api/library/{asin}/locate`, `/api/library/locate-scan`, `/api/settings` (also `PATCH`), `POST /api/settings/templates/preview`, `POST /api/audiobookshelf/test`, `GET /api/audiobookshelf/libraries`, `POST /api/audiobookshelf/upload`, `GET /api/library/{asin}/progress`, `POST /api/library/{asin}/progress/push-abs`, `POST /api/library/progress/push-abs`, `/api/events` (Server-Sent Events), and `POST /api/scan` and `/api/liberate` (run now; `202`, or `409` if a job is running). Account responses never include tokens. `GET /api/openapi.json` is the OpenAPI document for all of it, for generating a client; it follows the same opt-in and token rules.

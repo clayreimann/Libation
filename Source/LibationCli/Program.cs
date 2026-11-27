@@ -28,7 +28,9 @@ public enum ExitCode
 	ProcessCompletedSuccessfully = 0,
 	NonRunNonError = 1,
 	ParseError = 2,
-	RunTimeError = 3
+	RunTimeError = 3,
+	/// <summary>Some accounts scanned and some did not; see <c>CycleScheduler.ScanPartlyFailedExitCode</c>.</summary>
+	ScanPartlyFailed = 4
 }
 
 internal sealed record CliParseOutcome(ParserResult<object>? Result, ExitCode? ExitCode);
